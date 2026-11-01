@@ -53,7 +53,14 @@
     'Overflow Box': 1900,
     'Overhead Piping Set': 540,
     'Undersump Piping Set': 2500,
-    'Aquascape per gallon': 210
+    'Aquascape per gallon': 210,
+    // Custom sump dividers and acrylic top drawer - see getSumpDividers/getSumpTopDrawer.
+    'Sump Divider Markup': 1.2,
+    'Top Drawer Acrylic Markup': 1.5,
+    'Top Drawer Fitting': 500,
+    // Drain valve on every chamber - see getSumpDrainValves.
+    'Sump Drain Valve': 250,
+    'Sump Drain Pipe per ft': 60
   };
 
   // Cabinet Type -> its Pricing Setup keys and panel thickness (for the approx. outer size).
@@ -652,6 +659,71 @@
     return 0;
   }
 
+  // Sump dividers (dividerCount/dividerHeight on the sump's options; blank height = full height):
+  // sump width x divider height x the sump's glass rate x 'Sump Divider Markup'. Staff calculator only
+  // for now - Alice and Order Now don't pass these.
+  function getSumpDividers(sump, unit, sumpWidthInches, sumpHeightInches, glassPricePerSqFt, extraPrices) {
+    var count = Math.max(0, Math.round(Number(sump.dividerCount) || 0));
+    if (count === 0) return { count: 0, heightInches: 0, price: 0 };
+    var heightInches = Number(sump.dividerHeight) > 0 ? toInches(sump.dividerHeight, unit) : sumpHeightInches;
+    if (heightInches > sumpHeightInches + 0.001) {
+      return { error: 'Sump divider height cannot be more than the sump height.' };
+    }
+    var areaSqFt = (sumpWidthInches * heightInches) / 144;
+    return {
+      count: count,
+      heightInches: round2(heightInches),
+      price: round2(count * areaSqFt * glassPricePerSqFt * extraPrices['Sump Divider Markup'])
+    };
+  }
+
+  // Drain valve on every chamber (drainValves on the sump's options): each chamber = dividers + 1 gets
+  // a drilled 'Hole' + 'Sump Drain Valve', joined by a shared pipe along the sump ('Sump Drain Pipe per
+  // ft'), rounded up to the nearest 10. Null when not selected.
+  function getSumpDrainValves(sump, dividerCount, sumpLengthInches, extraPrices) {
+    if (!sump.drainValves) return null;
+    var chambers = dividerCount + 1;
+    return {
+      chambers: chambers,
+      price: ceilNearest10(
+        chambers * (extraPrices['Hole'] + extraPrices['Sump Drain Valve']) +
+        (sumpLengthInches / 12) * extraPrices['Sump Drain Pipe per ft']
+      )
+    };
+  }
+
+  // Acrylic top drawer, either sump type (topDrawer on the sump's options): a perforated, open-top box
+  // on top of the sump. Each drawer = 5-panel area x live Acrylic rate x 'Top Drawer Acrylic Markup'
+  // + 'Top Drawer Fitting', rounded up to the nearest 10. Null when not selected.
+  function getSumpTopDrawer(sump, unit, sumpLengthInches, sumpWidthInches, sumpHeightInches, stickerRows, extraPrices) {
+    var drawer = sump.topDrawer;
+    if (!drawer || !drawer.enabled) return null;
+    var lengthInches = toInches(drawer.length, unit);
+    var widthInches = toInches(drawer.width, unit);
+    var heightInches = toInches(drawer.height, unit);
+    if (!(lengthInches > 0) || !(widthInches > 0) || !(heightInches > 0)) {
+      return { error: 'Please enter the Top Drawer length, width and height, or uncheck Top Drawer.' };
+    }
+    if (lengthInches > sumpLengthInches + 0.001 || widthInches > sumpWidthInches + 0.001) {
+      return { error: 'The Top Drawer cannot be longer or wider than the sump.' };
+    }
+    var quantity = Math.max(1, Math.round(Number(drawer.quantity) || 1));
+    var acrylicRate = buildStickerPriceLookup(stickerRows).flat['Acrylic'];
+    var priceEach = ceilNearest10(
+      getGlassAreaSqFt(lengthInches, widthInches, heightInches) * acrylicRate * extraPrices['Top Drawer Acrylic Markup'] +
+      extraPrices['Top Drawer Fitting']
+    );
+    return {
+      quantity: quantity,
+      lengthInches: round2(lengthInches),
+      widthInches: round2(widthInches),
+      heightInches: round2(heightInches),
+      // Multiple drawers stack on top of each other.
+      overallHeightInches: round2(sumpHeightInches + heightInches * quantity),
+      price: round2(quantity * priceEach)
+    };
+  }
+
   // Standalone Filtration/Sump build - the sump pricing math the Aquarium+Filtration combo already
   // uses (glass panels, filter media, overflow box, piping, allum top cover) reads its glass rate
   // and "effective width" off the aquarium it's attached to; here there is no aquarium, so this
@@ -678,11 +750,25 @@
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
     var extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
 
-    var components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0 };
+    var components = { sumpGlass: 0, sumpDividers: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0, topDrawer: 0, drainValves: 0 };
     var normalizedExtra = {};
 
     var sumpAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
     components.sumpGlass = round2(sumpAreaSqFt * basePricePerSqFt);
+
+    var dividers = getSumpDividers(options, unit, widthInches, heightInches, basePricePerSqFt, extraPrices);
+    if (dividers.error) return { ok: false, error: dividers.error };
+    components.sumpDividers = dividers.price;
+    normalizedExtra.dividers = dividers;
+
+    var topDrawer = getSumpTopDrawer(options, unit, lengthInches, widthInches, heightInches, options.stickerPricingSetupRows, extraPrices);
+    if (topDrawer && topDrawer.error) return { ok: false, error: topDrawer.error };
+    if (topDrawer) components.topDrawer = topDrawer.price;
+    normalizedExtra.topDrawer = topDrawer;
+
+    var drainValves = getSumpDrainValves(options, dividers.count, lengthInches, extraPrices);
+    if (drainValves) components.drainValves = drainValves.price;
+    normalizedExtra.drainValves = drainValves;
 
     if (options.filterMedias) {
       var volumeCuFt = (lengthInches / 12) * (widthInches / 12) * (heightInches / 12);
@@ -703,20 +789,21 @@
     components.light = round2(Number(options.lightPrice) || 0);
     components.pump = round2(Number(options.pumpPrice) || 0);
 
-    var subtotal = components.sumpGlass + components.filterMedia + components.overflowBox + components.light + components.pump;
+    var subtotal = components.sumpGlass + components.sumpDividers + components.filterMedia + components.overflowBox + components.light + components.pump;
     if (subtotal >= 1000) {
       subtotal = roundNearest10(subtotal);
     }
 
     components.piping = getSumpPipingPrice(sumpType, options.piping, options.pipingSeparateDrain, options.extraPricingSetupRows);
 
-    if (options.allumTopCover) {
+    // No Allum Top Cover on a sump with a top drawer yet.
+    if (options.allumTopCover && !topDrawer) {
       var coverAreaSqFt = (lengthInches / 12) * (widthInches / 12);
       var allumRate = buildStickerPriceLookup(options.stickerPricingSetupRows).flat['Allum TopCover'];
       components.allumTopCover = ceilNearest10(coverAreaSqFt * allumRate);
     }
 
-    var totalPrice = subtotal + components.piping + components.allumTopCover;
+    var totalPrice = subtotal + components.piping + components.allumTopCover + components.topDrawer + components.drainValves;
 
     return {
       ok: true,
@@ -1310,6 +1397,23 @@
         components.sumpGlass = round2(sumpAreaSqFt * sumpPricePerSqFt);
         calculatedPrice += components.sumpGlass;
 
+        var sumpDividers = getSumpDividers(sump, sumpUnit, sumpWidthInches, sumpHeightInches, sumpPricePerSqFt, extraPrices);
+        if (sumpDividers.error) return { ok: false, error: sumpDividers.error, autoChangeTo: null };
+        components.sumpDividers = sumpDividers.price;
+        calculatedPrice += components.sumpDividers;
+        normalizedSump.dividers = sumpDividers;
+
+        // Added after the multipliers below, like piping - acrylic isn't low-iron or AIO glass.
+        var sumpTopDrawer = getSumpTopDrawer(sump, sumpUnit, sumpLengthInches, sumpWidthInches, sumpHeightInches, options.stickerPricingSetupRows, extraPrices);
+        if (sumpTopDrawer && sumpTopDrawer.error) return { ok: false, error: sumpTopDrawer.error, autoChangeTo: null };
+        if (sumpTopDrawer) components.topDrawer = sumpTopDrawer.price;
+        normalizedSump.topDrawer = sumpTopDrawer;
+
+        // Also added after the multipliers below - plumbing, not glass.
+        var sumpDrainValves = getSumpDrainValves(sump, sumpDividers.count, sumpLengthInches, extraPrices);
+        if (sumpDrainValves) components.drainValves = sumpDrainValves.price;
+        normalizedSump.drainValves = sumpDrainValves;
+
         if (sump.filterMedias) {
           var volumeCuFt = (sumpLengthInches / 12) * (sumpWidthInches / 12) * (sumpHeightInches / 12);
           var liters = volumeCuFt * 28.316;
@@ -1340,7 +1444,8 @@
         components.piping = getSumpPipingPrice(sumpType, sump.piping, sump.pipingSeparateDrain, options.extraPricingSetupRows);
         normalizedSump.pipingSeparateDrain = Boolean(sump.pipingSeparateDrain) && isOverheadSump(sumpType);
 
-        if (sump.allumTopCover) {
+        // No Allum Top Cover on a sump with a top drawer yet.
+        if (sump.allumTopCover && !sumpTopDrawer) {
           var effectiveWidthInches = widthInches;
           if (String(sumpType).toLowerCase() === 'overhead sump') {
             effectiveWidthInches = Math.max(0, widthInches - sumpWidthInches);
@@ -1395,6 +1500,14 @@
 
     if (components.allumTopCover > 0) {
       calculatedPrice += components.allumTopCover;
+    }
+
+    if (components.topDrawer > 0) {
+      calculatedPrice += components.topDrawer;
+    }
+
+    if (components.drainValves > 0) {
+      calculatedPrice += components.drainValves;
     }
 
     if (components.stickerBackground > 0) {

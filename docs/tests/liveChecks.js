@@ -112,6 +112,7 @@
             length: Number(input.sump_length), width: Number(input.sump_width), height: Number(input.sump_height),
             unit: input.unit || 'Inches',
             glassThickness: input.sump_glass_thickness || undefined,
+            dividerCount: Number(input.sump_divider_count),
             filterMedias: Boolean(input.sump_filter_media),
             piping: Boolean(input.sump_piping),
             overflowBox: Boolean(input.sump_overflow_box),
@@ -154,7 +155,7 @@
     ['48x18x18 + 2-layer stand', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_stand: true, stand_layers: 2, stand_tubular: '1x1' }],
     ['48x18x18 + stand with plywood cabinet + canopy', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_stand: true, stand_layers: 2, stand_cabinet: true, canopy: true, canopy_height: 12 }],
     ['60x24x24 10mm + aluminum cabinet stand', { length: 60, width: 24, height: 24, glass_thickness: '10mm', add_stand: true, stand_layers: 2, stand_cabinet: true, cabinet_type: 'Aluminum' }],
-    ['48x18x18 + undersump (no pump/light)', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_sump: true, sump_length: 30, sump_width: 14, sump_height: 14, sump_filter_media: true, sump_overflow_box: true, sump_piping: true }]
+    ['48x18x18 + undersump (no pump/light)', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_sump: true, sump_divider_count: 3, sump_length: 30, sump_width: 14, sump_height: 14, sump_filter_media: true, sump_overflow_box: true, sump_piping: true }]
   ];
 
   SystemTests.suite('Website calculator vs Alice (live)', {

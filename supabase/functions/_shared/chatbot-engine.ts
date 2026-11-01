@@ -551,6 +551,7 @@ interface AquariumQuoteInput {
     allumTopCover?: boolean;
     lightPrice?: number;
     pumpPrice?: number;
+    dividerCount?: number;
   };
   length: number;
   width: number;
@@ -594,8 +595,15 @@ const DEFAULT_EXTRA_PRICES: Record<string, number> = {
   'Overflow Box': 1900,
   'Overhead Piping Set': 540,
   'Undersump Piping Set': 2500,
-  'Aquascape per gallon': 210
+  'Aquascape per gallon': 210,
+  'Sump Divider Markup': 1.2
 };
+
+// custom-aquarium-calculator.js's getSumpDividers, full-height dividers only.
+function getSumpDividerPrice(dividerCount: unknown, sumpWidthInches: number, sumpHeightInches: number, glassPricePerSqFt: number, extraPrices: Record<string, number>): number {
+  const count = Math.max(0, Math.round(Number(dividerCount) || 0));
+  return round2(count * ((sumpWidthInches * sumpHeightInches) / 144) * glassPricePerSqFt * extraPrices['Sump Divider Markup']);
+}
 
 // custom-aquarium-calculator.js's findReadyMadePrice: exact-size match to an active ready-made aquarium.
 function findReadyMadePrice(extraPrices: Record<string, number>, lengthInches: number, widthInches: number, heightInches: number, glass: string, isAio: boolean, isTempered: boolean): number | null {
@@ -759,6 +767,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     glass: 0,
     highStrip: 0,
     sumpGlass: 0,
+    sumpDividers: 0,
     filterMedia: 0,
     overflowBox: 0,
     light: 0,
@@ -840,6 +849,10 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     if (isTempered) sumpPricePerSqFt *= 2;
     components.sumpGlass = round2(getGlassAreaSqFt(sumpLengthInches, sumpWidthInches, sumpHeightInches) * sumpPricePerSqFt);
     calculatedPrice += components.sumpGlass;
+
+    components.sumpDividers = getSumpDividerPrice(sump.dividerCount, sumpWidthInches, sumpHeightInches, sumpPricePerSqFt, extraPrices);
+    calculatedPrice += components.sumpDividers;
+    normalizedSump.dividerCount = Math.max(0, Math.round(Number(sump.dividerCount) || 0));
 
     if (sump.filterMedias) {
       const liters = (sumpLengthInches / 12) * (sumpWidthInches / 12) * (sumpHeightInches / 12) * 28.316;
@@ -1090,6 +1103,7 @@ export const TOOLS: Anthropic.Tool[] = [
         sump_width: { type: 'number', description: 'Sump width, same unit as the tank. Leave out for the standard (18in Undersump / 6in Overhead Sump) unless the customer gave a size. Only used when add_sump is true.' },
         sump_height: { type: 'number', description: 'Sump height, same unit as the tank. Leave out for the standard (18in Undersump / 6in Overhead Sump) unless the customer gave a size. Only used when add_sump is true.' },
         sump_glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm'], description: 'Sump glass. Leave out to use the same glass as the tank. Only used when add_sump is true.' },
+        sump_divider_count: { type: 'integer', description: 'How many chamber dividers the CUSTOMER wants in the sump, at least 1 (ask them, never choose for them). REQUIRED when add_sump is true. Not the same as divider_count, which is for the tank.' },
         sump_filter_media: { type: 'boolean', description: 'Include filter media for the sump (amount in kg is worked out from the sump size). Only used when add_sump is true.' },
         sump_piping: { type: 'boolean', description: 'Include the standard set of piping/plumbing. Only used when add_sump is true.' },
         sump_piping_separate_drain: { type: 'boolean', description: 'Overhead Sump only: use the Custom 1/2" Pipe with Separate Drain instead of the standard set of piping (it REPLACES sump_piping, do not set both). Ignored for an Undersump. Only used when add_sump is true.' },
@@ -1132,6 +1146,7 @@ export const TOOLS: Anthropic.Tool[] = [
         unit: { type: 'string', enum: ['Inches', 'CM', 'Feet', 'MM'], description: 'Unit for length/width/height. Defaults to Inches.' },
         sump_type: { type: 'string', enum: ['Undersump', 'Overhead Sump'], description: 'Undersump = sits inside the stand under the tank; Overhead Sump = a tray sump on top of the tank. Defaults to Undersump - ask if they haven\'t said.' },
         glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm'], description: 'Sump glass. Defaults to 6mm.' },
+        divider_count: { type: 'integer', description: 'How many chamber dividers the CUSTOMER wants, at least 1 (ask them, never choose for them).' },
         filter_media: { type: 'boolean', description: 'Include filter media (kg worked out from the sump size).' },
         piping: { type: 'boolean', description: 'Include the standard set of piping/plumbing.' },
         piping_separate_drain: { type: 'boolean', description: 'Overhead Sump only: the Custom 1/2" Pipe with Separate Drain INSTEAD of the standard piping (do not set both). Ignored for an Undersump.' },
@@ -1142,7 +1157,7 @@ export const TOOLS: Anthropic.Tool[] = [
         light_item_code: { type: 'string', description: 'Item code of a light from list_items_in_category with category_code "LIGHTS". Priced at its own catalog price.' },
         light_quantity: { type: 'integer', description: 'How many of that light. Defaults to 1.' }
       },
-      required: ['length', 'width', 'height']
+      required: ['length', 'width', 'height', 'divider_count']
     }
   },
   {
@@ -1498,8 +1513,8 @@ export function buildSystemPrompt(
     '- Rimless tanks (no top frame bracing) need extra glass thickness to stay structurally safe without that frame: minimum 6mm from 10 gallons up, and 10mm once the tank is 30 gallons or more, over 15 inches tall, over 20 inches wide or over 48 inches long (12mm beyond the normal 10mm limits).',
     '- HANG-ON-BACK (HOB) FILTRATION: a hang-on-back filter hangs over the tank\'s rim, so a tank meant for one is supposed to be RIMLESS (no top frame in the way) - and that means the rimless glass rule above applies to it. Whenever you are advising a tank size or building a custom aquarium quote, and it isn\'t already clear from the conversation, ask what filtration they plan to use (hang-on-back, canister, sump, internal/sponge, etc.). If it\'s hang-on-back (they say "HOB", "hang on", "hang-on filter", "hanging filter", or name a typical HOB filter), treat the aquarium as rimless: pass rimless=true to compute_aquarium_quote (unless they explicitly say otherwise), tell them plainly that a hang-on-back setup means going rimless and why, and explain that rimless needs thicker glass for that size (see the rimless rule above) - the tool applies the exact glass thickness/price, so use its result rather than predicting it yourself. Other filter types (canister, sump, internal, sponge, etc.) don\'t trigger this on their own. Never claim a customer\'s filter type yourself - only act on what they actually told you.',
     '- AQUARIUM STICKERS (background / bottom): when a customer quoting a custom aquarium wants a sticker ON that tank - a background on the back glass, a background on the back and both sides, or a bottom sticker under the floor - pass sticker_background ("plain" or "tiles", plus sticker_background_all_sides=true for back + both sides) and/or sticker_bottom ("plain" or "tiles") to compute_aquarium_quote, not compute_sticker_quote (that tool is for a loose sticker/panel cut to a size the customer gives, with no tank). In the itemized summary use the tool result\'s priceLines (it already splits Aquarium / Sticker Background / Sticker Bottom / Sump / Stand so they add up to totalPrice) - never calculate or subtract a sticker price yourself. If they want a sticker but don\'t say plain or tiles, ask which (Tiles costs more per sq ft).',
-    '- SUMP ONLY: when a customer wants just a sump / filtration with NO tank (e.g. "sump lang", "magkano sump 36x18x18", a sump for a tank they already have), quote it with compute_sump_quote - NEVER compute_aquarium_quote, which prices a glass aquarium (that would quote and order a tank instead of a sump). If it is unclear whether they also want a tank, ask. Ask Undersump or Overhead Sump if they haven\'t said, and which extras they want (piping, overflow box, filter media, pump, lights - for pump/lights use list_items_in_category "PUMP"/"LIGHTS" and pass the codes). Show the result\'s priceLines and totalPrice exactly; order it as item_code "CUSTOM-SUMP" with custom_price = totalPrice and the full sump spec in notes.',
-    '- COMPLETE SETUP: when a customer asks for a "complete setup" / "full setup" / "complete set" (or the Tagalog equivalent, e.g. "buong setup", "kumpleto na"), FIRST call list_aquarium_sets and, if a ready-made set fits what they asked (size/gallons, or close to it), offer it: its name, fixed package price, and what it includes (its "includes" and "store_selected" parts, plus any extra details from its description - name the parts plainly, never read out item codes, never give a per-part price; a set is only sold at its own package price). Parts in "store_selected" (e.g. Lights, Pump, Pipes) come with the set, but the store picks the exact model when preparing it - if the customer asks which pump/light, or wants to pick a specific brand/model, say the store selects a suitable one for that set; if they insist on a specific model, that\'s a swap (see (b) below). Parts in "not_included" (e.g. no Sump on a top-filter set) are NOT part of that set - mention it when it matters (e.g. they asked for a sump), and offer it as a separately priced add-on per (a). If they take a set, it\'s ordered like any catalog item (its code) - no compute_aquarium_quote. If they ask whether a set can be CUSTOMIZED: (a) ADDING things on top of the set as-is (an extra light, more filter media, a background sticker, a canopy, etc.) is fine - the set keeps its own package price and each add-on is priced separately (catalog items via search_items / list_items_in_category, a sticker via compute_sticker_quote with the size, anything custom-built via the matching tool) and listed as its own line on top of the set; (b) a set can NEVER have an item removed - it is only sold complete, as listed. If they don\'t want one of its parts (e.g. "set but no stand"), or want something inside it CHANGED (a different tank size or glass, a different pump/light/stand), say plainly that sets can\'t have items removed or swapped, and offer a CUSTOM build instead - a custom build can include only the parts they want - using the checklist below with their choices (it may cost more or less than the set; never discount or adjust the set price yourself); (c) choosing an option for a part the set already comes with (e.g. Black or Clear sealant for its tank, Black or White paint for its stand) is not a customization - just note their choice: on the order it goes in the SET line\'s notes (e.g. "Stand: Black Paint"), NEVER as a separate stand/aquarium line - the set already includes that part at the set price, and adding it again charges the customer twice (create_order refuses it). Only if no set fits, they want a different size/spec, or they turn the set down, go custom: do NOT assume what they mean - first ask them to confirm which parts they want included, listing them: Aquarium, Stand, Sump (filtration), Pipes/plumbing, Pump, Lights, Filter media, and an Overflow box (for an undersump setup, where the sump sits inside the stand under the tank). Ask it as one short checklist question, e.g. "Just to confirm, by complete setup do you mean all of these: Aquarium, Stand, Sump, Pipes, Pump, Lights, Filter media, and an Overflow box (for undersump)? Or only some of them?" Also ask Undersump or Overhead Sump if they haven\'t said. SUMP SIZE: our standard is the same length as the tank x 18 x 18in for an Undersump (tank length x 6 x 6in for an Overhead Sump) - use that (leave sump_length/sump_width/sump_height out) unless the customer asks for a specific size; never shrink the sump on your own to make the quote cheaper. If they want their own size, ask for the sump size (length x width x height) - if they don\'t know it, use the standard size. Then quote it all in ONE compute_aquarium_quote call: the tank (+ add_stand and its options if Stand is included), add_sump=true with sump_type and the sump size, sump_piping / sump_filter_media / sump_overflow_box for the parts they confirmed (for an Overhead Sump, the pipes can instead be our Custom 1/2" Pipe with Separate Drain - pass sump_piping_separate_drain INSTEAD of sump_piping when they want the separate drain; it is not available for an Undersump), and for Pump/Lights first call list_items_in_category with category_code "PUMP" / "LIGHTS", pick a suitable one with the customer, and pass its code as pump_item_code / light_item_code (never pass a price yourself). In the itemized summary show the tool result\'s priceLines in order (Aquarium, any stickers, Sump, Stand), with each sumpBreakdown line (label + amount) listed under the Sump line, and totalPrice as the total - never add, round or estimate any part yourself, and never invent a package price for the whole setup. If a pump/light code comes back as not found, re-list that category and try again rather than guessing.',
+    '- SUMP ONLY: when a customer wants just a sump / filtration with NO tank (e.g. "sump lang", "magkano sump 36x18x18", a sump for a tank they already have), quote it with compute_sump_quote - NEVER compute_aquarium_quote, which prices a glass aquarium (that would quote and order a tank instead of a sump). If it is unclear whether they also want a tank, ask. Ask Undersump or Overhead Sump if they haven\'t said, how many chamber dividers they prefer (every sump has at least 1), and which extras they want (piping, overflow box, filter media, pump, lights - for pump/lights use list_items_in_category "PUMP"/"LIGHTS" and pass the codes). Show the result\'s priceLines and totalPrice exactly; order it as item_code "CUSTOM-SUMP" with custom_price = totalPrice and the full sump spec in notes.',
+    '- COMPLETE SETUP: when a customer asks for a "complete setup" / "full setup" / "complete set" (or the Tagalog equivalent, e.g. "buong setup", "kumpleto na"), FIRST call list_aquarium_sets and, if a ready-made set fits what they asked (size/gallons, or close to it), offer it: its name, fixed package price, and what it includes (its "includes" and "store_selected" parts, plus any extra details from its description - name the parts plainly, never read out item codes, never give a per-part price; a set is only sold at its own package price). Parts in "store_selected" (e.g. Lights, Pump, Pipes) come with the set, but the store picks the exact model when preparing it - if the customer asks which pump/light, or wants to pick a specific brand/model, say the store selects a suitable one for that set; if they insist on a specific model, that\'s a swap (see (b) below). Parts in "not_included" (e.g. no Sump on a top-filter set) are NOT part of that set - mention it when it matters (e.g. they asked for a sump), and offer it as a separately priced add-on per (a). If they take a set, it\'s ordered like any catalog item (its code) - no compute_aquarium_quote. If they ask whether a set can be CUSTOMIZED: (a) ADDING things on top of the set as-is (an extra light, more filter media, a background sticker, a canopy, etc.) is fine - the set keeps its own package price and each add-on is priced separately (catalog items via search_items / list_items_in_category, a sticker via compute_sticker_quote with the size, anything custom-built via the matching tool) and listed as its own line on top of the set; (b) a set can NEVER have an item removed - it is only sold complete, as listed. If they don\'t want one of its parts (e.g. "set but no stand"), or want something inside it CHANGED (a different tank size or glass, a different pump/light/stand), say plainly that sets can\'t have items removed or swapped, and offer a CUSTOM build instead - a custom build can include only the parts they want - using the checklist below with their choices (it may cost more or less than the set; never discount or adjust the set price yourself); (c) choosing an option for a part the set already comes with (e.g. Black or Clear sealant for its tank, Black or White paint for its stand) is not a customization - just note their choice: on the order it goes in the SET line\'s notes (e.g. "Stand: Black Paint"), NEVER as a separate stand/aquarium line - the set already includes that part at the set price, and adding it again charges the customer twice (create_order refuses it). Only if no set fits, they want a different size/spec, or they turn the set down, go custom: do NOT assume what they mean - first ask them to confirm which parts they want included, listing them: Aquarium, Stand, Sump (filtration), Pipes/plumbing, Pump, Lights, Filter media, and an Overflow box (for an undersump setup, where the sump sits inside the stand under the tank). Ask it as one short checklist question, e.g. "Just to confirm, by complete setup do you mean all of these: Aquarium, Stand, Sump, Pipes, Pump, Lights, Filter media, and an Overflow box (for undersump)? Or only some of them?" Also ask Undersump or Overhead Sump if they haven\'t said, and how many chamber dividers they prefer in the sump (every sump has at least 1). SUMP SIZE: our standard is the same length as the tank x 18 x 18in for an Undersump (tank length x 6 x 6in for an Overhead Sump) - use that (leave sump_length/sump_width/sump_height out) unless the customer asks for a specific size; never shrink the sump on your own to make the quote cheaper. If they want their own size, ask for the sump size (length x width x height) - if they don\'t know it, use the standard size. Then quote it all in ONE compute_aquarium_quote call: the tank (+ add_stand and its options if Stand is included), add_sump=true with sump_type, sump_divider_count and the sump size, sump_piping / sump_filter_media / sump_overflow_box for the parts they confirmed (for an Overhead Sump, the pipes can instead be our Custom 1/2" Pipe with Separate Drain - pass sump_piping_separate_drain INSTEAD of sump_piping when they want the separate drain; it is not available for an Undersump), and for Pump/Lights first call list_items_in_category with category_code "PUMP" / "LIGHTS", pick a suitable one with the customer, and pass its code as pump_item_code / light_item_code (never pass a price yourself). In the itemized summary show the tool result\'s priceLines in order (Aquarium, any stickers, Sump, Stand), with each sumpBreakdown line (label + amount) listed under the Sump line, and totalPrice as the total - never add, round or estimate any part yourself, and never invent a package price for the whole setup. If a pump/light code comes back as not found, re-list that category and try again rather than guessing.',
     '- TURTLE TANK: we build turtle tanks - a custom aquarium with a built-in basking area (a ledge above the water line with a ramp down into the water). If the customer asks for a turtle tank or a basking area/platform, pass turtle_tank=true to compute_aquarium_quote and list "Turtle tank (basking area)" in the itemized summary. It costs more than a plain aquarium of the same size - only quote it through the tool, never estimate the difference yourself. The drawing link shows the tank with water about halfway up and the basking ledge, ramp and a turtle.',
     '- ENCLOSURE (terrarium/vivarium): we also build dry glass enclosures - for reptiles, amphibians, insects, etc. - with two sliding glass front doors (with handles and a lock), a mesh screen top for ventilation, and a vented bottom lip that holds the substrate. If the customer asks for an enclosure, terrarium, vivarium, or a tank for a reptile/lizard/gecko/snake/spider (anything that lives out of water), pass enclosure=true to compute_aquarium_quote and list "Enclosure" in the itemized summary. An enclosure is dry, so it cannot have a filtration sump or AIO, and it cannot be combined with a turtle tank (a turtle needs water - use turtle_tank for turtles instead). It costs more than a plain aquarium of the same size - only quote it through the tool. The drawing link shows the enclosure with its doors, mesh top and substrate.',
     '- Cabinet and canopy (optional, with a stand): a cabinet encloses the stand in panels (front doors, both sides and a closed back) - by default 2 doors per 3ft of length (3ft = 2 doors, 6ft = 4 doors), but the customer can ask for a different number. Cabinet and canopy come in two types (cabinet_type): Laminated Plywood (18mm, the default) or Aluminum (4mm ACP panels, a more premium, moisture-proof finish that costs more) - ask which they prefer if they want a cabinet or canopy. A canopy is a box cover on top of the tank (default 6 inches high). Both are priced by panel area (with a minimum charge), so only quote them through compute_aquarium_quote (stand_cabinet / canopy) - never estimate them yourself. Only offer them when the customer asks about a cabinet, canopy, or a closed/enclosed stand.',
@@ -1568,6 +1583,7 @@ export function buildSystemPrompt(
     '- Never mention or estimate an item\'s Cost (what the store pays for it) under any circumstance, wholesale question or not - that field is never given to you and must never be invented.',
     '',
     'HANDLING COMPLAINTS (understand and check first, then escalate):',
+    '- Sumps with drain valves on the chambers or an acrylic top drawer (Undersump or Overhead Sump): we build these, but compute_aquarium_quote and compute_sump_quote don\'t include those parts, so never quote a price for one or create an order for it. Say our team will confirm the design and price, get the sizes and a sketch/photo if they have one, then use escalate_to_staff.',
     '- When a customer complains or sounds unhappy, don\'t jump straight to escalate_to_staff. First acknowledge it warmly (one short sorry, no excuses), then ask what exactly the issue is if they haven\'t said - what happened, which order (order number or store receipt number), and photos/video if it\'s about the product itself. Ask only for what\'s still missing, a couple of things per message.',
     '- Then analyze it: call get_order_status with their order number and compare what they say against the order\'s status, items, quantities and dates. Tell them plainly what you found (e.g. "Nakita ko po sa order #123: 2x ..., 1x ..."). Only state what the lookup actually returned - never guess.',
     '- WHAT THEY RECEIVED vs THE RECEIPT/ORDER: when the customer says something they received is not on the receipt, is missing, is extra, is the wrong item/size/color, or the quantity is off, check it line by line. List EVERY item and quantity on the order back to them and ask them to confirm, item by item, what they actually received (e.g. "1) 2x Guppy - natanggap niyo po ba pareho? 2) 1x Fish Net - ..."). Then sum it up clearly: which items match, which are missing, which are extra (received but not on the order), and which are different. You can confirm what IS or ISN\'T on the order record - that is a fact from the lookup - but never decide fault, never promise a refund, replacement, redelivery or credit, and never tell them to keep or return anything; staff decide.',
@@ -1700,7 +1716,7 @@ export function buildSystemPrompt(
 function calculateStandaloneFiltration(options: {
   unit: string; sumpType: string; length: number; width: number; height: number; glassThickness: string;
   filterMedias: boolean; overflowBox: boolean; piping: boolean; pipingSeparateDrain: boolean; allumTopCover: boolean;
-  lightPrice: number; pumpPrice: number;
+  lightPrice: number; pumpPrice: number; dividerCount: number;
   glassPricingSetupRows: unknown[]; extraPricingSetupRows: unknown[]; stickerPricingSetupRows: unknown[];
 }): Record<string, unknown> {
   const unit = options.unit || 'Inches';
@@ -1716,10 +1732,11 @@ function calculateStandaloneFiltration(options: {
   const glassPrices = buildGlassPriceLookup(options.glassPricingSetupRows as never, 'MM');
   const basePricePerSqFt = Number(glassPrices[glass]) || 100;
   const extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows as never);
-  const components = { sumpGlass: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0 };
+  const components = { sumpGlass: 0, sumpDividers: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0 };
   let filterMediaKg = 0;
 
   components.sumpGlass = round2(getGlassAreaSqFt(lengthInches, widthInches, heightInches) * basePricePerSqFt);
+  components.sumpDividers = getSumpDividerPrice(options.dividerCount, widthInches, heightInches, basePricePerSqFt, extraPrices);
   if (options.filterMedias) {
     const liters = (lengthInches / 12) * (widthInches / 12) * (heightInches / 12) * 28.316;
     filterMediaKg = Math.round(liters * (isOverhead ? 0.18 : 0.04));
@@ -1729,7 +1746,7 @@ function calculateStandaloneFiltration(options: {
   components.light = round2(Number(options.lightPrice) || 0);
   components.pump = round2(Number(options.pumpPrice) || 0);
 
-  let subtotal = components.sumpGlass + components.filterMedia + components.overflowBox + components.light + components.pump;
+  let subtotal = components.sumpGlass + components.sumpDividers + components.filterMedia + components.overflowBox + components.light + components.pump;
   if (subtotal >= 1000) subtotal = roundNearest10(subtotal);
 
   if (isOverhead && options.pipingSeparateDrain) {
@@ -1745,7 +1762,7 @@ function calculateStandaloneFiltration(options: {
   return {
     ok: true,
     totalPrice: round2(subtotal + components.piping + components.allumTopCover),
-    preRoundingSubtotal: round2(components.sumpGlass + components.filterMedia + components.overflowBox + components.light + components.pump),
+    preRoundingSubtotal: round2(components.sumpGlass + components.sumpDividers + components.filterMedia + components.overflowBox + components.light + components.pump),
     components,
     normalized: {
       unit,
@@ -1754,6 +1771,7 @@ function calculateStandaloneFiltration(options: {
       widthInches: round2(widthInches),
       heightInches: round2(heightInches),
       glassThickness: glass,
+      dividerCount: Math.max(0, Math.round(Number(options.dividerCount) || 0)),
       filterMediaKg: options.filterMedias ? filterMediaKg : 0,
       pipingSeparateDrain: Boolean(options.pipingSeparateDrain) && isOverhead
     }
@@ -1762,6 +1780,9 @@ function calculateStandaloneFiltration(options: {
 
 // compute_sump_quote - a sump/filtration bought ON ITS OWN (no tank). Ordered as CUSTOM-SUMP.
 export async function computeSumpQuote(supabase: SupabaseClient, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!(Number(input.divider_count) >= 1)) {
+    return { ok: false, error: 'Ask the customer how many chamber dividers they prefer (at least 1), then pass divider_count.' };
+  }
   const [{ data: glassRows }, { data: extraRows }, { data: stickerRows }] = await Promise.all([
     supabase.rpc('public_get_glass_pricing'),
     supabase.rpc('public_get_aquarium_extra_pricing'),
@@ -1802,6 +1823,7 @@ export async function computeSumpQuote(supabase: SupabaseClient, input: Record<s
     allumTopCover: Boolean(input.allum_top_cover),
     lightPrice: light ? light.total : 0,
     pumpPrice: pump ? pump.total : 0,
+    dividerCount: Number(input.divider_count),
     glassPricingSetupRows: (glassRows ?? []) as unknown[],
     extraPricingSetupRows: (extraRows ?? []) as unknown[],
     stickerPricingSetupRows: (stickerRows ?? []) as unknown[]
@@ -1814,6 +1836,7 @@ export async function computeSumpQuote(supabase: SupabaseClient, input: Record<s
   const n = result.normalized as Record<string, unknown>;
   const parts: Array<[string, number]> = [];
   if (c.sumpGlass > 0) parts.push([`Sump glass (${n.glassThickness})`, c.sumpGlass]);
+  if (c.sumpDividers > 0) parts.push([`Sump dividers (${n.dividerCount})`, c.sumpDividers]);
   if (c.filterMedia > 0) parts.push([`Filter media (approx. ${n.filterMediaKg} kg)`, c.filterMedia]);
   if (c.pump > 0 && pump) parts.push([`Submersible pump - ${pump.name}${pump.quantity > 1 ? ` x${pump.quantity}` : ''}`, c.pump]);
   if (c.light > 0 && light) parts.push([`Light - ${light.name}${light.quantity > 1 ? ` x${light.quantity}` : ''}`, c.light]);
@@ -1844,6 +1867,9 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
   // Sump pump/light = a real catalog item at its own price x qty, same as the calculator's
   // PUMP/LIGHTS pickers - looked up here by code so Alice never supplies the price herself.
   const addSump = Boolean(input.add_sump);
+  if (addSump && !(Number(input.sump_divider_count) >= 1)) {
+    return { ok: false, error: 'Ask the customer how many chamber dividers they prefer in the sump (at least 1), then pass sump_divider_count.' };
+  }
   const pickCatalogItem = async (categoryCode: string, itemCode: unknown, qty: unknown) => {
     const code = String(itemCode ?? '').trim();
     if (!addSump || !code) return null;
@@ -1903,6 +1929,7 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
           height: sumpHeight,
           unit: (input.unit as string) || 'Inches',
           glassThickness: (input.sump_glass_thickness as string) || undefined,
+          dividerCount: Number(input.sump_divider_count),
           filterMedias: Boolean(input.sump_filter_media),
           piping: Boolean(input.sump_piping),
           pipingSeparateDrain: Boolean(input.sump_piping_separate_drain),
@@ -1945,6 +1972,7 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
       const sumpInfo = (result.normalized as Record<string, unknown>).sump as Record<string, unknown>;
       const parts: Array<[string, number]> = [];
       if (c.sumpGlass > 0) parts.push([`Sump glass (${sumpInfo.glassThickness})`, c.sumpGlass * markup]);
+      if (c.sumpDividers > 0) parts.push([`Sump dividers (${sumpInfo.dividerCount})`, c.sumpDividers * markup]);
       if (c.filterMedia > 0) parts.push([`Filter media (approx. ${sumpInfo.filterMediaKg} kg)`, c.filterMedia * markup]);
       if (c.pump > 0 && pump) parts.push([`Submersible pump - ${pump.name}${pump.quantity > 1 ? ` x${pump.quantity}` : ''}`, c.pump * markup]);
       if (c.light > 0 && light) parts.push([`Light - ${light.name}${light.quantity > 1 ? ` x${light.quantity}` : ''}`, c.light * markup]);
@@ -2034,6 +2062,7 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
       aquariumParams.set('sumpWidth', String(sumpInfo.widthInches));
       aquariumParams.set('sumpHeight', String(sumpInfo.heightInches));
       aquariumParams.set('sumpGlass', String(sumpInfo.glassThickness));
+      aquariumParams.set('sumpDividerCount', String(sumpInfo.dividerCount));
       if (input.sump_filter_media) aquariumParams.set('filterMedias', '1');
       if (input.sump_piping) aquariumParams.set('piping', '1');
       if (input.sump_piping_separate_drain && sumpInfo.type === 'Overhead Sump') aquariumParams.set('pipingDrain', '1');

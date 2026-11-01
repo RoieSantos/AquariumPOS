@@ -56,6 +56,40 @@
       });
     });
 
+    t.test('48x12x12 overhead sump + 3 dividers + 12x12x6 top drawer', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Overhead Sump', length: 48, width: 12, height: 12, glassThickness: '6mm', allumTopCover: true,
+        dividerCount: 3, topDrawer: { enabled: true, quantity: 1, length: 12, width: 12, height: 6 }
+      });
+      expectOk(a, r);
+      a.near(r.components.sumpDividers, 666, 'dividers');
+      a.near(r.components.topDrawer, 1110, 'drawer');
+      a.near(r.components.allumTopCover, 0, 'no allum cover with a drawer');
+      a.near(r.totalPrice, 4370, 'total price');
+    });
+
+    t.test('Top drawer prices the same on an Undersump', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Undersump', length: 48, width: 12, height: 12, glassThickness: '6mm',
+        topDrawer: { enabled: true, quantity: 1, length: 12, width: 12, height: 6 }
+      });
+      expectOk(a, r);
+      a.near(r.components.topDrawer, 1110, 'drawer');
+    });
+
+    t.test('48x12x12 sump + 3 dividers + drain valve on all 4 chambers', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Undersump', length: 48, width: 12, height: 12, glassThickness: '6mm',
+        dividerCount: 3, drainValves: true
+      });
+      expectOk(a, r);
+      a.near(r.components.drainValves, 1840, 'drain valves');
+      a.near(r.totalPrice, 5100, 'total price');
+    });
+
     t.test('48x18x18 with 2-layer stand: total = aquarium + stand', (a) => {
       const r = quote({ length: 48, width: 18, height: 18, glassThickness: '6mm', stand: { enabled: true, layers: 2, tubular: '1x1' } });
       expectOk(a, r);

@@ -15,7 +15,7 @@
   var FIELD_IDS = [
     'length', 'width', 'height', 'unit', 'option', 'qty', 'stainless', 'paint',
     'sumpHolder', 'sumpWidth',
-    'sumpEnabled', 'sumpLength', 'sumpHeight',
+    'sumpEnabled', 'sumpLength', 'sumpHeight', 'sumpDividerCount', 'sumpDividerHeight', 'sumpDrainValves', 'sumpTopDrawer',
     'standEnabled', 'standSumpHolder', 'standSumpWidth', 'standPaint', 'standStainless', 'sealant',
     'lowIron', 'highStrip', 'aio', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount'
   ];

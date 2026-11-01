@@ -727,6 +727,43 @@
               <label class="checkbox-row"><input id="submersibleLight" type="checkbox">Submersible Light</label>
               <label class="checkbox-row"><input id="submersiblePump" type="checkbox">Submersible Pump</label>
               <label class="checkbox-row"><input id="allumTopCover" type="checkbox">Allum Top Cover</label>
+              <label class="checkbox-row" id="sumpTopDrawerRow"><input id="sumpTopDrawer" type="checkbox">Top Drawer (3mm acrylic, perforated bottom)</label>
+              <label class="checkbox-row"><input id="sumpDrainValves" type="checkbox">Drain valve on every chamber (hole, valve and shared pipe)</label>
+            </div>
+
+            <div class="sub-head">Custom sump</div>
+            <div class="field-grid">
+              <div class="field">
+                <label for="sumpDividerCount">Sump dividers (qty)</label>
+                <input id="sumpDividerCount" type="number" value="1" min="1" step="1">
+              </div>
+              <div class="field">
+                <label for="sumpDividerHeight">Divider height (blank = full)</label>
+                <input id="sumpDividerHeight" type="number" min="0" step="0.01" placeholder="Full height">
+              </div>
+            </div>
+            <div id="sumpTopDrawerWrap" class="field-grid hidden">
+              <div class="field">
+                <label for="topDrawerQuantity">Drawer qty</label>
+                <input id="topDrawerQuantity" type="number" value="1" min="1" step="1">
+              </div>
+              <div class="field span-2">
+                <span class="group-label">Drawer dimensions (sump unit)</span>
+                <div class="dims-row">
+                  <div class="dim">
+                    <input id="topDrawerLength" type="number" step="0.01" placeholder="L" aria-label="Drawer length">
+                    <span>Length</span>
+                  </div>
+                  <div class="dim">
+                    <input id="topDrawerWidth" type="number" step="0.01" placeholder="W" aria-label="Drawer width">
+                    <span>Width</span>
+                  </div>
+                  <div class="dim">
+                    <input id="topDrawerHeight" type="number" step="0.01" placeholder="H" aria-label="Drawer height">
+                    <span>Height</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -908,7 +945,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js?v=lowiron19"></script>
+  <script src="./custom-aquarium-calculator.js?v=sumpdrawer1"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -1830,10 +1867,12 @@
       var baseX = 86;
       var baseY = 176;
       var scale = Math.min(5.4, Math.max(2.1, 240 / Math.max(lengthIn, widthIn, heightIn)));
-      // A canopy sits on top of the tank - shrink the drawing until tank + canopy + top face fit.
-      for (var fit = 0; showCanopy && fit < 30; fit++) {
+      var sumpOnlyInfo = result.sumpOnly ? dims.sumpOnly : null;
+      var aboveIn = showCanopy ? canopyIn : (sumpOnlyInfo && sumpOnlyInfo.topDrawer ? sumpOnlyInfo.topDrawer.overallHeightInches - heightIn : 0);
+      // A canopy or top drawer sits on top - shrink the drawing until it, the tank and the top face fit.
+      for (var fit = 0; aboveIn > 0 && fit < 30; fit++) {
         var fitDepth = Math.max(28, widthIn * scale * 0.38);
-        if ((heightIn + canopyIn) * scale + fitDepth * 0.48 <= baseY - 10) break;
+        if ((heightIn + aboveIn) * scale + fitDepth * 0.48 <= baseY - 10) break;
         scale *= 0.92;
       }
       var frontWidth = lengthIn * scale;
@@ -2034,6 +2073,31 @@
         drawPlywoodBox(canLeft, frontTop - canopyPx, canWidth, canopyPx, depth, true);
       }
 
+      if (sumpOnlyInfo) {
+        var sumpDividerInfo = sumpOnlyInfo.dividers;
+        if (sumpDividerInfo && sumpDividerInfo.count > 0) {
+          var dividerPx = sumpDividerInfo.heightInches * scale;
+          context.strokeStyle = 'rgba(50, 85, 120, 0.7)';
+          context.lineWidth = 1.2;
+          for (var d = 1; d <= sumpDividerInfo.count; d++) {
+            var dividerX = frontLeft + frontWidth * d / (sumpDividerInfo.count + 1);
+            context.beginPath();
+            context.moveTo(dividerX, baseY);
+            context.lineTo(dividerX, baseY - dividerPx);
+            context.lineTo(dividerX + depth, baseY - dividerPx - depth * 0.48);
+            context.lineTo(dividerX + depth, baseY - depth * 0.48);
+            context.stroke();
+          }
+        }
+        if (sumpOnlyInfo.drainValves) {
+          drawSumpDrainValves(sumpOnlyInfo.drainValves.chambers, frontLeft, frontWidth, baseY, 10);
+        }
+        if (sumpOnlyInfo.topDrawer) {
+          drawSumpTopDrawer(sumpOnlyInfo.topDrawer, frontLeft, frontTop, sumpOnlyInfo.topDrawer.lengthInches * scale,
+            sumpOnlyInfo.topDrawer.heightInches * scale, depth * Math.min(1, sumpOnlyInfo.topDrawer.widthInches / widthIn));
+        }
+      }
+
       if (showSump) {
         var overhead = byId('sumpType').value === 'Overhead Sump';
         var sumpTop = overhead ? backTop - 26 : (showStand ? standTop + standHeight + 14 : baseY + 24);
@@ -2050,15 +2114,27 @@
         context.fillRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
         context.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
 
-        // Baffle chamber dividers, purely decorative - a real sump reads instantly with these.
-        context.strokeStyle = 'rgba(80, 113, 147, 0.45)';
+        // Baffle chamber dividers - the real count when set, otherwise decorative (a real sump reads
+        // instantly with these).
+        var sumpChamberLines = (dims.sump.dividers && dims.sump.dividers.count) || 0;
+        context.strokeStyle = sumpChamberLines > 0 ? 'rgba(50, 85, 120, 0.7)' : 'rgba(80, 113, 147, 0.45)';
         context.lineWidth = 1;
         context.beginPath();
-        context.moveTo(sumpLeft + sumpWidth * 0.34, sumpTop + 3);
-        context.lineTo(sumpLeft + sumpWidth * 0.34, sumpTop + sumpHeight - 3);
-        context.moveTo(sumpLeft + sumpWidth * 0.68, sumpTop + 3);
-        context.lineTo(sumpLeft + sumpWidth * 0.68, sumpTop + sumpHeight - 3);
+        for (var c = 1; c <= (sumpChamberLines || 2); c++) {
+          var chamberX = sumpLeft + sumpWidth * (sumpChamberLines > 0 ? c / (sumpChamberLines + 1) : c * 0.34);
+          context.moveTo(chamberX, sumpTop + 3);
+          context.lineTo(chamberX, sumpTop + sumpHeight - 3);
+        }
         context.stroke();
+
+        if (dims.sump.drainValves) {
+          drawSumpDrainValves(dims.sump.drainValves.chambers, sumpLeft, sumpWidth, sumpTop + sumpHeight, 5);
+        }
+
+        // This is a small symbol of the sump, so the drawer is too - not to scale.
+        if (dims.sump.topDrawer) {
+          drawSumpTopDrawer(dims.sump.topDrawer, sumpLeft, sumpTop, sumpWidth / ((sumpChamberLines || 2) + 1), Math.max(3, Math.min(12, 36 / dims.sump.topDrawer.quantity)), 10);
+        }
 
         // Connecting pipe as a pair of thin parallel lines (a "tube"), not a single stroke.
         var pipeX = frontLeft + frontWidth / 2;
@@ -2141,6 +2217,12 @@
         byId('pipingDrain').checked = false;
         byId('piping').checked = true;
       }
+      // Top Drawer (either sump type) rules out the Allum Top Cover for now.
+      var topDrawerOn = byId('sumpTopDrawer').checked;
+      byId('sumpTopDrawerWrap').classList.toggle('hidden', !topDrawerOn);
+      if (topDrawerOn) byId('allumTopCover').checked = false;
+      byId('allumTopCover').disabled = topDrawerOn;
+      syncTopDrawerDefaults();
       byId('allSidesRow').classList.toggle('hidden', !backgroundEnabled);
       byId('backgroundTypeWrap').classList.toggle('hidden', !backgroundEnabled);
       byId('bottomTypeWrap').classList.toggle('hidden', !bottomEnabled);
@@ -2150,6 +2232,97 @@
       byId('standCabinetTypeWrap').classList.toggle('hidden', !standEnabled || (!byId('standCabinet').checked && !byId('standCanopy').checked));
       byId('standPaintWrap').classList.toggle('hidden', !standEnabled || byId('standStainless').checked);
       byId('standCanopyHeightWrap').classList.toggle('hidden', !standEnabled || !byId('standCanopy').checked);
+    }
+
+    // Every sump built from this calculator has at least 1 divider.
+    function getSumpDividerCount() {
+      return Math.max(1, Math.round(Number(byId('sumpDividerCount').value) || 0));
+    }
+
+    // Prefills the drawer from the sump (its width, one chamber's length, 6in tall) until staff edit
+    // that field by hand.
+    var topDrawerEditedByHand = { topDrawerLength: false, topDrawerWidth: false, topDrawerHeight: false };
+    function syncTopDrawerDefaults() {
+      if (!byId('sumpTopDrawer').checked) return;
+      var chambers = getSumpDividerCount() + 1;
+      if (!topDrawerEditedByHand.topDrawerLength) {
+        byId('topDrawerLength').value = Math.round((Number(byId('sumpLength').value) || 0) / chambers * 100) / 100;
+      }
+      if (!topDrawerEditedByHand.topDrawerWidth) byId('topDrawerWidth').value = byId('sumpWidth').value;
+      if (!topDrawerEditedByHand.topDrawerHeight) {
+        byId('topDrawerHeight').value = convertInchesToSelectedUnit(6, byId('sumpUnit').value);
+      }
+    }
+
+    // A red valve under the middle of each chamber, on a shared grey drain pipe below the sump.
+    function drawSumpDrainValves(chambers, left, width, bottomY, drop) {
+      var pipeY = bottomY + drop;
+      context.save();
+      context.strokeStyle = '#7b8fa6';
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(left + width / (chambers * 2), pipeY);
+      context.lineTo(left + width, pipeY);
+      for (var i = 0; i < chambers; i++) {
+        var valveX = left + width * (i + 0.5) / chambers;
+        context.moveTo(valveX, bottomY);
+        context.lineTo(valveX, pipeY);
+      }
+      context.stroke();
+      context.fillStyle = '#d63a2f';
+      for (var v = 0; v < chambers; v++) {
+        context.fillRect(left + width * (v + 0.5) / chambers - 3, bottomY + drop / 2 - 2, 6, 4);
+      }
+      context.restore();
+    }
+
+    // Acrylic top drawer(s) stacked at the sump's left end, each resting on a ledge line, with dots for
+    // the perforated bottom. x/baseTop = the sump top's front-left corner on the canvas.
+    function drawSumpTopDrawer(drawer, x, baseTop, boxLength, boxHeight, boxDepth) {
+      var rise = boxDepth * 0.48;
+      context.save();
+      context.lineWidth = 1.2;
+      for (var i = 0; i < drawer.quantity; i++) {
+        var top = baseTop - i * boxHeight;
+        context.fillStyle = 'rgba(232, 246, 255, 0.72)';
+        context.strokeStyle = '#3f6386';
+        context.fillRect(x, top - boxHeight, boxLength, boxHeight);
+        context.strokeRect(x, top - boxHeight, boxLength, boxHeight);
+
+        context.beginPath();
+        context.moveTo(x + boxLength, top - boxHeight);
+        context.lineTo(x + boxLength + boxDepth, top - boxHeight - rise);
+        context.lineTo(x + boxLength + boxDepth, top - rise);
+        context.lineTo(x + boxLength, top);
+        context.closePath();
+        context.fillStyle = 'rgba(190, 220, 238, 0.72)';
+        context.fill();
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(x, top - boxHeight);
+        context.lineTo(x + boxDepth, top - boxHeight - rise);
+        context.lineTo(x + boxLength + boxDepth, top - boxHeight - rise);
+        context.stroke();
+
+        context.fillStyle = '#3f6386';
+        for (var row = 1; row <= 2; row++) {
+          for (var col = 1; col <= 6; col++) {
+            var dotX = x + boxLength * col / 7;
+            var dotY = top - boxHeight * row / 5;
+            context.fillRect(dotX, dotY, 1.5, 1.5);
+          }
+        }
+
+        context.strokeStyle = '#2d4a66';
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(x, top);
+        context.lineTo(x + boxLength, top);
+        context.stroke();
+        context.lineWidth = 1.2;
+      }
+      context.restore();
     }
 
     function readPanelGlass() {
@@ -2201,6 +2374,16 @@
           pipingSeparateDrain: byId('pipingDrain').checked,
           overflowBox: byId('overflowBox').checked,
           allumTopCover: byId('allumTopCover').checked,
+          dividerCount: getSumpDividerCount(),
+          dividerHeight: byId('sumpDividerHeight').value,
+          drainValves: byId('sumpDrainValves').checked,
+          topDrawer: {
+            enabled: byId('sumpTopDrawer').checked,
+            quantity: byId('topDrawerQuantity').value,
+            length: byId('topDrawerLength').value,
+            width: byId('topDrawerWidth').value,
+            height: byId('topDrawerHeight').value
+          },
           lightPrice: byId('submersibleLight').checked ? (Number(byId('lightPrice').value) || 0) * getLightQuantity() : 0,
           pumpPrice: byId('submersiblePump').checked ? (Number(byId('pumpPrice').value) || 0) * getPumpQuantity() : 0
         },
@@ -2365,6 +2548,9 @@
 
       var parts = [];
       if (c.sumpGlass > 0) parts.push(['Sump glass (' + (sumpInfo.glassThickness || n.glassThickness) + ')' + markupNote, c.sumpGlass * markup]);
+      if (c.sumpDividers > 0) parts.push(['Sump dividers' + markupNote, c.sumpDividers * markup]);
+      if (c.topDrawer > 0) parts.push(['Top drawer', c.topDrawer]);
+      if (c.drainValves > 0) parts.push(['Drain valves', c.drainValves]);
       if (c.filterMedia > 0) parts.push(['Filter medias' + (sumpInfo.filterMediaKg ? ' (approx. ' + sumpInfo.filterMediaKg + ' kg, more or less)' : '') + markupNote, c.filterMedia * markup]);
       if (c.pump > 0) parts.push(['Submersible pump' + itemName('pumpItemSelect') + (getPumpQuantity() > 1 ? ' x' + getPumpQuantity() : '') + markupNote, c.pump * markup]);
       if (c.light > 0) parts.push(['Submersible light' + itemName('lightItemSelect') + (getLightQuantity() > 1 ? ' x' + getLightQuantity() : '') + markupNote, c.light * markup]);
@@ -2395,6 +2581,22 @@
       return sumpExtras;
     }
 
+    // Labels start with "Sump " so they reach the order note with the other sump rows.
+    function pushCustomSumpRows(rows, sumpInfo) {
+      var dividers = sumpInfo.dividers;
+      if (dividers && dividers.count > 0) {
+        rows.push(['Sump Dividers', dividers.count + ' (' + formatInCm(dividers.heightInches) + ' high, evenly spaced unless noted)']);
+      }
+      if (sumpInfo.drainValves) {
+        rows.push(['Sump Drain Valves', sumpInfo.drainValves.chambers + ' (1 per chamber, with holes and shared drain pipe)']);
+      }
+      var drawer = sumpInfo.topDrawer;
+      if (drawer) {
+        rows.push(['Sump Top Drawer', drawer.quantity + ' x ' + formatDimsInCm(drawer.lengthInches, drawer.widthInches, drawer.heightInches) + ' - 3mm acrylic, perforated bottom']);
+        rows.push(['Sump Overall Height', formatInCm(drawer.overallHeightInches) + ' including drawer']);
+      }
+    }
+
     function writeDetailRows(host, rows) {
       lastDetailRows = rows;
       host.innerHTML = rows.map(function (r) {
@@ -2416,6 +2618,7 @@
         ['Sump Volume', result.gallons.toFixed(1) + ' gallons'],
         ['Sump Glass', so.glassThickness]
       ];
+      pushCustomSumpRows(rows, so);
       if (byId('sealant').value) {
         rows.push(['Sealant', byId('sealant').value]);
       }
@@ -2487,6 +2690,7 @@
         rows.push(['Filtration Sump', n.sump.type]);
         rows.push(['Sump Dimensions', formatDimsInCm(n.sump.lengthInches, n.sump.widthInches, n.sump.heightInches)]);
         rows.push(['Sump Glass', n.sump.glassThickness || n.glassThickness]);
+        pushCustomSumpRows(rows, n.sump);
 
         var sumpExtras = getSumpExtrasList(n.sump.filterMediaKg);
         if (sumpExtras.length > 0) {
@@ -2898,6 +3102,10 @@
         piping: s.piping,
         pipingSeparateDrain: s.pipingSeparateDrain,
         allumTopCover: s.allumTopCover,
+        dividerCount: s.dividerCount,
+        dividerHeight: s.dividerHeight,
+        drainValves: s.drainValves,
+        topDrawer: s.topDrawer,
         lightPrice: s.lightPrice,
         pumpPrice: s.pumpPrice,
         glassPricingSetupRows: payload.glassPricingSetupRows,
@@ -2924,7 +3132,7 @@
           temperedGlass: false,
           sump: null,
           stand: null,
-          sumpOnly: { type: n.sumpType, glassThickness: n.glassThickness, filterMediaKg: n.filterMediaKg }
+          sumpOnly: { type: n.sumpType, glassThickness: n.glassThickness, filterMediaKg: n.filterMediaKg, dividers: n.dividers, topDrawer: n.topDrawer, drainValves: n.drainValves }
         }
       };
     }
@@ -2968,6 +3176,16 @@
           byId(id).addEventListener('change', setVisibilityState);
         });
 
+      // Registered before the recalc listeners below, so a hand-typed drawer size isn't re-prefilled.
+      Object.keys(topDrawerEditedByHand).forEach(function (id) {
+        byId(id).addEventListener('input', function () { topDrawerEditedByHand[id] = true; });
+      });
+
+      // On change, not input, so clearing the box to type a new number isn't overwritten mid-edit.
+      byId('sumpDividerCount').addEventListener('change', function () {
+        byId('sumpDividerCount').value = getSumpDividerCount();
+      });
+
       // Standard set vs separate-drain pipe are either/or - registered before the recalc listeners
       // below so the price is computed from the already-unticked other box.
       byId('piping').addEventListener('change', function () {
@@ -2983,7 +3201,8 @@
         'panelFrontTempered', 'panelFrontLowIron', 'panelBackTempered', 'panelBackLowIron', 'panelLeftTempered', 'panelLeftLowIron',
         'panelRightTempered', 'panelRightLowIron', 'panelBottomTempered', 'panelBottomLowIron',
         'sumpEnabled', 'aquascape', 'enclosure', 'turtleTank', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standPaint', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
-        'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'pipingDrain', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
+        'sumpUnit', 'sumpGlass', 'sumpQuantity', 'sumpDividerCount', 'sumpDividerHeight', 'sumpDrainValves', 'sumpTopDrawer', 'topDrawerQuantity', 'topDrawerLength', 'topDrawerWidth', 'topDrawerHeight',
+        'piping', 'pipingDrain', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
       ].forEach(function (id) {
         var eventName = byId(id).tagName === 'INPUT' && (byId(id).type === 'number' || byId(id).type === 'text' || byId(id).tagName === 'TEXTAREA')
@@ -3039,7 +3258,7 @@
           var fields = {};
           ['length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered',
             'rimless', 'highStrip', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount', 'sumpEnabled', 'pipingDrain',
-            'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight', 'sumpUnit', 'sumpGlass', 'stickerBackground', 'allSides',
+            'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight', 'sumpUnit', 'sumpGlass', 'sumpDividerCount', 'sumpDividerHeight', 'sumpDrainValves', 'sumpTopDrawer', 'stickerBackground', 'allSides',
             'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote', 'lightQuantity', 'pumpQuantity',
             'standPaint'
           ].forEach(function (id) {
@@ -3128,7 +3347,7 @@
         }
         byId('sumpEnabled').checked = true;
         if (params.get('sumpType') === 'Undersump' || params.get('sumpType') === 'Overhead Sump') byId('sumpType').value = params.get('sumpType');
-        ['sumpLength', 'sumpWidth', 'sumpHeight'].forEach(function (id) {
+        ['sumpLength', 'sumpWidth', 'sumpHeight', 'sumpDividerCount'].forEach(function (id) {
           if (params.has(id)) byId(id).value = params.get(id);
         });
         byId('sumpUnit').value = 'Inches';
@@ -4114,6 +4333,6 @@
   </script>
 
   <script src="./calculator-ui.js?v=1"></script>
-  <script src="./calc-embed-bridge.js?v=6"></script>
+  <script src="./calc-embed-bridge.js?v=7"></script>
 </body>
 </html>
