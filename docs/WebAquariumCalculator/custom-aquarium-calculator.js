@@ -677,6 +677,32 @@
     };
   }
 
+  // Raised first chamber, the glass alternative to a top drawer (raisedChamber on the sump's options):
+  // its 4 walls go up by extraHeight, so 2 x (chamber length + sump width) x extraHeight x the sump's
+  // glass rate x 'Sump Divider Markup'. Blank length = one chamber. Null when not selected.
+  function getSumpRaisedChamber(sump, unit, dividerCount, sumpLengthInches, sumpWidthInches, sumpHeightInches, glassPricePerSqFt, extraPrices) {
+    var raised = sump.raisedChamber;
+    if (!raised || !raised.enabled) return null;
+    if (sump.topDrawer && sump.topDrawer.enabled) {
+      return { error: 'Choose either a Top Drawer or a Raised First Chamber, not both.' };
+    }
+    var extraHeightInches = toInches(raised.extraHeight, unit);
+    if (!(extraHeightInches > 0)) {
+      return { error: 'Please enter how much taller the first chamber is, or uncheck Raised First Chamber.' };
+    }
+    var lengthInches = Number(raised.length) > 0 ? toInches(raised.length, unit) : sumpLengthInches / (dividerCount + 1);
+    if (lengthInches > sumpLengthInches + 0.001) {
+      return { error: 'The raised chamber cannot be longer than the sump.' };
+    }
+    var areaSqFt = (2 * (lengthInches + sumpWidthInches) * extraHeightInches) / 144;
+    return {
+      lengthInches: round2(lengthInches),
+      extraHeightInches: round2(extraHeightInches),
+      overallHeightInches: round2(sumpHeightInches + extraHeightInches),
+      price: round2(areaSqFt * glassPricePerSqFt * extraPrices['Sump Divider Markup'])
+    };
+  }
+
   // Drain valve on every chamber (drainValves on the sump's options): each chamber = dividers + 1 gets
   // a drilled 'Hole' + 'Sump Drain Valve', joined by a shared pipe along the sump ('Sump Drain Pipe per
   // ft'), rounded up to the nearest 10. Null when not selected.
@@ -750,7 +776,7 @@
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
     var extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
 
-    var components = { sumpGlass: 0, sumpDividers: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0, topDrawer: 0, drainValves: 0 };
+    var components = { sumpGlass: 0, sumpDividers: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0, topDrawer: 0, drainValves: 0, raisedChamber: 0 };
     var normalizedExtra = {};
 
     var sumpAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
@@ -769,6 +795,11 @@
     var drainValves = getSumpDrainValves(options, dividers.count, lengthInches, extraPrices);
     if (drainValves) components.drainValves = drainValves.price;
     normalizedExtra.drainValves = drainValves;
+
+    var raisedChamber = getSumpRaisedChamber(options, unit, dividers.count, lengthInches, widthInches, heightInches, basePricePerSqFt, extraPrices);
+    if (raisedChamber && raisedChamber.error) return { ok: false, error: raisedChamber.error };
+    if (raisedChamber) components.raisedChamber = raisedChamber.price;
+    normalizedExtra.raisedChamber = raisedChamber;
 
     if (options.filterMedias) {
       var volumeCuFt = (lengthInches / 12) * (widthInches / 12) * (heightInches / 12);
@@ -789,15 +820,15 @@
     components.light = round2(Number(options.lightPrice) || 0);
     components.pump = round2(Number(options.pumpPrice) || 0);
 
-    var subtotal = components.sumpGlass + components.sumpDividers + components.filterMedia + components.overflowBox + components.light + components.pump;
+    var subtotal = components.sumpGlass + components.sumpDividers + components.raisedChamber + components.filterMedia + components.overflowBox + components.light + components.pump;
     if (subtotal >= 1000) {
       subtotal = roundNearest10(subtotal);
     }
 
     components.piping = getSumpPipingPrice(sumpType, options.piping, options.pipingSeparateDrain, options.extraPricingSetupRows);
 
-    // No Allum Top Cover on a sump with a top drawer yet.
-    if (options.allumTopCover && !topDrawer) {
+    // No Allum Top Cover on a sump with a top drawer or raised chamber yet.
+    if (options.allumTopCover && !topDrawer && !raisedChamber) {
       var coverAreaSqFt = (lengthInches / 12) * (widthInches / 12);
       var allumRate = buildStickerPriceLookup(options.stickerPricingSetupRows).flat['Allum TopCover'];
       components.allumTopCover = ceilNearest10(coverAreaSqFt * allumRate);
@@ -1403,6 +1434,14 @@
         calculatedPrice += components.sumpDividers;
         normalizedSump.dividers = sumpDividers;
 
+        var sumpRaisedChamber = getSumpRaisedChamber(sump, sumpUnit, sumpDividers.count, sumpLengthInches, sumpWidthInches, sumpHeightInches, sumpPricePerSqFt, extraPrices);
+        if (sumpRaisedChamber && sumpRaisedChamber.error) return { ok: false, error: sumpRaisedChamber.error, autoChangeTo: null };
+        if (sumpRaisedChamber) {
+          components.raisedChamber = sumpRaisedChamber.price;
+          calculatedPrice += components.raisedChamber;
+        }
+        normalizedSump.raisedChamber = sumpRaisedChamber;
+
         // Added after the multipliers below, like piping - acrylic isn't low-iron or AIO glass.
         var sumpTopDrawer = getSumpTopDrawer(sump, sumpUnit, sumpLengthInches, sumpWidthInches, sumpHeightInches, options.stickerPricingSetupRows, extraPrices);
         if (sumpTopDrawer && sumpTopDrawer.error) return { ok: false, error: sumpTopDrawer.error, autoChangeTo: null };
@@ -1444,8 +1483,8 @@
         components.piping = getSumpPipingPrice(sumpType, sump.piping, sump.pipingSeparateDrain, options.extraPricingSetupRows);
         normalizedSump.pipingSeparateDrain = Boolean(sump.pipingSeparateDrain) && isOverheadSump(sumpType);
 
-        // No Allum Top Cover on a sump with a top drawer yet.
-        if (sump.allumTopCover && !sumpTopDrawer) {
+        // No Allum Top Cover on a sump with a top drawer or raised chamber yet.
+        if (sump.allumTopCover && !sumpTopDrawer && !sumpRaisedChamber) {
           var effectiveWidthInches = widthInches;
           if (String(sumpType).toLowerCase() === 'overhead sump') {
             effectiveWidthInches = Math.max(0, widthInches - sumpWidthInches);

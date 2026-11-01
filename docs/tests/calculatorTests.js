@@ -79,6 +79,18 @@
       a.near(r.components.topDrawer, 1110, 'drawer');
     });
 
+    t.test('48x12x12 sump + 3 dividers + first chamber raised 6in', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Undersump', length: 48, width: 12, height: 12, glassThickness: '6mm', allumTopCover: true,
+        dividerCount: 3, raisedChamber: { enabled: true, extraHeight: 6 }
+      });
+      expectOk(a, r);
+      a.near(r.components.raisedChamber, 444, 'raised chamber');
+      a.near(r.components.allumTopCover, 0, 'no allum cover with a raised chamber');
+      a.near(r.totalPrice, 3700, 'total price');
+    });
+
     t.test('48x12x12 sump + 3 dividers + drain valve on all 4 chambers', (a) => {
       const r = C.calculateStandaloneFiltration({
         glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
