@@ -79,6 +79,17 @@
       a.near(r.components.topDrawer, 1110, 'drawer');
     });
 
+    t.test('48x12x12 sump + plain front + tiles bottom sticker', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Undersump', length: 48, width: 12, height: 12, glassThickness: '6mm',
+        panelStickers: { front: { type: 'plain', color: 'Black' }, bottom: { type: 'tiles', color: 'Blue' } }
+      });
+      expectOk(a, r);
+      a.near(r.components.sumpStickers, 640, 'stickers');
+      a.near(r.totalPrice, 3230, 'total price');
+    });
+
     t.test('48x12x12 sump + 3 dividers + first chamber raised 6in', (a) => {
       const r = C.calculateStandaloneFiltration({
         glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
@@ -89,6 +100,28 @@
       a.near(r.components.raisedChamber, 444, 'raised chamber');
       a.near(r.components.allumTopCover, 0, 'no allum cover with a raised chamber');
       a.near(r.totalPrice, 3700, 'total price');
+    });
+
+    t.test('Top drawer too tall for the raised chamber is refused', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Undersump', length: 48, width: 12, height: 12, glassThickness: '6mm',
+        dividerCount: 3, raisedChamber: { enabled: true, extraHeight: 4 },
+        topDrawer: { enabled: true, quantity: 1, length: 12, width: 12, height: 6 }
+      });
+      a.ok(!r.ok, 'should be refused');
+    });
+
+    t.test('48x12x12 sump + 3 dividers + raised chamber with a top drawer inside', (a) => {
+      const r = C.calculateStandaloneFiltration({
+        glassPricingSetupRows: PINNED_GLASS_ROWS, extraPricingSetupRows: PINNED_EXTRA_ROWS,
+        sumpType: 'Undersump', length: 48, width: 12, height: 12, glassThickness: '6mm',
+        dividerCount: 3, raisedChamber: { enabled: true, extraHeight: 6 },
+        topDrawer: { enabled: true, quantity: 1, length: 12, width: 12, height: 6 }
+      });
+      expectOk(a, r);
+      a.near(r.normalized.topDrawer.overallHeightInches, 18, 'overall height');
+      a.near(r.totalPrice, 4810, 'total price');
     });
 
     t.test('48x12x12 sump + 3 dividers + drain valve on all 4 chambers', (a) => {

@@ -677,15 +677,26 @@
     };
   }
 
-  // Raised first chamber, the glass alternative to a top drawer (raisedChamber on the sump's options):
+  // With a raised first chamber, the top drawer goes inside the raised glass: it has to fit, and the
+  // overall height is the glass's. Returns an error message, or null when it fits.
+  function fitSumpDrawerInRaisedChamber(drawer, raised) {
+    if (!drawer || !raised) return null;
+    if (drawer.lengthInches > raised.lengthInches + 0.001) {
+      return 'The Top Drawer must fit inside the Raised First Chamber: make it shorter, or the chamber longer.';
+    }
+    if (drawer.heightInches * drawer.quantity > raised.extraHeightInches + 0.001) {
+      return 'The Top Drawer must fit inside the Raised First Chamber: make it less tall, or raise the chamber more.';
+    }
+    drawer.overallHeightInches = raised.overallHeightInches;
+    return null;
+  }
+
+  // Raised first chamber, taller glass with or without a top drawer (raisedChamber on the sump's options):
   // its 4 walls go up by extraHeight, so 2 x (chamber length + sump width) x extraHeight x the sump's
   // glass rate x 'Sump Divider Markup'. Blank length = one chamber. Null when not selected.
   function getSumpRaisedChamber(sump, unit, dividerCount, sumpLengthInches, sumpWidthInches, sumpHeightInches, glassPricePerSqFt, extraPrices) {
     var raised = sump.raisedChamber;
     if (!raised || !raised.enabled) return null;
-    if (sump.topDrawer && sump.topDrawer.enabled) {
-      return { error: 'Choose either a Top Drawer or a Raised First Chamber, not both.' };
-    }
     var extraHeightInches = toInches(raised.extraHeight, unit);
     if (!(extraHeightInches > 0)) {
       return { error: 'Please enter how much taller the first chamber is, or uncheck Raised First Chamber.' };
@@ -701,6 +712,29 @@
       overallHeightInches: round2(sumpHeightInches + extraHeightInches),
       price: round2(areaSqFt * glassPricePerSqFt * extraPrices['Sump Divider Markup'])
     };
+  }
+
+  // Stickers per sump panel (panelStickers on the sump's options: { front: { type, color }, ... }), at the
+  // same Plain/Tiles rates and rounding as the aquarium's stickers. Null when none are selected.
+  function getSumpPanelStickers(sump, sumpLengthInches, sumpWidthInches, sumpHeightInches, config) {
+    var picks = sump.panelStickers || {};
+    var sizes = {
+      front: [sumpLengthInches, sumpHeightInches],
+      back: [sumpLengthInches, sumpHeightInches],
+      left: [sumpWidthInches, sumpHeightInches],
+      right: [sumpWidthInches, sumpHeightInches],
+      bottom: [sumpLengthInches, sumpWidthInches]
+    };
+    var panels = [];
+    var total = 0;
+    Object.keys(sizes).forEach(function (panel) {
+      var pick = picks[panel];
+      if (!pick) return;
+      var price = calculateStickerPrice(sizes[panel][0], sizes[panel][1], getStickerRate(pick.type, config));
+      panels.push({ panel: panel, type: pick.type === 'tiles' ? 'tiles' : 'plain', color: String(pick.color || ''), price: price });
+      total += price;
+    });
+    return panels.length > 0 ? { panels: panels, price: total } : null;
   }
 
   // Drain valve on every chamber (drainValves on the sump's options): each chamber = dividers + 1 gets
@@ -776,7 +810,7 @@
     var basePricePerSqFt = Number(glassPrices[glass]) || 100;
     var extraPrices = buildExtraPriceLookup(options.extraPricingSetupRows);
 
-    var components = { sumpGlass: 0, sumpDividers: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0, topDrawer: 0, drainValves: 0, raisedChamber: 0 };
+    var components = { sumpGlass: 0, sumpDividers: 0, filterMedia: 0, overflowBox: 0, light: 0, pump: 0, piping: 0, allumTopCover: 0, topDrawer: 0, drainValves: 0, raisedChamber: 0, sumpStickers: 0 };
     var normalizedExtra = {};
 
     var sumpAreaSqFt = getGlassAreaSqFt(lengthInches, widthInches, heightInches);
@@ -800,6 +834,12 @@
     if (raisedChamber && raisedChamber.error) return { ok: false, error: raisedChamber.error };
     if (raisedChamber) components.raisedChamber = raisedChamber.price;
     normalizedExtra.raisedChamber = raisedChamber;
+    var drawerFitError = fitSumpDrawerInRaisedChamber(topDrawer, raisedChamber);
+    if (drawerFitError) return { ok: false, error: drawerFitError };
+
+    var panelStickers = getSumpPanelStickers(options, lengthInches, widthInches, heightInches, options);
+    if (panelStickers) components.sumpStickers = panelStickers.price;
+    normalizedExtra.panelStickers = panelStickers;
 
     if (options.filterMedias) {
       var volumeCuFt = (lengthInches / 12) * (widthInches / 12) * (heightInches / 12);
@@ -834,7 +874,7 @@
       components.allumTopCover = ceilNearest10(coverAreaSqFt * allumRate);
     }
 
-    var totalPrice = subtotal + components.piping + components.allumTopCover + components.topDrawer + components.drainValves;
+    var totalPrice = subtotal + components.piping + components.allumTopCover + components.topDrawer + components.drainValves + components.sumpStickers;
 
     return {
       ok: true,
@@ -1447,11 +1487,18 @@
         if (sumpTopDrawer && sumpTopDrawer.error) return { ok: false, error: sumpTopDrawer.error, autoChangeTo: null };
         if (sumpTopDrawer) components.topDrawer = sumpTopDrawer.price;
         normalizedSump.topDrawer = sumpTopDrawer;
+        var sumpDrawerFitError = fitSumpDrawerInRaisedChamber(sumpTopDrawer, sumpRaisedChamber);
+        if (sumpDrawerFitError) return { ok: false, error: sumpDrawerFitError, autoChangeTo: null };
 
         // Also added after the multipliers below - plumbing, not glass.
         var sumpDrainValves = getSumpDrainValves(sump, sumpDividers.count, sumpLengthInches, extraPrices);
         if (sumpDrainValves) components.drainValves = sumpDrainValves.price;
         normalizedSump.drainValves = sumpDrainValves;
+
+        // Added after the multipliers below, like the aquarium's own stickers.
+        var sumpPanelStickers = getSumpPanelStickers(sump, sumpLengthInches, sumpWidthInches, sumpHeightInches, options);
+        if (sumpPanelStickers) components.sumpStickers = sumpPanelStickers.price;
+        normalizedSump.panelStickers = sumpPanelStickers;
 
         if (sump.filterMedias) {
           var volumeCuFt = (sumpLengthInches / 12) * (sumpWidthInches / 12) * (sumpHeightInches / 12);
@@ -1547,6 +1594,10 @@
 
     if (components.drainValves > 0) {
       calculatedPrice += components.drainValves;
+    }
+
+    if (components.sumpStickers > 0) {
+      calculatedPrice += components.sumpStickers;
     }
 
     if (components.stickerBackground > 0) {

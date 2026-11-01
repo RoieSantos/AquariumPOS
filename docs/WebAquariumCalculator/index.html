@@ -728,7 +728,7 @@
               <label class="checkbox-row"><input id="submersiblePump" type="checkbox">Submersible Pump</label>
               <label class="checkbox-row"><input id="allumTopCover" type="checkbox">Allum Top Cover</label>
               <label class="checkbox-row" id="sumpTopDrawerRow"><input id="sumpTopDrawer" type="checkbox">Top Drawer (3mm acrylic, perforated bottom)</label>
-              <label class="checkbox-row"><input id="sumpRaisedChamber" type="checkbox">Raised First Chamber (taller glass, instead of a drawer)</label>
+              <label class="checkbox-row"><input id="sumpRaisedChamber" type="checkbox">Raised First Chamber (taller glass)</label>
               <label class="checkbox-row"><input id="sumpDrainValves" type="checkbox">Drain valve on every chamber (hole, valve and shared pipe)</label>
             </div>
 
@@ -743,6 +743,13 @@
                 <input id="sumpDividerHeight" type="number" min="0" step="0.01" placeholder="Full height">
               </div>
             </div>
+            <details class="panel-glass">
+              <summary>Sump stickers (choose per panel)</summary>
+              <table id="sumpStickerTable" class="panel-glass-table">
+                <thead><tr><th>Panel</th><th>Sticker</th><th>Color</th></tr></thead>
+                <tbody id="sumpStickerRows"></tbody>
+              </table>
+            </details>
             <div id="sumpRaisedChamberWrap" class="field-grid hidden">
               <div class="field">
                 <label for="raisedChamberHeight">Extra height (sump unit)</label>
@@ -956,7 +963,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js?v=sumpraised1"></script>
+  <script src="./custom-aquarium-calculator.js?v=sumpsticker3"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -2086,6 +2093,9 @@
       }
 
       if (sumpOnlyInfo) {
+        if (sumpOnlyInfo.panelStickers) {
+          drawSumpStickers(sumpOnlyInfo.panelStickers.panels, frontLeft, frontTop, frontWidth, frontHeight, depth);
+        }
         var sumpDividerInfo = sumpOnlyInfo.dividers;
         if (sumpDividerInfo && sumpDividerInfo.count > 0) {
           var dividerPx = sumpDividerInfo.heightInches * scale;
@@ -2109,8 +2119,10 @@
             sumpOnlyInfo.raisedChamber.extraHeightInches * scale, depth);
         }
         if (sumpOnlyInfo.topDrawer) {
-          drawSumpTopDrawer(sumpOnlyInfo.topDrawer, frontLeft, frontTop, sumpOnlyInfo.topDrawer.lengthInches * scale,
-            sumpOnlyInfo.topDrawer.heightInches * scale, depth * Math.min(1, sumpOnlyInfo.topDrawer.widthInches / widthIn));
+          // With a raised chamber too, the drawer is inside its glass - inset so both outlines show.
+          var drawerInset = sumpOnlyInfo.raisedChamber ? 3 : 0;
+          drawSumpTopDrawer(sumpOnlyInfo.topDrawer, frontLeft + drawerInset, frontTop, sumpOnlyInfo.topDrawer.lengthInches * scale - drawerInset * 2,
+            sumpOnlyInfo.topDrawer.heightInches * scale - drawerInset / sumpOnlyInfo.topDrawer.quantity, depth * Math.min(1, sumpOnlyInfo.topDrawer.widthInches / widthIn) - drawerInset * 2);
         }
       }
 
@@ -2129,6 +2141,14 @@
         context.lineWidth = 1.6;
         context.fillRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
         context.strokeRect(sumpLeft, sumpTop, sumpWidth, sumpHeight);
+
+        // Too small a symbol to show each panel, so it takes the first sticker's color and pattern.
+        if (dims.sump.panelStickers) {
+          drawSumpStickerPanel(
+            [[sumpLeft, sumpTop], [sumpLeft + sumpWidth, sumpTop], [sumpLeft + sumpWidth, sumpTop + sumpHeight], [sumpLeft, sumpTop + sumpHeight]],
+            dims.sump.panelStickers.panels[0], 0.82
+          );
+        }
 
         // Baffle chamber dividers - the real count when set, otherwise decorative (a real sump reads
         // instantly with these).
@@ -2153,7 +2173,9 @@
 
         // This is a small symbol of the sump, so the drawer is too - not to scale.
         if (dims.sump.topDrawer) {
-          drawSumpTopDrawer(dims.sump.topDrawer, sumpLeft, sumpTop, sumpWidth / ((sumpChamberLines || 2) + 1), Math.max(3, Math.min(12, 36 / dims.sump.topDrawer.quantity)), 10);
+          var symbolInset = dims.sump.raisedChamber ? 2 : 0;
+          drawSumpTopDrawer(dims.sump.topDrawer, sumpLeft + symbolInset, sumpTop, sumpWidth / ((sumpChamberLines || 2) + 1) - symbolInset * 2,
+            dims.sump.raisedChamber ? 10 / dims.sump.topDrawer.quantity : Math.max(3, Math.min(12, 36 / dims.sump.topDrawer.quantity)), 10 - symbolInset * 2);
         }
 
         // Connecting pipe as a pair of thin parallel lines (a "tube"), not a single stroke.
@@ -2275,6 +2297,84 @@
       if (!topDrawerEditedByHand.topDrawerHeight) {
         byId('topDrawerHeight').value = convertInchesToSelectedUnit(6, byId('sumpUnit').value);
       }
+    }
+
+    // Sump stickers per panel. Color is spec + drawing only - it doesn't change the price.
+    var SUMP_STICKER_COLORS = { Black: '#1f2328', Blue: '#2f6fb3', White: '#f4f5f2' };
+    (function buildSumpStickerRows() {
+      var colorOptions = Object.keys(SUMP_STICKER_COLORS).map(function (color) { return '<option>' + color + '</option>'; }).join('');
+      byId('sumpStickerRows').innerHTML = PANEL_GLASS_NAMES.map(function (name) {
+        return '<tr><td>' + name + '</td>' +
+          '<td><select id="sumpSticker' + name + 'Type" aria-label="' + name + ' panel sticker"><option>None</option><option>Plain Sticker</option><option>Sticker Tiles</option></select></td>' +
+          '<td><select id="sumpSticker' + name + 'Color" aria-label="' + name + ' panel sticker color" disabled>' + colorOptions + '</select></td></tr>';
+      }).join('');
+    })();
+
+    function readSumpPanelStickers() {
+      var picks = {};
+      PANEL_GLASS_NAMES.forEach(function (name) {
+        var type = byId('sumpSticker' + name + 'Type').value;
+        byId('sumpSticker' + name + 'Color').disabled = type === 'None';
+        if (type !== 'None') {
+          picks[name.toLowerCase()] = { type: stickerTypeValue('sumpSticker' + name + 'Type'), color: byId('sumpSticker' + name + 'Color').value };
+        }
+      });
+      return picks;
+    }
+
+    // One sticker panel on the sump drawing, as a four-cornered shape, with a tile grid for Sticker Tiles.
+    function drawSumpStickerPanel(corners, sticker, alpha) {
+      function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+      context.save();
+      context.globalAlpha = alpha;
+      context.fillStyle = SUMP_STICKER_COLORS[sticker.color] || SUMP_STICKER_COLORS.Black;
+      context.beginPath();
+      corners.forEach(function (point, i) {
+        if (i === 0) context.moveTo(point[0], point[1]); else context.lineTo(point[0], point[1]);
+      });
+      context.closePath();
+      context.fill();
+      context.strokeStyle = 'rgba(40, 60, 85, 0.7)';
+      context.lineWidth = 1;
+      context.stroke();
+      if (sticker.type === 'tiles') {
+        context.strokeStyle = sticker.color === 'Black' ? 'rgba(255, 255, 255, 0.5)' : 'rgba(30, 40, 50, 0.4)';
+        context.beginPath();
+        for (var i = 1; i < 6; i++) {
+          var t = i / 6;
+          var top = mix(corners[0], corners[1], t);
+          var bottom = mix(corners[3], corners[2], t);
+          var left = mix(corners[0], corners[3], t);
+          var right = mix(corners[1], corners[2], t);
+          context.moveTo(top[0], top[1]);
+          context.lineTo(bottom[0], bottom[1]);
+          context.moveTo(left[0], left[1]);
+          context.lineTo(right[0], right[1]);
+        }
+        context.stroke();
+      }
+      context.restore();
+    }
+
+    // Panels seen through the glass (back, left, bottom) first and fainter, then the two facing out.
+    function drawSumpStickers(panels, left, top, width, height, depth) {
+      var right = left + width;
+      var bottom = top + height;
+      var rise = depth * 0.48;
+      var shapes = {
+        back: [[left + depth, top - rise], [right + depth, top - rise], [right + depth, bottom - rise], [left + depth, bottom - rise]],
+        left: [[left, top], [left + depth, top - rise], [left + depth, bottom - rise], [left, bottom]],
+        bottom: [[left, bottom], [right, bottom], [right + depth, bottom - rise], [left + depth, bottom - rise]],
+        right: [[right, top], [right + depth, top - rise], [right + depth, bottom - rise], [right, bottom]],
+        front: [[left, top], [right, top], [right, bottom], [left, bottom]]
+      };
+      ['back', 'left', 'bottom', 'right', 'front'].forEach(function (name) {
+        panels.forEach(function (sticker) {
+          if (sticker.panel === name) {
+            drawSumpStickerPanel(shapes[name], sticker, name === 'right' || name === 'front' ? 0.82 : 0.55);
+          }
+        });
+      });
     }
 
     // Same prefill idea as the drawer: one chamber's length, 6in taller.
@@ -2438,6 +2538,7 @@
           dividerCount: getSumpDividerCount(),
           dividerHeight: byId('sumpDividerHeight').value,
           drainValves: byId('sumpDrainValves').checked,
+          panelStickers: readSumpPanelStickers(),
           raisedChamber: {
             enabled: byId('sumpRaisedChamber').checked,
             extraHeight: byId('raisedChamberHeight').value,
@@ -2615,6 +2716,7 @@
       var parts = [];
       if (c.sumpGlass > 0) parts.push(['Sump glass (' + (sumpInfo.glassThickness || n.glassThickness) + ')' + markupNote, c.sumpGlass * markup]);
       if (c.sumpDividers > 0) parts.push(['Sump dividers' + markupNote, c.sumpDividers * markup]);
+      if (c.sumpStickers > 0) parts.push(['Sump stickers', c.sumpStickers]);
       if (c.raisedChamber > 0) parts.push(['Raised first chamber' + markupNote, c.raisedChamber * markup]);
       if (c.topDrawer > 0) parts.push(['Top drawer', c.topDrawer]);
       if (c.drainValves > 0) parts.push(['Drain valves', c.drainValves]);
@@ -2657,15 +2759,22 @@
       if (sumpInfo.drainValves) {
         rows.push(['Sump Drain Valves', sumpInfo.drainValves.chambers + ' (1 per chamber, with holes and shared drain pipe)']);
       }
+      if (sumpInfo.panelStickers) {
+        rows.push(['Sump Stickers', sumpInfo.panelStickers.panels.map(function (sticker) {
+          return sticker.panel.charAt(0).toUpperCase() + sticker.panel.slice(1) + ': ' + sticker.color + ' ' + (sticker.type === 'tiles' ? 'Sticker Tiles' : 'Plain Sticker');
+        }).join(', ')]);
+      }
       var raised = sumpInfo.raisedChamber;
       if (raised) {
         rows.push(['Sump Raised First Chamber', formatInCm(raised.extraHeightInches) + ' taller, ' + formatInCm(raised.lengthInches) + ' long, same glass']);
-        rows.push(['Sump Overall Height', formatInCm(raised.overallHeightInches) + ' at the raised chamber']);
       }
       var drawer = sumpInfo.topDrawer;
+      if (raised && !drawer) {
+        rows.push(['Sump Overall Height', formatInCm(raised.overallHeightInches) + ' at the raised chamber']);
+      }
       if (drawer) {
-        rows.push(['Sump Top Drawer', drawer.quantity + ' x ' + formatDimsInCm(drawer.lengthInches, drawer.widthInches, drawer.heightInches) + ' - 3mm acrylic, perforated bottom']);
-        rows.push(['Sump Overall Height', formatInCm(drawer.overallHeightInches) + ' including drawer']);
+        rows.push(['Sump Top Drawer', drawer.quantity + ' x ' + formatDimsInCm(drawer.lengthInches, drawer.widthInches, drawer.heightInches) + ' - 3mm acrylic, perforated bottom' + (raised ? ', inside the raised chamber' : '')]);
+        rows.push(['Sump Overall Height', formatInCm(drawer.overallHeightInches) + (raised ? ' at the raised chamber' : ' including drawer')]);
       }
     }
 
@@ -3177,6 +3286,7 @@
         dividerCount: s.dividerCount,
         dividerHeight: s.dividerHeight,
         drainValves: s.drainValves,
+        panelStickers: s.panelStickers,
         raisedChamber: s.raisedChamber,
         topDrawer: s.topDrawer,
         lightPrice: s.lightPrice,
@@ -3205,7 +3315,7 @@
           temperedGlass: false,
           sump: null,
           stand: null,
-          sumpOnly: { type: n.sumpType, glassThickness: n.glassThickness, filterMediaKg: n.filterMediaKg, dividers: n.dividers, topDrawer: n.topDrawer, drainValves: n.drainValves, raisedChamber: n.raisedChamber }
+          sumpOnly: { type: n.sumpType, glassThickness: n.glassThickness, filterMediaKg: n.filterMediaKg, dividers: n.dividers, topDrawer: n.topDrawer, drainValves: n.drainValves, raisedChamber: n.raisedChamber, panelStickers: n.panelStickers }
         }
       };
     }
@@ -3259,15 +3369,13 @@
         byId('sumpDividerCount').value = getSumpDividerCount();
       });
 
+      byId('sumpStickerTable').addEventListener('change', function () {
+        enforceOptionRules(true);
+        setVisibilityState();
+        calculateAquarium(true);
+      });
       Object.keys(raisedChamberEditedByHand).forEach(function (id) {
         byId(id).addEventListener('input', function () { raisedChamberEditedByHand[id] = true; });
-      });
-      // Top Drawer vs Raised First Chamber are either/or.
-      byId('sumpTopDrawer').addEventListener('change', function () {
-        if (byId('sumpTopDrawer').checked) byId('sumpRaisedChamber').checked = false;
-      });
-      byId('sumpRaisedChamber').addEventListener('change', function () {
-        if (byId('sumpRaisedChamber').checked) byId('sumpTopDrawer').checked = false;
       });
 
       // Standard set vs separate-drain pipe are either/or - registered before the recalc listeners
