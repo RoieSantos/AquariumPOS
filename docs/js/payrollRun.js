@@ -129,12 +129,18 @@ function renderLineRows(lines) {
   const unitLabel = (l) => l.pay_type === 'Hourly' ? 'hr' : 'day';
   // payment_method is already defaulted to Cash server-side, same rule as the funding requirement.
   const methodBadge = (m) => `<span class="badge ${m === 'Digital' ? 'badge-primary' : 'badge-success'}">${m || 'Cash'}</span>`;
+  // Draft runs get a dropdown to change the method for this run only - see saveLineMethod().
+  const methodCell = (l) => isRunFinalized() ? methodBadge(l.payment_method) : `
+    <select data-method-line-id="${l.line_id}" aria-label="Pay method for ${l.display_name || l.username}">
+      <option value="Cash"${l.payment_method === 'Digital' ? '' : ' selected'}>Cash</option>
+      <option value="Digital"${l.payment_method === 'Digital' ? ' selected' : ''}>Digital</option>
+    </select>`;
 
   tbody.innerHTML = lines
     .map((l) => `
       <tr data-line-row="${l.line_id}" class="${l.line_id === selectedLineId ? 'selected' : ''}">
         <td><a href="#" class="bc-link" data-line-id="${l.line_id}" title="Open this payroll line">${l.display_name || l.username}</a></td>
-        <td>${methodBadge(l.payment_method)}</td>
+        <td>${methodCell(l)}</td>
         <td class="num">${formatCurrency(l.base_pay)}</td>
         <td class="num">${hasDaysWorked(l) ? `${formatCurrency(l.daily_rate)}/${unitLabel(l)}` : '<span class="muted">-</span>'}</td>
         <td class="num">${hasDaysWorked(l) ? `${formatDays(l.days_worked)} ${unitLabel(l)}${l.pay_type === 'Hourly' ? 's' : '(s)'}` : '<span class="muted">-</span>'}</td>
@@ -209,6 +215,29 @@ async function loadLines() {
   }
 
   renderLineRows(data);
+}
+
+// Per "sometimes they are paying digital instead of cash" - changes this run's line only, never the
+// employee's default in Payroll Setup (supabase_payroll_run_line_method_override.sql).
+async function saveLineMethod(lineId, method) {
+  const errorEl = document.getElementById('runError');
+  errorEl.classList.add('hidden');
+
+  const { data, error } = await supabaseClient.rpc('admin_set_payroll_run_line_method', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_line_id: lineId,
+    p_method: method
+  });
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result || !result.success) {
+    errorEl.textContent = error?.message || result?.message || 'Failed to update pay method.';
+    errorEl.classList.remove('hidden');
+  }
+
+  await loadLines();
+  await loadFundingRequirement();
 }
 
 function renderLineItemRows(items) {
@@ -525,7 +554,12 @@ async function deleteRun() {
     const tr = e.target.closest('tr[data-line-row]');
     if (tr) selectLine(tr.dataset.lineRow);
   });
+  lineBody.addEventListener('change', (e) => {
+    const select = e.target.closest('[data-method-line-id]');
+    if (select) saveLineMethod(select.getAttribute('data-method-line-id'), select.value);
+  });
   lineBody.addEventListener('dblclick', (e) => {
+    if (e.target.closest('[data-method-line-id]')) return;
     const tr = e.target.closest('tr[data-line-row]');
     if (tr) openLineModal(tr.dataset.lineRow);
   });

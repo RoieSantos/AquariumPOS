@@ -29,6 +29,12 @@ let chatNewMode = 'dm'; // 'dm' | 'group' - which tab is active in the "New" vie
 const chatSelectedGroupMembers = new Set(); // usernames picked so far while chatNewMode === 'group'
 const ALICE_USERNAME = 'alice';
 const ALICE_MENTION_RE = /@alice\b/i;
+const CHAT_BUBBLE_POSITION_KEY = 'chatBubblePosition';
+const CHAT_BUBBLE_EDGE_GAP = 8; // px the dragged bubble/open panel must stay from the window's edges
+const CHAT_BUBBLE_DRAG_THRESHOLD = 5; // px of movement before a press counts as a drag, not a click
+const CHAT_PANEL_BUBBLE_GAP = 12;
+let chatBubbleOffset = null; // { right, bottom } px once dragged - null keeps the stylesheet's corner
+let chatBubbleJustDragged = false; // swallows the click the browser fires when a drag is released
 
 // @mention autocomplete for the open thread's input - per "when I put @ there are no users to be
 // tagged", so staff can actually find/tag Alice (or each other) instead of having to know to type
@@ -393,9 +399,14 @@ function chatBuildWidgetShell() {
   document.body.appendChild(root);
 
   document.getElementById('chatWidgetBubble').addEventListener('click', () => {
+    if (chatBubbleJustDragged) {
+      chatBubbleJustDragged = false;
+      return;
+    }
     if (chatIsPanelOpen()) chatClosePanel();
     else chatOpenPanel();
   });
+  chatInitBubbleDrag();
   document.getElementById('chatConversationSearch').addEventListener('input', chatRenderConversationList);
   document.getElementById('chatThreadInput').addEventListener('input', chatAutosizeComposer);
   document.addEventListener('keydown', (evt) => {
@@ -418,6 +429,128 @@ function chatBuildWidgetShell() {
   });
 }
 
+// Draggable bubble - per "can we move this draggable?", since it can sit on top of page content.
+// The spot is remembered per browser, as a distance from the bottom-right corner so it stays put
+// relative to that corner when the window resizes.
+function chatApplyBubbleOffset(offset) {
+  const bubble = document.getElementById('chatWidgetBubble');
+  const clamp = (value, viewportSize, bubbleSize) =>
+    Math.max(CHAT_BUBBLE_EDGE_GAP, Math.min(value, viewportSize - bubbleSize - CHAT_BUBBLE_EDGE_GAP));
+  const clamped = {
+    right: clamp(offset.right, document.documentElement.clientWidth, bubble.offsetWidth),
+    bottom: clamp(offset.bottom, document.documentElement.clientHeight, bubble.offsetHeight)
+  };
+  bubble.style.right = `${clamped.right}px`;
+  bubble.style.bottom = `${clamped.bottom}px`;
+  return clamped;
+}
+
+function chatInitBubbleDrag() {
+  const bubble = document.getElementById('chatWidgetBubble');
+  let drag = null;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAT_BUBBLE_POSITION_KEY));
+    if (Number.isFinite(saved?.right) && Number.isFinite(saved?.bottom)) {
+      chatBubbleOffset = saved;
+      chatApplyBubbleOffset(chatBubbleOffset);
+    }
+  } catch {
+    // Unreadable or blocked storage just means the bubble starts in its default corner.
+  }
+
+  // Inline so this works without a styles.css cache bump: a touch on the bubble drags it instead
+  // of scrolling the page, and never reaches pullToRefresh.js's document-level listener.
+  bubble.style.touchAction = 'none';
+  bubble.addEventListener('touchstart', (evt) => evt.stopPropagation(), { passive: true });
+
+  bubble.addEventListener('pointerdown', (evt) => {
+    if (evt.button !== 0) return;
+    chatBubbleJustDragged = false;
+    const style = getComputedStyle(bubble);
+    drag = {
+      pointerId: evt.pointerId,
+      startX: evt.clientX,
+      startY: evt.clientY,
+      startRight: parseFloat(style.right),
+      startBottom: parseFloat(style.bottom),
+      moved: false
+    };
+    bubble.setPointerCapture(evt.pointerId);
+  });
+
+  bubble.addEventListener('pointermove', (evt) => {
+    if (!drag || evt.pointerId !== drag.pointerId) return;
+    const dx = evt.clientX - drag.startX;
+    const dy = evt.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(dx, dy) < CHAT_BUBBLE_DRAG_THRESHOLD) return;
+    drag.moved = true;
+    chatBubbleOffset = chatApplyBubbleOffset({ right: drag.startRight - dx, bottom: drag.startBottom - dy });
+    if (chatIsPanelOpen()) chatPositionPanel();
+  });
+
+  const endDrag = (evt) => {
+    if (!drag || evt.pointerId !== drag.pointerId) return;
+    if (drag.moved) {
+      chatBubbleJustDragged = true;
+      try {
+        localStorage.setItem(CHAT_BUBBLE_POSITION_KEY, JSON.stringify(chatBubbleOffset));
+      } catch {
+        // Blocked storage just means the new spot only lasts until the next page load.
+      }
+    }
+    drag = null;
+  };
+  bubble.addEventListener('pointerup', endDrag);
+  bubble.addEventListener('pointercancel', endDrag);
+
+  // chatBubbleOffset itself is left alone, so the bubble returns to its spot when the window grows back.
+  window.addEventListener('resize', () => {
+    if (chatBubbleOffset) chatApplyBubbleOffset(chatBubbleOffset);
+    if (chatIsPanelOpen()) chatPositionPanel();
+  });
+}
+
+// Opens the panel next to wherever the bubble is: right edges lined up, above it if there's room,
+// otherwise below, otherwise beside it. At the bubble's default corner this lands exactly where the stylesheet puts it.
+// Phones keep the stylesheet's full-width panel.
+function chatPositionPanel() {
+  const panel = document.getElementById('chatWidgetPanel');
+  if (window.matchMedia('(max-width: 480px)').matches) {
+    panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = '';
+    return;
+  }
+
+  const bubble = document.getElementById('chatWidgetBubble');
+  const viewportWidth = document.documentElement.clientWidth;
+  const viewportHeight = document.documentElement.clientHeight;
+  const style = getComputedStyle(bubble);
+  const bubbleRight = viewportWidth - parseFloat(style.right);
+  const bubbleBottom = viewportHeight - parseFloat(style.bottom);
+  const bubbleTop = bubbleBottom - bubble.offsetHeight;
+  const maxLeft = viewportWidth - panel.offsetWidth - CHAT_BUBBLE_EDGE_GAP;
+  const maxTop = viewportHeight - panel.offsetHeight - CHAT_BUBBLE_EDGE_GAP;
+
+  const above = bubbleTop - CHAT_PANEL_BUBBLE_GAP - panel.offsetHeight;
+  const below = bubbleBottom + CHAT_PANEL_BUBBLE_GAP;
+  let left = bubbleRight - panel.offsetWidth;
+  let top = Math.max(CHAT_BUBBLE_EDGE_GAP, maxTop);
+  if (above >= CHAT_BUBBLE_EDGE_GAP) {
+    top = above;
+  } else if (below <= maxTop) {
+    top = below;
+  } else {
+    // Short window with the bubble mid-screen: fits neither way, so sit beside it instead of over it.
+    const leftOfBubble = bubbleRight - bubble.offsetWidth - CHAT_PANEL_BUBBLE_GAP - panel.offsetWidth;
+    left = leftOfBubble >= CHAT_BUBBLE_EDGE_GAP ? leftOfBubble : bubbleRight + CHAT_PANEL_BUBBLE_GAP;
+  }
+
+  panel.style.left = `${Math.max(CHAT_BUBBLE_EDGE_GAP, Math.min(left, maxLeft))}px`;
+  panel.style.top = `${top}px`;
+  panel.style.right = 'auto';
+  panel.style.bottom = 'auto';
+}
+
 function chatSetNewMode(mode) {
   chatNewMode = mode;
   chatSelectedGroupMembers.clear();
@@ -438,6 +571,7 @@ function chatSetBubbleOpenState(isOpen) {
 
 function chatOpenPanel() {
   document.getElementById('chatWidgetPanel').classList.remove('hidden');
+  chatPositionPanel();
   chatSetBubbleOpenState(true);
   chatShowListView();
   chatLoadConversations().catch((err) => console.error('Chat: failed to load conversations', err));
