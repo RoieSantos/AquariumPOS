@@ -256,6 +256,7 @@ namespace AquariumPOS
             string glass = normalized.TryGetProperty("glassThickness", out var g) ? g.GetString() ?? string.Empty : Field("glass");
             bool tempered = normalized.TryGetProperty("temperedGlass", out var t) && t.ValueKind == JsonValueKind.True;
             bool rimless = normalized.TryGetProperty("rimless", out var r) && r.ValueKind == JsonValueKind.True;
+            string panelGlassText = normalized.TryGetProperty("panelGlassText", out var pg) && pg.ValueKind == JsonValueKind.String ? pg.GetString() ?? string.Empty : string.Empty;
 
             int holeCount = IntField("holeCount");
             int dividerCount = IntField("dividerCount");
@@ -267,6 +268,7 @@ namespace AquariumPOS
                 option,
                 Checked("lowIron") ? "Low Iron" : null,
                 tempered ? "Tempered" : null,
+                string.IsNullOrWhiteSpace(panelGlassText) ? null : $"Mixed Glass ({panelGlassText})",
                 Checked("aio") ? "AIO" : null,
                 Checked("enclosure") ? "Enclosure" : null,
                 Checked("turtleTank") ? "Turtle Tank" : null,

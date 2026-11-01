@@ -714,6 +714,20 @@ function ensureGlassPricingLoaded() {
   return pricingSetupLoadPromise;
 }
 
+const CUSTOM_PANEL_NAMES = ['Front', 'Back', 'Left', 'Right', 'Bottom'];
+const CUSTOM_PANEL_BOX_IDS = CUSTOM_PANEL_NAMES.flatMap((name) => [`customPanel${name}Tempered`, `customPanel${name}LowIron`]);
+
+function readCustomPanelGlass() {
+  const panels = {};
+  CUSTOM_PANEL_NAMES.forEach((name) => {
+    panels[name.toLowerCase()] = {
+      tempered: document.getElementById(`customPanel${name}Tempered`).checked,
+      lowIron: document.getElementById(`customPanel${name}LowIron`).checked
+    };
+  });
+  return panels;
+}
+
 // Builds the payload calculateCustomAquarium() expects, from whatever the customer has filled in
 // across the Dimensions, Options, and (when the post-Options prompt was answered "yes") Filtration
 // steps. Stand/sticker sizing still isn't collected (no step for it) so those stay disabled.
@@ -728,6 +742,7 @@ function buildCustomPayload() {
     glassThickness: document.getElementById('customGlass').value,
     temperedGlass: document.getElementById('customTempered').checked,
     lowIron: document.getElementById('customLowIron').checked,
+    panelGlass: readCustomPanelGlass(),
     aio: document.getElementById('customAio').checked,
     rimless: document.getElementById('customRimless').checked,
     highStrip: document.getElementById('customHighStrip').checked,
@@ -1770,7 +1785,9 @@ function renderCustomAquariumSummary() {
 
   const holeCount = Number(document.getElementById('customHoleCount').value) || 0;
   const dividerCount = Number(document.getElementById('customDividerCount').value) || 0;
+  const panelGlassText = customPanelGlassText();
   const countsHtml = [
+    panelGlassText ? `<div><strong>Mixed Glass:</strong> ${panelGlassText}</div>` : '',
     holeCount > 0 ? `<div><strong>Hole for Aquarium:</strong> ${holeCount}</div>` : '',
     dividerCount > 0 ? `<div><strong>Divider:</strong> ${dividerCount}</div>` : ''
   ].join('');
@@ -1820,6 +1837,11 @@ async function updateCustomPriceEstimate() {
   boxes.forEach((box) => { box.innerHTML = priceHtml; });
 }
 
+function customPanelGlassText() {
+  const result = window.CustomAquariumCalculator.calculateCustomAquarium(buildCustomPayload());
+  return (result.ok && result.normalized.panelGlassText) || '';
+}
+
 // Plain-text spec line describing everything picked across the Dimensions/Options steps, used
 // both as the cart line's item name (so it shows up correctly in the submitted order) and as the
 // product row on the checkout summary below.
@@ -1838,6 +1860,8 @@ function buildCustomAquariumSpecText() {
   if (document.getElementById('customAio').checked) opts.push('AIO');
   if (document.getElementById('customLowIron').checked) opts.push('Low Iron');
   if (document.getElementById('customTempered').checked) opts.push('Tempered Glass');
+  const panelGlassText = customPanelGlassText();
+  if (panelGlassText) opts.push(`Mixed Glass (${panelGlassText})`);
   if (document.getElementById('customHighStrip').checked) opts.push('High Strip');
   if (document.getElementById('customAquascape').checked) opts.push('Aquascape Service');
   if (document.getElementById('customEnclosure').checked) opts.push('Enclosure');
@@ -2964,6 +2988,41 @@ async function enforceGlassThicknessRules() {
     }
   }
 
+  // Whole-tank options already cover these panels, so their per-panel boxes are off.
+  CUSTOM_PANEL_NAMES.forEach((name) => {
+    const panelTempered = document.getElementById(`customPanel${name}Tempered`);
+    const panelLowIron = document.getElementById(`customPanel${name}LowIron`);
+    panelTempered.disabled = tempered.checked;
+    panelLowIron.disabled = lowIron.checked;
+    if (tempered.checked) panelTempered.checked = false;
+    if (lowIron.checked) panelLowIron.checked = false;
+  });
+
+  // A tempered panel starts at 10mm like a tempered tank, and a tank is one thickness. Asks first
+  // since it reprices the whole tank.
+  const panelNeeds10mm = CUSTOM_PANEL_NAMES.some((name) => {
+    const panelTempered = document.getElementById(`customPanel${name}Tempered`).checked;
+    const panelLowIron = document.getElementById(`customPanel${name}LowIron`).checked;
+    return panelTempered || (panelLowIron && tempered.checked);
+  });
+  if (panelNeeds10mm && (glass.value === '3mm' || glass.value === '6mm')) {
+    const upgrade = await showConfirmModal(
+      'Tempering Glass starts at 10mm Glass Thickness, and the whole aquarium uses one thickness. Would you like to proceed? (Price change may vary)',
+      'Yes, Upgrade Glass',
+      'No, Keep Current'
+    );
+    if (upgrade) {
+      glass.value = '10mm';
+      messages.push('Glass thickness was increased to 10mm for the tempered panel.');
+    } else {
+      CUSTOM_PANEL_NAMES.forEach((name) => {
+        document.getElementById(`customPanel${name}Tempered`).checked = false;
+        if (tempered.checked) document.getElementById(`customPanel${name}LowIron`).checked = false;
+      });
+      messages.push('The panel upgrade was removed since 10mm glass was declined.');
+    }
+  }
+
   // Rimless needs thicker glass than a braced tank of the same size (height/length/gallon based,
   // not a fixed minimum like AIO/Low Iron above) - uses the calculator's own size chart,
   // getMinimumGlassForSize() in WebAquariumCalculator/custom-aquarium-calculator.js.
@@ -3164,7 +3223,7 @@ function resetCustomAquariumBuilder() {
   document.getElementById('customHoleCount').value = '0';
   document.getElementById('customDividerCount').value = '0';
 
-  ['customAio', 'customLowIron', 'customTempered', 'customRimless', 'customHighStrip', 'customAquascape', 'customEnclosure']
+  ['customAio', 'customLowIron', 'customTempered', 'customRimless', 'customHighStrip', 'customAquascape', 'customEnclosure'].concat(CUSTOM_PANEL_BOX_IDS)
     .forEach((id) => { document.getElementById(id).checked = false; document.getElementById(id).disabled = false; });
 
   document.getElementById('sumpType').value = 'Undersump';
@@ -4342,7 +4401,7 @@ async function runDeliveryEstimate() {
     });
   });
 
-  ['customAio', 'customTempered', 'customHighStrip', 'customAquascape', 'customEnclosure']
+  ['customAio', 'customTempered', 'customHighStrip', 'customAquascape', 'customEnclosure'].concat(CUSTOM_PANEL_BOX_IDS)
     .forEach((id) => document.getElementById(id).addEventListener('change', () => {
       enforceGlassThicknessRules().then(updateCustomPriceEstimate);
     }));

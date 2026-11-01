@@ -12745,7 +12745,7 @@ END", connection);
                         // Apply Low Iron markup: add 70% on top of the current aquarium price
                         if (lowIronCheckBox.Checked)
                         {
-                            calculatedPrice = Math.Round(calculatedPrice * 1.70m, 2);
+                            calculatedPrice = Math.Round(calculatedPrice * 1.90m, 2);
                         }
 
                     }

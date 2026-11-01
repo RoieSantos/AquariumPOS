@@ -6,6 +6,12 @@
   <title>Custom Aquarium Calculator - RS Pet Stop</title>
   <link rel="stylesheet" href="./calculator-ui.css?v=3">
   <style>
+    .panel-glass { margin-top: 10px; }
+    .panel-glass summary { cursor: pointer; font-weight: 600; }
+    .panel-glass-table { width: 100%; max-width: 360px; margin-top: 8px; border-collapse: collapse; }
+    .panel-glass-table th, .panel-glass-table td { padding: 6px 8px; text-align: center; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+    .panel-glass-table th:first-child, .panel-glass-table td:first-child { text-align: left; }
+    .panel-glass-table input:disabled { opacity: 0.45; }
     /* Stock sheet inputs on the Glass Cut Sheet card - narrow, since both are shop constants
        that rarely change, unlike the tank dimensions above. */
     .cut-sheet-fields {
@@ -621,6 +627,20 @@
             <label class="checkbox-row"><input id="turtleTank" type="checkbox">Turtle tank (basking area)</label>
           </div>
 
+          <details id="panelGlassDetails" class="panel-glass">
+            <summary>Mixed glass (choose per panel)</summary>
+            <table class="panel-glass-table">
+              <thead><tr><th>Panel</th><th>Tempered</th><th>Low Iron</th></tr></thead>
+              <tbody>
+                <tr><td>Front</td><td><input id="panelFrontTempered" type="checkbox" aria-label="Front panel tempered"></td><td><input id="panelFrontLowIron" type="checkbox" aria-label="Front panel low iron"></td></tr>
+                <tr><td>Back</td><td><input id="panelBackTempered" type="checkbox" aria-label="Back panel tempered"></td><td><input id="panelBackLowIron" type="checkbox" aria-label="Back panel low iron"></td></tr>
+                <tr><td>Left</td><td><input id="panelLeftTempered" type="checkbox" aria-label="Left panel tempered"></td><td><input id="panelLeftLowIron" type="checkbox" aria-label="Left panel low iron"></td></tr>
+                <tr><td>Right</td><td><input id="panelRightTempered" type="checkbox" aria-label="Right panel tempered"></td><td><input id="panelRightLowIron" type="checkbox" aria-label="Right panel low iron"></td></tr>
+                <tr><td>Bottom</td><td><input id="panelBottomTempered" type="checkbox" aria-label="Bottom panel tempered"></td><td><input id="panelBottomLowIron" type="checkbox" aria-label="Bottom panel low iron"></td></tr>
+              </tbody>
+            </table>
+          </details>
+
           <div class="field-grid" style="margin-top: 14px;">
             <div class="field">
               <label for="holeCount">Holes in aquarium (qty)</label>
@@ -888,7 +908,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="../js/config.js"></script>
   <script src="../js/supabaseClient.js"></script>
-  <script src="./custom-aquarium-calculator.js?v=readymade1"></script>
+  <script src="./custom-aquarium-calculator.js?v=lowiron19"></script>
   <script src="../js/glassCutList.js"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
@@ -919,6 +939,7 @@
     // [label, value] rows from the last renderDetailsSummary - reused by the Summary tab.
     var lastDetailRows = [];
     var suppressUiSync = false;
+    var PANEL_GLASS_NAMES = ['Front', 'Back', 'Left', 'Right', 'Bottom'];
     var ruleNoticeState = {
       temperedMandatory: false,
       aioGlassAutoFix: false,
@@ -1286,6 +1307,16 @@
           tempered.checked = true;
         }
 
+        // Whole-tank options already cover these panels, so their per-panel boxes are off.
+        PANEL_GLASS_NAMES.forEach(function (name) {
+          var panelTempered = byId('panel' + name + 'Tempered');
+          var panelLowIron = byId('panel' + name + 'LowIron');
+          panelTempered.disabled = tempered.checked;
+          panelLowIron.disabled = lowIron.checked;
+          if (tempered.checked) panelTempered.checked = false;
+          if (lowIron.checked) panelLowIron.checked = false;
+        });
+
         if (aio.checked && glass.value === '3mm') {
           glass.value = '6mm';
           if (showAlerts && !ruleNoticeState.aioGlassAutoFix) {
@@ -1296,7 +1327,7 @@
           ruleNoticeState.aioGlassAutoFix = false;
         }
 
-        if (lowIron.checked && tempered.checked && (glass.value === '3mm' || glass.value === '6mm')) {
+        if (((lowIron.checked && tempered.checked) || panelNeedsTenMm()) && (glass.value === '3mm' || glass.value === '6mm')) {
           glass.value = '10mm';
           if (showAlerts && !ruleNoticeState.lowIronGlassAutoFix) {
             window.alert('Low Iron Tempered glass must be at least 10mm. Glass thickness has been set to 10mm.');
@@ -2121,6 +2152,23 @@
       byId('standCanopyHeightWrap').classList.toggle('hidden', !standEnabled || !byId('standCanopy').checked);
     }
 
+    function readPanelGlass() {
+      var panels = {};
+      PANEL_GLASS_NAMES.forEach(function (name) {
+        panels[name.toLowerCase()] = {
+          tempered: byId('panel' + name + 'Tempered').checked,
+          lowIron: byId('panel' + name + 'LowIron').checked
+        };
+      });
+      return panels;
+    }
+
+    // A Low Iron Tempered panel needs 10mm, same as a whole Low Iron Tempered tank.
+    function panelNeedsTenMm() {
+      return window.CustomAquariumCalculator.getPanelGlassUpgrades(readPanelGlass(), byId('tempered').checked, byId('lowIron').checked)
+        .some(function (panel) { return panel.lowIron && (panel.tempered || byId('tempered').checked); });
+    }
+
     function buildPayload() {
       return {
         length: byId('length').value,
@@ -2131,6 +2179,7 @@
         glassThickness: byId('glass').value,
         temperedGlass: byId('tempered').checked,
         lowIron: byId('lowIron').checked,
+        panelGlass: readPanelGlass(),
         aio: byId('aio').checked,
         rimless: byId('rimless').checked,
         highStrip: byId('highStrip').checked,
@@ -2292,7 +2341,7 @@
     // Itemizes one sump's price into its parts (sump glass, filter medias, pump, light, overflow
     // box, piping, top cover) for the Summary. Mirrors how calculateCustomAquarium (custom-
     // aquarium-calculator.js) builds it: glass/media/overflow/light/pump are added BEFORE the
-    // build-type (Undersump/Overheadsump x1.9) and Low Iron (x1.7) multipliers, piping and the
+    // build-type (Undersump/Overheadsump x1.9) and Low Iron (x1.9) multipliers, piping and the
     // top cover AFTER - so the first group is shown with that multiplier applied. Whatever is left
     // (the engine's round-to-nearest-10) becomes a final "Rounding" line, so the parts always add
     // up exactly to the Sump Price shown. Labels start with "↳ " so the Summary tab files them
@@ -2303,7 +2352,7 @@
       var option = String(n.option || '').toLowerCase();
       var markup = 1;
       if (option === 'undersump' || option === 'overheadsump' || option === 'overhead sump') markup *= 1.9;
-      if (!result.sumpOnly && byId('lowIron').checked) markup *= 1.7;
+      if (!result.sumpOnly && byId('lowIron').checked) markup *= 1.9;
       var sumpInfo = n.sump || n.sumpOnly || {};
       var markupNote = '';
 
@@ -2411,6 +2460,10 @@
         ['Volume', result.gallons.toFixed(1) + ' gallons'],
         ['Glass', glassBits.join(', ')]
       ];
+
+      if (n.panelGlassText) {
+        rows.push(['Panel Glass', n.panelGlassText]);
+      }
 
       if (q.aquariumQty > 1) {
         rows.push(['Quantity', String(q.aquariumQty)]);
@@ -2927,6 +2980,8 @@
       [
         'length', 'width', 'height', 'unit', 'option', 'glass', 'sealant', 'quantity', 'aio', 'lowIron', 'tempered', 'rimless', 'highStrip',
         'holeCount', 'dividerCount',
+        'panelFrontTempered', 'panelFrontLowIron', 'panelBackTempered', 'panelBackLowIron', 'panelLeftTempered', 'panelLeftLowIron',
+        'panelRightTempered', 'panelRightLowIron', 'panelBottomTempered', 'panelBottomLowIron',
         'sumpEnabled', 'aquascape', 'enclosure', 'turtleTank', 'standEnabled', 'standLayers', 'standTubular', 'standHeightOverride', 'standFooting', 'standQuantity', 'standStainless', 'standPaint', 'standCabinet', 'standCabinetType', 'standCabinetDoors', 'standCanopy', 'standCanopyHeight', 'standSumpHolder', 'standSumpWidth', 'sumpType', 'sumpLength', 'sumpWidth', 'sumpHeight',
         'sumpUnit', 'sumpGlass', 'sumpQuantity', 'piping', 'pipingDrain', 'overflowBox', 'filterMedias', 'submersibleLight', 'submersiblePump', 'allumTopCover', 'lightPrice',
         'lightQuantity', 'pumpPrice', 'pumpQuantity', 'stickerBackground', 'allSides', 'stickerBackgroundType', 'stickerBottom', 'stickerBottomType', 'specialNote'
@@ -3031,6 +3086,15 @@
       if (params.get('tempered') === '1') byId('tempered').checked = true;
       if (params.get('lowIron') === '1') byId('lowIron').checked = true;
       if (params.get('rimless') === '1') byId('rimless').checked = true;
+      // Alice's quote link: panelGlass=front:tl,left:t (t = tempered, l = low iron).
+      String(params.get('panelGlass') || '').split(',').forEach(function (part) {
+        var bits = part.split(':');
+        var name = bits[0] ? bits[0].charAt(0).toUpperCase() + bits[0].slice(1) : '';
+        if (PANEL_GLASS_NAMES.indexOf(name) < 0) return;
+        byId('panel' + name + 'Tempered').checked = (bits[1] || '').indexOf('t') >= 0;
+        byId('panel' + name + 'LowIron').checked = (bits[1] || '').indexOf('l') >= 0;
+        byId('panelGlassDetails').open = true;
+      });
       if (params.has('holeCount')) byId('holeCount').value = params.get('holeCount');
       if (params.has('dividerCount')) byId('dividerCount').value = params.get('dividerCount');
       if (params.get('sealant') === 'Clear' || params.get('sealant') === 'Black') byId('sealant').value = params.get('sealant');
@@ -3146,7 +3210,7 @@
         // Option floors, same as calculateCustomAquarium's AIO / Low Iron Tempered rules.
         var mm = parseInt(glass, 10);
         if (byId('aio').checked && mm < 6) glass = '6mm';
-        if (byId('lowIron').checked && byId('tempered').checked && mm < 10) glass = '10mm';
+        if (((byId('lowIron').checked && byId('tempered').checked) || panelNeedsTenMm()) && mm < 10) glass = '10mm';
         byId('glass').value = glass;
       }
 

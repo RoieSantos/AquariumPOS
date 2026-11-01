@@ -520,12 +520,15 @@ function getRequiredGlassFromMessage(message: string): string | null {
   return null;
 }
 
+type PanelGlassChoice = { tempered?: boolean; lowIron?: boolean };
+
 interface AquariumQuoteInput {
   unit?: string;
   option?: string;
   glassThickness?: string;
   temperedGlass?: boolean;
   lowIron?: boolean;
+  panelGlass?: Record<string, PanelGlassChoice>;
   aio?: boolean;
   rimless?: boolean;
   highStrip?: boolean;
@@ -627,6 +630,33 @@ function getAquariumStickerRate(stickerType: string | undefined, rows: Array<Rec
     : Number(flat['Plain Sticker']) || 0;
 }
 
+// Per-panel glass upgrades - hand-ported from custom-aquarium-calculator.js.
+const GLASS_PANELS = [
+  { key: 'front', label: 'Front' },
+  { key: 'back', label: 'Back' },
+  { key: 'left', label: 'Left' },
+  { key: 'right', label: 'Right' },
+  { key: 'bottom', label: 'Bottom' }
+];
+
+function getPanelAreaSqFt(key: string, lengthInches: number, widthInches: number, heightInches: number): number {
+  if (key === 'bottom') return (lengthInches * widthInches) / 144;
+  if (key === 'left' || key === 'right') return (widthInches * heightInches) / 144;
+  return (lengthInches * heightInches) / 144;
+}
+
+function getPanelGlassUpgrades(panelGlass: Record<string, PanelGlassChoice> | undefined, isTempered: boolean, isLowIron: boolean) {
+  if (isLowIron) return [];
+  return GLASS_PANELS.map((panel) => {
+    const choice = (panelGlass || {})[panel.key] || {};
+    return { key: panel.key, label: panel.label, tempered: Boolean(choice.tempered) && !isTempered, lowIron: Boolean(choice.lowIron) };
+  }).filter((panel) => panel.tempered || panel.lowIron);
+}
+
+function describePanelGlass(upgrades: Array<{ label: string; tempered: boolean; lowIron: boolean }>): string {
+  return upgrades.map((panel) => `${panel.label}: ${[panel.tempered ? 'Tempered' : '', panel.lowIron ? 'Low Iron' : ''].filter(Boolean).join(' + ')}`).join(', ');
+}
+
 function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unknown> {
   const options = input || ({} as AquariumQuoteInput);
   const unit = options.unit || 'Inches';
@@ -678,6 +708,11 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     glass = '6mm';
   }
   if (isLowIron && isTempered && extractGlassMm(glass) < 10) {
+    glass = '10mm';
+  }
+  // A Low Iron Tempered panel needs the same 10mm, and a tank is one thickness.
+  const panelNeeds10mm = getPanelGlassUpgrades(options.panelGlass, isTempered, isLowIron).some((panel) => panel.lowIron && (panel.tempered || isTempered));
+  if (panelNeeds10mm && extractGlassMm(glass) < 10) {
     glass = '10mm';
   }
 
@@ -751,12 +786,19 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
   }
 
   let calculatedPrice = glassAreaSqFt * finalPricePerSqFt;
+
+  // Same multipliers as the whole-tank options (Tempered x2, Low Iron x1.9), on that panel's area only.
+  const panelUpgrades = getPanelGlassUpgrades(options.panelGlass, isTempered, isLowIron);
+  for (const panel of panelUpgrades) {
+    const panelMultiplier = (panel.tempered ? 2 : 1) * (panel.lowIron ? 1.9 : 1);
+    calculatedPrice += getPanelAreaSqFt(panel.key, lengthInches, widthInches, heightInches) * finalPricePerSqFt * (panelMultiplier - 1);
+  }
   components.glass = round2(calculatedPrice);
 
   // A ready-made match replaces the glass price and is added after the multipliers and round-to-10 below.
-  // Low iron, enclosure, turtle tank and the old sump option multiply the whole build, so they keep the calculator price.
+  // Low iron, enclosure, turtle tank and the old sump option multiply the whole build, and a mixed-glass tank is no longer the ready-made tank, so they keep the calculator price.
   const lowerOptionType = optionType.toLowerCase();
-  const readyMadePrice = (isLowIron || hasEnclosure || hasTurtleTank ||
+  const readyMadePrice = (isLowIron || panelUpgrades.length > 0 || hasEnclosure || hasTurtleTank ||
     lowerOptionType === 'undersump' || lowerOptionType === 'overheadsump' || lowerOptionType === 'overhead sump')
     ? null
     : findReadyMadePrice(extraPrices, lengthInches, widthInches, heightInches, glass, isAio, isTempered);
@@ -841,7 +883,7 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
     calculatedPrice = round2(calculatedPrice * 2.4);
   }
   if (isLowIron) {
-    calculatedPrice = round2(calculatedPrice * 1.7);
+    calculatedPrice = round2(calculatedPrice * 1.9);
   }
   if (calculatedPrice >= 1000) {
     calculatedPrice = roundNearest10(calculatedPrice);
@@ -913,6 +955,8 @@ function calculateCustomAquarium(input: AquariumQuoteInput): Record<string, unkn
       option: optionType,
       glassThickness: glass,
       temperedGlass: isTempered,
+      panelGlass: panelUpgrades,
+      panelGlassText: describePanelGlass(panelUpgrades),
       rimless: isRimless,
       lengthInches: round2(lengthInches),
       widthInches: round2(widthInches),
@@ -1022,7 +1066,20 @@ export const TOOLS: Anthropic.Tool[] = [
         unit: { type: 'string', enum: ['Inches', 'cm', 'mm', 'ft'], description: 'Defaults to Inches if not specified.' },
         glass_thickness: { type: 'string', enum: ['3mm', '6mm', '10mm', '12mm', '19mm'], description: 'Defaults to 6mm if not specified. Any tank 4 feet (48 inches) tall or more is automatically upgraded to 19mm (3/4 inch) glass for safety, whatever is passed here.' },
         tempered_glass: { type: 'boolean' },
-        low_iron: { type: 'boolean' },
+        low_iron: { type: 'boolean', description: 'The WHOLE tank is low iron. For just one or some panels use panel_glass instead.' },
+        panel_glass: {
+          type: 'array',
+          description: 'Mixed glass: only the panels the customer wants upgraded, with the rest staying as the tank\'s own glass. Use this when they want e.g. only the front panel low iron or tempered. Do not also set tempered_glass or low_iron unless the whole tank has that glass too.',
+          items: {
+            type: 'object',
+            properties: {
+              panel: { type: 'string', enum: ['front', 'back', 'left', 'right', 'bottom'] },
+              tempered: { type: 'boolean' },
+              low_iron: { type: 'boolean' }
+            },
+            required: ['panel']
+          }
+        },
         rimless: { type: 'boolean', description: 'Rimless tank (no top frame bracing) - requires thicker glass than a braced tank of the same size (6mm from 10 gallons; 10mm from 30 gallons or over 15 inches tall / 48 inches long). Set true if the customer asks for rimless OR says they will use a hang-on-back (HOB) filter, since a hang-on-back setup calls for a rimless tank.' },
         high_strip: { type: 'boolean', description: 'An extra glass strip along the top rim.' },
         hole_count: { type: 'integer', description: 'Number of drilled holes for the aquarium, if any. Flat rate per hole - ask the customer how many they need before including this.' },
@@ -1426,6 +1483,7 @@ export function buildSystemPrompt(
     '- The status of a previously placed order, ONLY when the customer gives you their order number. This could be a portal Automated Order (format like AO-00001) or a regular Online Order/Pancake order number - you don\'t need to know which, get_order_status checks both. If they ask about "my order" without a number, ask them for it first - never call get_order_status without one. For an Online Order result, give a full rundown: the items ordered with quantity, the total amount, the balance (if more than zero), the status (Confirmed/Assigned/To Ship/Shipped/Delivered/Cancelled - a "Printed" status means the same as Confirmed, so always call it "Confirmed" to the customer, never "Printed"; "Assigned" means our production team has been assigned and is now building/preparing it; "Delivered" means our delivery team has already delivered/set it up at their place), and which branch/warehouse it was ordered from. If the Online Order result has a non-empty production array, also tell them how the build is going PER PART - part "tank" = the aquarium/sump (built by our tank maker), "stand" = the stand/top cover (built by our stand maker), "dispatcher" = order preparation. For each part: done=true -> that part is finished; assigned=true and done=false -> being built now; assigned=false -> queued, waiting to be assigned to a maker. Rows with source "production_order" also have build_status (Open = queued, not yet handed to the makers; Released = being built; Finished = all built) and qty/qty_built (e.g. 1 of 2 built) - use those the same way. Example: "Your tank is already done ✅, the stand is still being built by our stand maker - once both are ready we\'ll move it to shipping/delivery." Never name the staff member - say "our tank maker"/"our stand maker" only (the data has no names anyway). Never promise a finish date (none is stored); if they press for one, offer to have staff confirm (schedule_follow_up or escalate_to_staff). Once the order status is To Ship/Shipped, production is over - just give that status. WALK-IN ORDERS (orderType "Walk-in Order" - bought and paid at the counter of one of our stores, found by the POS receipt number like RS-0000010861, or by a walk-in order ID like WI-00012): status_label is the in-store build stage, not a shipping status - "To Assign" = received, waiting for our production team to be assigned; "Assigned" = our makers are building it now; "Production Done" = built and ready for pickup at the branch in warehouse_name; "Completed" = already picked up / handed over (also what an ordinary in-store purchase with nothing to build shows - just confirm the purchase and items). Never call a walk-in "Shipped" or talk about shipping/delivery tracking for it. Use the same per-part production rundown as above. If target_ready_date is set, you may share it as our target ready date (e.g. "we\'re aiming to have it ready by Oct 8") - say it\'s a target, not a guarantee; with no target_ready_date, don\'t promise a date. There is no receiptUrl for walk-ins - they already have the printed POS receipt. If the customer says they bought something in store but has no number, ask for the receipt number printed on their receipt. For an Automated Order result, share its status plainly: sync status "Not Pushed" (or "Pending") means we received it and our team will review and confirm it shortly; "Portal" or "Synced" means it is confirmed - never say the raw status words or mention Pancake. There is no way to send an actual receipt image/file - if the customer specifically asks for a receipt or proof of order (not just the status), share the receiptUrl link from an Online Order result instead and say it opens their receipt (printable/saveable as PDF from there). Don\'t share receiptUrl unless they actually ask for a receipt.',
     '- STANDARD SIZE FIRST - never assume an aquarium is custom. Whenever a customer asks about an aquarium by size - a GALLON size (e.g. "50 gallon", "75g"), length x width x height (e.g. "24x12x12", "2ft tank", "60cm"), or just a rough size ("small tank for a betta", "3 feet") - FIRST call list_items_in_category with category_code "AQUARIUM" and compare against the ready-made standard aquariums: each one\'s size is in its name/description (e.g. "STANDARD-5G (16x8x10in, 3MM GLASS)"). Convert units before comparing (1 ft = 12 in, 1 in = 2.54 cm). A standard tank FITS when its gallons match, or its length/width/height are each the same or within about 1 inch of what they asked. If one fits, offer that real product first (its actual name, size and price, and offer to send a photo), and say a custom tank in their exact size is also possible if they prefer - do NOT jump to compute_aquarium_quote. If none is an exact fit but one is close, offer the closest one or two too and ask if that works before going custom. Giving dimensions alone does NOT mean they want custom. If they only asked the price, quote it and do NOT mention stock, even when it\'s 0 (see the stock rule above); only give the per-branch stock if they ask about availability.',
     '- Custom aquarium and/or stand price quotes: only use compute_aquarium_quote when no standard aquarium fits (see STANDARD SIZE FIRST above), the customer turns the standard one down, or they explicitly ask for something only a custom build has - "custom"/"made to order", rimless, tempered, low iron, 10mm/12mm glass, drilled holes, dividers, or a size no standard tank comes close to. Once you ARE quoting custom: ask for length/width/height (and glass thickness, if the aquarium itself is being quoted) before calling compute_aquarium_quote - also ask if they need any drilled holes (hole_count, flat rate per hole) or internal dividers/partitions (divider_count, priced from the tank\'s own glass rate for a Width x Height panel plus 20%), and include whichever they want. Before calling the tool, restate back what you understood - dimensions, unit, holes/dividers if any, and whether this is a stand only (customer already has the tank) or the aquarium plus a matching stand - and get the customer to confirm that\'s correct. Use exactly the numbers they confirmed; never guess, round, or adjust their dimensions yourself, and don\'t re-run the tool again later in the conversation unless a dimension or spec actually changes. If the customer only wants a stand for a tank they already own, only quote the stand price (components.stand / the stand section of the result) - don\'t mention or total in the aquarium glass price. When you do get a result, give a full itemized summary, not just a total: gallons, glass thickness actually used, whether tempered/rimless, the aquarium price, holes/divider charges if any, the stand price and its spec (layers/tubular/stainless, plus cabinet/canopy and their prices if included) if a stand was included, and the grand total (or just the stand price and spec, for a stand-only quote). This is computed from the store\'s own official pricing formula - the same one staff use - so state it with confidence as the actual price, not as a rough estimate pending staff confirmation. If the result has a readyMadePrice, the size and glass match one of our ready-made tanks, so the tank is that same price - say so plainly. If the tool result includes a safetyNotice or standNotice, explain it plainly (e.g. "for that size we need to use 6mm glass instead of 3mm for safety") so the customer understands why the spec or price changed from what they asked. Share the drawing link(s) exactly as given (word for word, never alter or retype the URL): for an aquarium quote (with or without a stand), share aquariumDrawingUrl; for a stand-only quote (customer already owns the tank), share only standDrawingUrl - skip aquariumDrawingUrl since they don\'t need a picture of a tank they didn\'t ask about.',
+    '- Mixed glass: a custom tank can have just one or some panels (front, back, left, right, bottom) tempered and/or low iron, with the rest as ordinary glass - pass them in panel_glass. A tank is one thickness, so a Low Iron Tempered panel moves the whole tank to at least 10mm; the customer can pick this on the Order Now custom aquarium page under "Mixed glass". If the tank is 36 inches or more wide or tall, all of it must be tempered, so only low iron can be chosen per panel.',
     '- Delivery fees: first find out whether the customer wants the store\'s OWN TRUCK to deliver, or wants to arrange their own Lalamove courier - if it\'s not already clear which, ask. For the store\'s own truck: ask which branch (Amaya or GMA) and the full delivery address, then use compute_delivery_quote. This is the store\'s own official distance-based formula - the same one staff use - so state it with confidence as the actual fee, not as a rough estimate pending staff confirmation. For Lalamove: ask which branch and the full delivery address, work out and tell the customer what size vehicle you recommend booking based on what they\'re having delivered (see compute_lalamove_quote\'s own description for how to pick one), then call compute_lalamove_quote with that vehicle type - this is a live quote straight from Lalamove\'s own system, so state the price with full confidence. Lalamove quoting is QUOTE ONLY - it cannot book the ride, so if the customer wants to proceed, tell them staff will arrange the actual Lalamove booking.',
     '- Scheduling a delivery date for an existing Online Order: first ask (if not already clear) whether they want the store\'s OWN TRUCK to deliver it, as opposed to a courier they\'re arranging themselves (e.g. Lalamove) or picking it up - only continue if they say the store\'s own truck. Get their order number, then call get_delivery_scheduling_options. If it comes back not eligible, explain the reason in plain words (e.g. already scheduled, order not ready yet). If eligible, tell the customer the deliveryFee it returned with confidence as the actual fee (whether deliveryFeeIsEstimate is true - the same official formula as compute_delivery_quote - or false - the order\'s already-recorded fee, makes no difference to how confidently you state it) AND the candidateDates, and get them to explicitly confirm both the fee and one specific date before calling schedule_delivery_date. Never book a date they haven\'t confirmed, and never invent a date that wasn\'t in candidateDates. Once booked, let them know it\'s confirmed and staff will also see it on the schedule.',
     '- Several orders, one delivery day: if the same customer has two or more orders delivered by our own truck on the SAME date to the SAME address, the delivery fee is charged only ONCE for that trip - the other orders ride along with no extra delivery fee (the system does this automatically when they are booked on the same date). So when a customer with another order already booked (or being booked in this chat) picks the same date for the same address, tell them plainly there is no extra delivery fee for the additional order - quote just the one fee for the trip - and suggest the same date if they ask how to save on delivery. A different address or a different date is a separate trip with its own fee. Never promise one fee across different dates or addresses.',
@@ -1822,6 +1880,10 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     glassThickness: (input.glass_thickness as string) || '6mm',
     temperedGlass: Boolean(input.tempered_glass),
     lowIron: Boolean(input.low_iron),
+    panelGlass: Object.fromEntries(
+      (Array.isArray(input.panel_glass) ? input.panel_glass as Array<{ panel: string; tempered?: boolean; low_iron?: boolean }> : [])
+        .map((p) => [p.panel, { tempered: Boolean(p.tempered), lowIron: Boolean(p.low_iron) }])
+    ),
     rimless: Boolean(input.rimless),
     highStrip: Boolean(input.high_strip),
     holeCount: Number(input.hole_count) || 0,
@@ -1873,13 +1935,13 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
   // The sump's own price = this build minus the same build without it (index.html's
   // computeSumpUnitPrice) - its parts sit before the multipliers/round-to-10, so summing
   // components alone would under-count. Itemized like buildSumpPriceBreakdownRows: pre-multiplier
-  // parts x the Low Iron 1.7, piping/top cover as-is, leftover from rounding as its own line.
+  // parts x the Low Iron 1.9, piping/top cover as-is, leftover from rounding as its own line.
   if (result.ok && addSump) {
     const noSump = calculateCustomAquarium({ ...payload, filtrationSump: { enabled: false } });
     if (noSump.ok) {
       const sumpPrice = round2(Number(result.totalPrice) - Number(noSump.totalPrice));
       const c = result.components as Record<string, number>;
-      const markup = Boolean(input.low_iron) ? 1.7 : 1;
+      const markup = Boolean(input.low_iron) ? 1.9 : 1;
       const sumpInfo = (result.normalized as Record<string, unknown>).sump as Record<string, unknown>;
       const parts: Array<[string, number]> = [];
       if (c.sumpGlass > 0) parts.push([`Sump glass (${sumpInfo.glassThickness})`, c.sumpGlass * markup]);
@@ -1945,6 +2007,9 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
     });
     if (normalized.temperedGlass) aquariumParams.set('tempered', '1');
     if (input.low_iron) aquariumParams.set('lowIron', '1');
+    const panelGlassParam = ((normalized.panelGlass || []) as Array<{ key: string; tempered: boolean; lowIron: boolean }>)
+      .map((panel) => `${panel.key}:${panel.tempered ? 't' : ''}${panel.lowIron ? 'l' : ''}`).join(',');
+    if (panelGlassParam) aquariumParams.set('panelGlass', panelGlassParam);
     if (normalized.rimless) aquariumParams.set('rimless', '1');
     if (input.high_strip) aquariumParams.set('highStrip', '1');
     const holeCount = Math.max(0, Math.round(Number(input.hole_count) || 0));

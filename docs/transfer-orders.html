@@ -236,7 +236,11 @@
         </details>
 
         <div class="bc-doc-part">
-          <div class="bc-doc-part-head">Lines</div>
+          <div class="bc-doc-part-head">
+            Lines
+            <!-- Super User, active orders only (js/transferOrders.js updateManageActionButtons) -->
+            <button class="bc-cmd hidden" id="addManageLineBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>Add Item</button>
+          </div>
           <div class="manage-lines-wrap">
             <table class="bc-grid bc-doc-lines" id="manageLinesTable">
               <thead>
@@ -255,6 +259,29 @@
               </thead>
               <tbody id="viewLinesBody"></tbody>
             </table>
+          </div>
+          <!-- New lines for this existing order - same row as the New Transfer Order form (js/transferOrders.js saveManageAddLines). -->
+          <div id="manageAddLines" class="hidden" style="margin-top:12px;">
+            <div class="manage-lines-wrap">
+              <table class="bc-grid bc-doc-lines line-items-table">
+                <thead>
+                  <tr>
+                    <th style="min-width:220px;">Item No.</th>
+                    <th style="min-width:200px;">Variant</th>
+                    <th style="min-width:260px;">Description</th>
+                    <th class="num" style="width:150px;">Qty To Transfer</th>
+                    <th style="width:150px;" title="Only for a customer order: the online / walk-in order ID, or ADV-&lt;no&gt; for an advance order. The qty is checked against what the order needs instead of the shelf limit.">Order ID</th>
+                    <th style="width:40px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="manageAddLinesBody"></tbody>
+              </table>
+            </div>
+            <p id="manageAddLinesError" class="bc-dialog-msg error-text hidden"></p>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <button class="bc-btn bc-btn-primary" id="saveManageAddLinesBtn" type="button">Save Items</button>
+              <button class="bc-btn" id="cancelManageAddLinesBtn" type="button">Cancel</button>
+            </div>
           </div>
         </div>
        </div>
@@ -454,7 +481,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/transferOrders.js?v=qtyedit1"></script>
+  <script src="js/transferOrders.js?v=addline1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

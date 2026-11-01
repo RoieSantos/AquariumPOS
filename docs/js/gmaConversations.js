@@ -3774,6 +3774,7 @@ function buildAquariumCalcLines(win) {
   if (n.option && n.option !== 'Aquarium only') bits.unshift(n.option);
   if (n.temperedGlass) bits.push('Tempered');
   if (checked('lowIron')) bits.push('Low-Iron');
+  if (n.panelGlassText) bits.push(`Mixed Glass (${n.panelGlassText})`);
   if (n.rimless) bits.push('Rimless');
   if (checked('highStrip')) bits.push('High Strip');
   if (checked('aio')) bits.push('AIO');

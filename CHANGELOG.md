@@ -2,9 +2,15 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-01
+
+- **Custom aquarium: mixed glass per panel.** Front, back, left, right and bottom can each be Tempered and/or Low Iron, priced at x2 / x1.9 on that panel's area only, in [custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js), the staff calculator, [Order Now](docs/js/orderNow.js), order notes, POS sale text and Alice ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts), new `panel_glass` input). A Low Iron Tempered panel moves the tank to 10mm, and mixed tanks skip the ready-made price. JS cache `lowiron19`.
+- **Custom aquarium: Low Iron is now x1.9 (was x1.7)**, whole-tank and per-panel, in the calculators, Order Now, Alice and the desktop POS calculator ([MainForm.cs](MainForm.cs)). The repair calculator stays at x1.7.
+- **Transfer Orders: "Add Item" on an existing order** (Super Users, any active order). Uses the same item/variant search and variant, request-cap and duplicate-request checks as a new request; a fully shipped order drops back to Partial Shipped. No SQL ([transferOrders.js](docs/js/transferOrders.js), [transfer-orders.html](docs/transfer-orders.html) `addline1`).
+
 ## 2026-10-31
 
-- Deployed `chatbot-sandbox-reply` only, for the Pricing Setup flat prices and exact-size ready-made price match. The 6 live Alice functions are not deployed yet.
+- Deployed the 7 Alice functions (`facebook-messenger-webhook`, `chatbot-web-reply`, `chatbot-sandbox-reply`, `chatbot-suggest-reply`, `telegram-alice-webhook`, `portal-chat-alice-reply`, `delivery-fee-from-pin`) for the Pricing Setup flat prices and exact-size ready-made price match.
 - **Calculators: exact sizes use the ready-made price.** A size and glass matching an active ready-made aquarium now prices the tank at that item's own price, with add-ons on top, in [custom-aquarium-calculator.js](docs/WebAquariumCalculator/custom-aquarium-calculator.js), Order Now, the portal and POS calculators, and Alice ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)). Low iron, enclosure and turtle tank keep the calculator price. Prices are read live from Items through [supabase_ready_made_price_match.sql](sql/supabase_ready_made_price_match.sql). JS cache `readymade1`.
 - **Return / Exchange on shipped online orders.** New order card button picks the line and new item, shows the difference and creates a linked replacement order; the original order stays as shipped. Receiving the item moves stock (resellable) or logs it in Defect Items (defective), and Super Users record refunds. Non-serial stocked items only. [supabase_online_order_returns.sql](sql/supabase_online_order_returns.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html) `returns1`.
 - **Return shipping policy.** Added to [terms-and-conditions.html](docs/terms-and-conditions.html) and Alice ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)), which now collects return details and explains the policy before escalating.

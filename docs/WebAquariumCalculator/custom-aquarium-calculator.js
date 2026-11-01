@@ -140,6 +140,48 @@
     return areaSqInches / 144;
   }
 
+  // Per-panel glass upgrades ("Mixed glass"): one panel can be Tempered and/or Low Iron while the rest
+  // stays as the tank's own glass. The five panels add up to getGlassAreaSqFt above.
+  var GLASS_PANELS = [
+    { key: 'front', label: 'Front' },
+    { key: 'back', label: 'Back' },
+    { key: 'left', label: 'Left' },
+    { key: 'right', label: 'Right' },
+    { key: 'bottom', label: 'Bottom' }
+  ];
+
+  function getPanelAreaSqFt(key, lengthInches, widthInches, heightInches) {
+    if (key === 'bottom') return (lengthInches * widthInches) / 144;
+    if (key === 'left' || key === 'right') return (widthInches * heightInches) / 144;
+    return (lengthInches * heightInches) / 144;
+  }
+
+  // Only what a panel adds on top of the whole tank: on a tempered tank a panel can only add Low Iron,
+  // and a whole-tank Low Iron build (always tempered) has nothing left to add.
+  function getPanelGlassUpgrades(panelGlass, isTempered, isLowIron) {
+    var picked = panelGlass || {};
+    var upgrades = [];
+    if (isLowIron) return upgrades;
+    for (var i = 0; i < GLASS_PANELS.length; i += 1) {
+      var choice = picked[GLASS_PANELS[i].key] || {};
+      var tempered = Boolean(choice.tempered) && !isTempered;
+      var lowIron = Boolean(choice.lowIron);
+      if (tempered || lowIron) {
+        upgrades.push({ key: GLASS_PANELS[i].key, label: GLASS_PANELS[i].label, tempered: tempered, lowIron: lowIron });
+      }
+    }
+    return upgrades;
+  }
+
+  function describePanelGlass(upgrades) {
+    return (upgrades || []).map(function (panel) {
+      var kinds = [];
+      if (panel.tempered) kinds.push('Tempered');
+      if (panel.lowIron) kinds.push('Low Iron');
+      return panel.label + ': ' + kinds.join(' + ');
+    }).join(', ');
+  }
+
   function normalizeGlass(glass) {
     var text = String(glass || '6mm').trim().toLowerCase();
     if (!text.endsWith('mm')) {
@@ -1091,6 +1133,15 @@
       glass = '10mm';
     }
 
+    // A panel that ends up Low Iron Tempered needs the same 10mm. A tank is one thickness, so the whole
+    // tank moves up with it.
+    var panelNeeds10mm = getPanelGlassUpgrades(options.panelGlass, isTempered, isLowIron).some(function (panel) {
+      return panel.lowIron && (panel.tempered || isTempered);
+    });
+    if (panelNeeds10mm && extractGlassMm(glass) < 10) {
+      glass = '10mm';
+    }
+
     var safety = validateGlassSafety(lengthInches, widthInches, heightInches, glass, isTempered, isRimless);
     if (safety.autoChangeTo) {
       safetyNotice = {
@@ -1187,13 +1238,20 @@
     }
 
     var calculatedPrice = glassAreaSqFt * finalPricePerSqFt;
+
+    // Same multipliers as the whole-tank options (Tempered x2, Low Iron x1.9), on that panel's area only.
+    var panelUpgrades = getPanelGlassUpgrades(options.panelGlass, isTempered, isLowIron);
+    for (var p = 0; p < panelUpgrades.length; p += 1) {
+      var panelMultiplier = (panelUpgrades[p].tempered ? 2 : 1) * (panelUpgrades[p].lowIron ? 1.9 : 1);
+      calculatedPrice += getPanelAreaSqFt(panelUpgrades[p].key, lengthInches, widthInches, heightInches) * finalPricePerSqFt * (panelMultiplier - 1);
+    }
     components.glass = round2(calculatedPrice);
 
     // A ready-made match replaces the glass price and is added after the multipliers and round-to-10 below, so
     // the customer sees the item's exact price. Low iron, enclosure, turtle tank and the old sump option multiply
-    // the whole build, so those keep the calculator price.
+    // the whole build, and a mixed-glass tank is no longer the ready-made tank, so those keep the calculator price.
     var lowerOptionType = optionType.toLowerCase();
-    var readyMadePrice = (isLowIron || hasEnclosure || hasTurtleTank ||
+    var readyMadePrice = (isLowIron || panelUpgrades.length > 0 || hasEnclosure || hasTurtleTank ||
       lowerOptionType === 'undersump' || lowerOptionType === 'overheadsump' || lowerOptionType === 'overhead sump')
       ? null
       : findReadyMadePrice(extraPrices, lengthInches, widthInches, heightInches, glass, isAio, isTempered);
@@ -1320,7 +1378,7 @@
     }
 
     if (isLowIron) {
-      calculatedPrice = round2(calculatedPrice * 1.7);
+      calculatedPrice = round2(calculatedPrice * 1.9);
     }
 
     if (calculatedPrice >= 1000) {
@@ -1393,6 +1451,8 @@
         option: optionType,
         glassThickness: glass,
         temperedGlass: isTempered,
+        panelGlass: panelUpgrades,
+        panelGlassText: describePanelGlass(panelUpgrades),
         rimless: isRimless,
         lengthInches: round2(lengthInches),
         widthInches: round2(widthInches),
@@ -1414,6 +1474,7 @@
     calculateCustomAquarium: calculateCustomAquarium,
     validateGlassSafety: validateGlassSafety,
     getMinimumGlassForSize: getMinimumGlassForSize,
+    getPanelGlassUpgrades: getPanelGlassUpgrades,
     getDefaultCabinetDoors: getDefaultCabinetDoors,
     toInches: toInches,
     calculateStandaloneStand: calculateStandaloneStand,

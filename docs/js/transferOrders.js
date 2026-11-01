@@ -483,6 +483,12 @@ function updateManageActionButtons(status, lines) {
     'hidden',
     !currentSession?.isSuperUser || !active || currentManageHasAnyShipped
   );
+
+  // Super-user-only "Add Item" - same rule as changing Qty To Transfer (renderManageLines).
+  document.getElementById('addManageLineBtn').classList.toggle(
+    'hidden',
+    !currentSession?.isSuperUser || !active
+  );
 }
 
 function renderManageLines(lines, status) {
@@ -645,6 +651,105 @@ async function saveLineQtyToTransfer(row, input) {
   }
 }
 
+function closeManageAddLines() {
+  document.getElementById('manageAddLinesBody').innerHTML = '';
+  document.getElementById('manageAddLinesError').classList.add('hidden');
+  document.getElementById('manageAddLines').classList.add('hidden');
+}
+
+function addManageLineRow() {
+  document.getElementById('manageAddLines').classList.remove('hidden');
+  addNewLineRow(document.getElementById('manageAddLinesBody'));
+}
+
+// Super-user-only: adds lines to an existing active order, through the same checks as a new request
+// (validateTransferLines) plus the request-cap trigger. Re-reads the header first - the order may
+// have been received or cancelled since the modal opened. A fully shipped order has something to
+// ship again, so In-Transit drops back to Partial Shipped. No BOM snapshot here:
+// staff_save_transfer_bom_snapshot replaces the whole document's snapshot, and a line without one
+// uses the item's current BOM (_ile_line_bom).
+async function saveManageAddLines() {
+  const errorEl = document.getElementById('manageAddLinesError');
+  errorEl.classList.add('hidden');
+  const docNo = currentManageDocNo;
+
+  const fail = (message) => {
+    errorEl.textContent = message;
+    errorEl.classList.remove('hidden');
+  };
+
+  if (!currentSession?.isSuperUser) { fail('Only a super user can add items.'); return; }
+
+  const lines = Array.from(document.getElementById('manageAddLinesBody').querySelectorAll('tr'))
+    .map(readNewLineRow)
+    .filter((l) => l.itemNo);
+  if (lines.length === 0) { fail('Add at least one line item with an Item No.'); return; }
+  if (lines.some((l) => l.qty <= 0)) { fail('Quantity must be more than 0.'); return; }
+
+  const saveBtn = document.getElementById('saveManageAddLinesBtn');
+  saveBtn.disabled = true;
+  try {
+    const { data: headerRows, error: headerError } = await supabaseClient
+      .from('Transfer_Header')
+      .select('*')
+      .eq('"No."', docNo)
+      .limit(1);
+    if (headerError) throw headerError;
+    const header = headerRows?.[0];
+    if (!header || !isActiveStatus(header['Status'] || 'Requested')) {
+      fail('This order is no longer active - items can\'t be added.');
+      return;
+    }
+
+    if (!await validateTransferLines(docNo, header['To Warehouse ID'], header['To Warehouse'], lines, errorEl)) return;
+
+    const { data: existing, error: existingError } = await supabaseClient
+      .from('Transfer_Line')
+      .select('"Line No."')
+      .eq('"Document No."', docNo);
+    if (existingError) throw existingError;
+    let lineNo = (existing || []).reduce((max, l) => Math.max(max, Number(l['Line No.']) || 0), 0);
+
+    const addedLineNos = [];
+    try {
+      for (const line of lines) {
+        lineNo += 10000;
+        await upsertRow('Transfer_Line', { 'Document No.': docNo, 'Line No.': lineNo }, {
+          'Item No.': line.itemNo,
+          'Variant ID': line.variantId,
+          'Variant Name': line.variantName,
+          'Description': line.description || null,
+          'Qty To Transfer': line.qty,
+          'Order ID': line.orderId
+        });
+        addedLineNos.push(lineNo);
+      }
+    } catch (lineErr) {
+      // A line was refused (e.g. the request cap) - take back the ones already added so a retry
+      // doesn't double them up.
+      if (addedLineNos.length > 0) {
+        await supabaseClient.from('Transfer_Line').delete().eq('"Document No."', docNo).in('"Line No."', addedLineNos);
+      }
+      throw lineErr;
+    }
+
+    if (header['Status'] === 'In-Transit') {
+      try {
+        await upsertRow('Transfer_Header', { 'No.': docNo }, { 'Status': 'Partial Shipped' });
+      } catch (err) {
+        console.error('Updating status after adding items failed:', err);
+      }
+    }
+
+    await openManageModal(docNo);
+    await loadHeaders();
+  } catch (err) {
+    fail(describeSupabaseError(err, 'Failed to add the items.'));
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
 function getSelectedSerialsForPicker(picker) {
   try {
     return JSON.parse(picker.dataset.selected || '[]');
@@ -781,6 +886,7 @@ async function openManageModal(docNo) {
   currentManageDocNo = docNo;
   document.getElementById('viewLinesTitle').textContent = `Transfer Order ${docNo}`;
   document.getElementById('viewLinesError').classList.add('hidden');
+  closeManageAddLines();
   const body = document.getElementById('viewLinesBody');
   body.innerHTML = '<tr><td colspan="10" class="muted">Loading...</td></tr>';
   ItemStockFactbox.clear(document.getElementById('viewLinesStockPart'), 'Loading...');
@@ -2302,10 +2408,27 @@ function renderItemSuggestions(row, items, page, totalCount, onPageChange) {
 
 // Mirrors the desktop's "Use Production Category" checkbox, which filters the item/variant
 // lookup catalog by Category.IsProductionCategory (RefreshItemLookupOptions in
-// TransferOrderLinesForm.cs) - only exists on the New Transfer Order form, which is the only
-// place these lookups run.
-function getUseProductionCategory() {
+// TransferOrderLinesForm.cs). Rows added to an existing order (Manage modal) follow that order's
+// saved flag instead; null there = no category filter.
+function getUseProductionCategory(row) {
+  if (isManageAddRow(row)) return currentManageHeader?.['Use Production Category'] ?? null;
   return document.getElementById('newUseProductionCategory')?.checked ?? false;
+}
+
+// The line row is shared by the New Transfer Order form and the Manage modal's Add Item - these
+// resolve what it belongs to.
+function isManageAddRow(row) {
+  return !!row.closest('#manageAddLinesBody');
+}
+
+function lineRowToWarehouseId(row) {
+  return isManageAddRow(row)
+    ? (currentManageHeader?.['To Warehouse ID'] || '').trim()
+    : document.getElementById('newToWarehouseId').value.trim();
+}
+
+function lineRowDocNo(row) {
+  return isManageAddRow(row) ? currentManageDocNo : document.getElementById('newNo').value.trim();
 }
 
 async function searchItemsForRow(row, searchText, page = 1) {
@@ -2313,7 +2436,7 @@ async function searchItemsForRow(row, searchText, page = 1) {
 
   // Mirrors the desktop's SetSourceWarehouse -> AllowUserToAddRows gating: line items can't be
   // looked up at all until a From Warehouse is picked (TransferOrderLinesForm.cs).
-  if (!document.getElementById('newFromWarehouseId').value) {
+  if (!isManageAddRow(row) && !document.getElementById('newFromWarehouseId').value) {
     dropdown.innerHTML = '<div class="item-suggest-empty muted">Select a From Warehouse first.</div>';
     dropdown.classList.remove('hidden');
     return;
@@ -2326,7 +2449,7 @@ async function searchItemsForRow(row, searchText, page = 1) {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_search: searchText && searchText.trim() ? searchText.trim() : null,
-    p_use_production_category: getUseProductionCategory(),
+    p_use_production_category: getUseProductionCategory(row),
     p_page: page
   });
 
@@ -2426,7 +2549,7 @@ async function searchVariantsForRow(row, searchText, page = 1) {
     p_admin_password: currentSession.password,
     p_item_code: itemCode || null,
     p_search: searchText && searchText.trim() ? searchText.trim() : null,
-    p_use_production_category: getUseProductionCategory(),
+    p_use_production_category: getUseProductionCategory(row),
     p_page: page
   });
 
@@ -2643,8 +2766,7 @@ async function refreshNewBomPreview() {
   box.classList.remove('hidden');
 }
 
-function addNewLineRow() {
-  const tbody = document.getElementById('newLinesBody');
+function addNewLineRow(tbody = document.getElementById('newLinesBody')) {
   const row = document.createElement('tr');
   row.innerHTML = `
     <td class="item-search-cell">
@@ -2851,7 +2973,7 @@ async function checkRowPendingTransfer(row) {
   msgEl.classList.add('hidden');
   msgEl.innerHTML = '';
 
-  const toWarehouseId = document.getElementById('newToWarehouseId').value.trim();
+  const toWarehouseId = lineRowToWarehouseId(row);
   const itemNo = row.querySelector('.line-item-no').value.trim();
   const variantId = row.querySelector('.line-variant-id').value || null;
   const variantName = row.querySelector('.line-variant-search').value.trim() || null;
@@ -2927,18 +3049,18 @@ function formatCapQty(value) {
 // Shows "Max N" (and why) under a row's qty. Returns that row's check result, or null.
 async function checkRowRequestCap(row) {
   const msgEl = row.querySelector('.line-cap-msg');
-  const toWarehouseId = document.getElementById('newToWarehouseId').value.trim();
+  const toWarehouseId = lineRowToWarehouseId(row);
   const me = readNewLineRow(row);
   if (!toWarehouseId || !me.itemNo) {
     msgEl.classList.add('hidden');
     return null;
   }
 
-  const rows = Array.from(document.getElementById('newLinesBody').querySelectorAll('tr'));
+  const rows = Array.from(row.closest('tbody').querySelectorAll('tr'));
   const lines = rows.map(readNewLineRow);
   let results;
   try {
-    results = await checkTransferRequestLines(document.getElementById('newNo').value.trim(), toWarehouseId, lines);
+    results = await checkTransferRequestLines(lineRowDocNo(row), toWarehouseId, lines);
   } catch (err) {
     console.error('Request cap check failed:', err);
     msgEl.classList.add('hidden');
@@ -2966,6 +3088,75 @@ async function checkRowRequestCap(row) {
   msgEl.className = `line-cap-msg ${r.ok ? 'muted' : 'error-text'}`;
   msgEl.style.cssText = 'margin-top:4px; font-size:12px; white-space:normal;';
   return r;
+}
+
+// Save-time checks shared by a new request and Add Item on an existing order. Shows what's wrong in
+// errorEl and returns false if any line can't be requested.
+async function validateTransferLines(no, toWarehouseId, toWarehouse, lines, errorEl) {
+  // A variant-carrying item can't be transferred against the parent item alone - it'd be
+  // ambiguous which variant actually ships. Checked here (not just at pick time) so it also
+  // catches a manually-typed Item No. and a variant selection that got cleared afterward (typing
+  // a different code invalidates it - see the item input's blur handler).
+  const linesMissingVariant = [];
+  for (const line of lines) {
+    if (line.variantId) continue;
+    const { data, error } = await supabaseClient.rpc('staff_search_variants', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_item_code: line.itemNo,
+      p_page: 1
+    });
+    if (!error && data && data.length > 0) {
+      linesMissingVariant.push(line.itemNo);
+    }
+  }
+
+  if (linesMissingVariant.length > 0) {
+    errorEl.textContent = `Select a variant for: ${linesMissingVariant.join(', ')} - ${linesMissingVariant.length > 1 ? 'these items have' : 'this item has'} variants, so a specific one must be chosen.`;
+    errorEl.classList.remove('hidden');
+    return false;
+  }
+
+  // Request cap: every line within its shelf limit (or its customer order's qty). The database refuses
+  // an over-limit line anyway - checking here first means nothing is half-saved and staff see why.
+  let capResults;
+  try {
+    capResults = await checkTransferRequestLines(no, toWarehouseId, lines);
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Could not check the request limits.');
+    errorEl.classList.remove('hidden');
+    return false;
+  }
+  const overLimit = lines
+    .map((line, i) => ({ line, r: capResults[i] }))
+    .filter(({ r }) => r && !r.ok);
+  if (overLimit.length > 0) {
+    errorEl.innerHTML = 'These lines are over what this store can request:<ul style="margin:4px 0 0 18px;">'
+      + overLimit.map(({ line, r }) =>
+        `<li><strong>${escapeHtml([line.itemNo, line.variantName].filter(Boolean).join(' - '))}</strong> - requested ${formatCapQty(line.qty)}. ${escapeHtml(r.message || '')}</li>`
+      ).join('')
+      + '</ul>Lower the qty, remove the line, or put the customer\'s Order ID on it if it\'s for an order.';
+    errorEl.classList.remove('hidden');
+    return false;
+  }
+
+  // One open request per item per store: if this To Warehouse already has the same item/variant on
+  // an active order that isn't fully received yet, block and link to that order instead of letting
+  // duplicate requests pile up. Only for items with no shelf limit - capped lines already count what's
+  // on the way, and customer-order lines are checked against their order.
+  let pendingConflicts;
+  try {
+    pendingConflicts = await findPendingTransferConflicts(toWarehouseId, lines.filter((l, i) => !capResults[i]?.rule));
+  } catch (err) {
+    errorEl.textContent = describeSupabaseError(err, 'Could not check for pending transfer orders.');
+    errorEl.classList.remove('hidden');
+    return false;
+  }
+  if (pendingConflicts.length > 0) {
+    showPendingTransferConflicts(errorEl, toWarehouse, pendingConflicts);
+    return false;
+  }
+  return true;
 }
 
 async function saveNewTransfer() {
@@ -3018,69 +3209,7 @@ async function saveNewTransfer() {
     return;
   }
 
-  // A variant-carrying item can't be transferred against the parent item alone - it'd be
-  // ambiguous which variant actually ships. Checked here (not just at pick time) so it also
-  // catches a manually-typed Item No. and a variant selection that got cleared afterward (typing
-  // a different code invalidates it - see the item input's blur handler).
-  const linesMissingVariant = [];
-  for (const line of lines) {
-    if (line.variantId) continue;
-    const { data, error } = await supabaseClient.rpc('staff_search_variants', {
-      p_admin_username: currentSession.username,
-      p_admin_password: currentSession.password,
-      p_item_code: line.itemNo,
-      p_page: 1
-    });
-    if (!error && data && data.length > 0) {
-      linesMissingVariant.push(line.itemNo);
-    }
-  }
-
-  if (linesMissingVariant.length > 0) {
-    errorEl.textContent = `Select a variant for: ${linesMissingVariant.join(', ')} - ${linesMissingVariant.length > 1 ? 'these items have' : 'this item has'} variants, so a specific one must be chosen.`;
-    errorEl.classList.remove('hidden');
-    return;
-  }
-
-  // Request cap: every line within its shelf limit (or its customer order's qty). The database refuses
-  // an over-limit line anyway - checking here first means nothing is half-saved and staff see why.
-  let capResults;
-  try {
-    capResults = await checkTransferRequestLines(no, toWarehouseId, lines);
-  } catch (err) {
-    errorEl.textContent = describeSupabaseError(err, 'Could not check the request limits.');
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  const overLimit = lines
-    .map((line, i) => ({ line, r: capResults[i] }))
-    .filter(({ r }) => r && !r.ok);
-  if (overLimit.length > 0) {
-    errorEl.innerHTML = 'These lines are over what this store can request:<ul style="margin:4px 0 0 18px;">'
-      + overLimit.map(({ line, r }) =>
-        `<li><strong>${escapeHtml([line.itemNo, line.variantName].filter(Boolean).join(' - '))}</strong> - requested ${formatCapQty(line.qty)}. ${escapeHtml(r.message || '')}</li>`
-      ).join('')
-      + '</ul>Lower the qty, remove the line, or put the customer\'s Order ID on it if it\'s for an order.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-
-  // One open request per item per store: if this To Warehouse already has the same item/variant on
-  // an active order that isn't fully received yet, block and link to that order instead of letting
-  // duplicate requests pile up. Only for items with no shelf limit - capped lines already count what's
-  // on the way, and customer-order lines are checked against their order.
-  let pendingConflicts;
-  try {
-    pendingConflicts = await findPendingTransferConflicts(toWarehouseId, lines.filter((l, i) => !capResults[i]?.rule));
-  } catch (err) {
-    errorEl.textContent = describeSupabaseError(err, 'Could not check for pending transfer orders.');
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  if (pendingConflicts.length > 0) {
-    showPendingTransferConflicts(errorEl, toWarehouse, pendingConflicts);
-    return;
-  }
+  if (!await validateTransferLines(no, toWarehouseId, toWarehouse, lines, errorEl)) return;
 
   if (!window.confirm(`This will send request to ${fromWarehouse} would you like to proceed?`)) {
     return;
@@ -3241,7 +3370,10 @@ async function saveNewTransfer() {
     if (currentManageDocNo) window.open(`transfer-order-print.html?no=${encodeURIComponent(currentManageDocNo)}`, '_blank');
   });
   document.getElementById('printProductionBtn').addEventListener('click', () => printProductionOrder(currentManageDocNo));
-  document.getElementById('addLineBtn').addEventListener('click', addNewLineRow);
+  document.getElementById('addLineBtn').addEventListener('click', () => addNewLineRow());
+  document.getElementById('addManageLineBtn').addEventListener('click', addManageLineRow);
+  document.getElementById('saveManageAddLinesBtn').addEventListener('click', saveManageAddLines);
+  document.getElementById('cancelManageAddLinesBtn').addEventListener('click', closeManageAddLines);
   document.getElementById('saveTransferBtn').addEventListener('click', saveNewTransfer);
   document.getElementById('shipTransferBtn').addEventListener('click', () => shipTransferOrder(currentManageDocNo));
   document.getElementById('createPoFromTransferBtn').addEventListener('click', () => openCreatePoModal(currentManageDocNo));

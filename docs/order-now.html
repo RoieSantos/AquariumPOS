@@ -14,6 +14,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .panel-glass { margin-top: 10px; }
+    .panel-glass summary { cursor: pointer; font-weight: 600; }
+    .panel-glass-table { width: 100%; max-width: 360px; margin-top: 8px; border-collapse: collapse; }
+    .panel-glass-table th, .panel-glass-table td { padding: 6px 8px; text-align: center; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+    .panel-glass-table th:first-child, .panel-glass-table td:first-child { text-align: left; }
+    .panel-glass-table input:disabled { opacity: 0.45; }
+  </style>
 </head>
 <body>
   <!-- Faint, oversized company logo behind the whole page - purely decorative, set via JS in
@@ -272,6 +280,19 @@
           </div>
           <label class="checkbox-row"><input type="checkbox" id="customLowIron" /> Low Iron</label>
           <label class="checkbox-row"><input type="checkbox" id="customTempered" /> Tempered Glass</label>
+          <details class="panel-glass">
+            <summary>Mixed glass (choose per panel)</summary>
+            <table class="panel-glass-table">
+              <thead><tr><th>Panel</th><th>Tempered</th><th>Low Iron</th></tr></thead>
+              <tbody>
+                <tr><td>Front</td><td><input id="customPanelFrontTempered" type="checkbox" aria-label="Front panel tempered"></td><td><input id="customPanelFrontLowIron" type="checkbox" aria-label="Front panel low iron"></td></tr>
+                <tr><td>Back</td><td><input id="customPanelBackTempered" type="checkbox" aria-label="Back panel tempered"></td><td><input id="customPanelBackLowIron" type="checkbox" aria-label="Back panel low iron"></td></tr>
+                <tr><td>Left</td><td><input id="customPanelLeftTempered" type="checkbox" aria-label="Left panel tempered"></td><td><input id="customPanelLeftLowIron" type="checkbox" aria-label="Left panel low iron"></td></tr>
+                <tr><td>Right</td><td><input id="customPanelRightTempered" type="checkbox" aria-label="Right panel tempered"></td><td><input id="customPanelRightLowIron" type="checkbox" aria-label="Right panel low iron"></td></tr>
+                <tr><td>Bottom</td><td><input id="customPanelBottomTempered" type="checkbox" aria-label="Bottom panel tempered"></td><td><input id="customPanelBottomLowIron" type="checkbox" aria-label="Bottom panel low iron"></td></tr>
+              </tbody>
+            </table>
+          </details>
           <div class="checkbox-row">
             <label class="checkbox-row-label"><input type="checkbox" id="customRimless" /> Rimless</label>
             <a href="icons/RimlessandwithRim.jpg" target="_blank" rel="noopener" class="option-example-link">(see example)</a>
@@ -1168,8 +1189,8 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=readymade1"></script>
-  <script src="js/orderNow.js?v=readymade1"></script>
+  <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=lowiron19"></script>
+  <script src="js/orderNow.js?v=panelglass1"></script>
   <script src="js/chatWidget.js" defer></script>
 </body>
 </html>
