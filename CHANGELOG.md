@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-01
 
+- **Advance Order card: Sales Users can now set the Delivery Fee**, alongside Super Users and Production Managers ([supabase_advance_order_fee_sales_user.sql](sql/supabase_advance_order_fee_sales_user.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html) `advfeesales1`).
 - **Advance Order card: "+ Add COD Items"** (Super Users, Sales Users, Production Managers; with its own product search so Production Managers don't get Change Item). Creates a new confirmed online order linked to the advance order, with the full amount as COD and customer details copied from its delivery stop; the advance order's own lines and balance stay POS-owned and unchanged. New "COD Add-on Orders" FastTab and a note on the online order card ([supabase_advance_order_cod_addon.sql](sql/supabase_advance_order_cod_addon.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html) `addoncod3`).
 - **Add COD Items: custom aquariums and stands**, using the real calculators. Their line builders moved unchanged from [gmaConversations.js](docs/js/gmaConversations.js) to shared [calcEmbedLines.js](docs/js/calcEmbedLines.js), so Conversations and this dialog price them the same way.
 

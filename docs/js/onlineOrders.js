@@ -8645,11 +8645,16 @@ function fillAdvanceCard(o) {
 
 // Delivery Fee on the advance card - per "on the order card.. can we add it there?". Portal only
 // (AdvanceOrderProduction.DeliveryFee, sql/supabase_order_card_delivery_fee_walkin_advance.sql), copied
-// onto the order's delivery stops; the driver collects Balance + fee. Same people as Assign.
+// onto the order's delivery stops; the driver collects Balance + fee. Same people as Assign, + Sales
+// Users (sql/supabase_advance_order_fee_sales_user.sql re-checks it).
+function canSetAdvanceDeliveryFee() {
+  return canAssignOrders() || !!currentSession?.isSalesUser;
+}
+
 async function loadAdvanceCardDeliveryFee(transactionNo) {
   const row = document.getElementById('acDeliveryFeeRow');
   const collectRow = document.getElementById('acToCollectRow');
-  const show = canAssignOrders() && !hidePrices();
+  const show = canSetAdvanceDeliveryFee() && !hidePrices();
   row.classList.toggle('hidden', !show);
   collectRow.classList.add('hidden');
   if (!show) return;
