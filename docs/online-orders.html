@@ -610,6 +610,9 @@
           <div id="ocReturnsList"></div>
         </div>
 
+        <!-- Made with + Add COD Items on an Advance Order card (js/onlineOrders.js loadOrderCardAddonParent). -->
+        <p class="muted hidden" id="ocAddonOf" style="margin:8px 0;"></p>
+
         <div class="bc-doc-part">
           <div class="bc-doc-part-head">Lines <button type="button" class="bc-link oc-lines-history-btn hidden" id="ocLinesHistoryBtn" title="Who changed what on these lines">Edit History</button> <button type="button" class="bc-link hidden" id="ocAddLineBtn" title="Add an item to this order (Super User / Sales User)">+ Add Item</button></div>
           <!-- Walk-ins and POS-made online orders: the cashier's POS order description (Pancake order note, js/onlineOrders.js
@@ -737,6 +740,8 @@
         <!-- Super Users, order with a balance (js/onlineOrders.js openAdvPayDialog,
              sql/supabase_advance_order_portal_payments.sql admin_advance_order_mark_fully_paid). -->
         <button class="bc-cmd hidden" id="advanceCardMarkPaidBtn" type="button" title="Record the remaining balance as paid"><svg class="bc-ico"><use href="#ico-done"/></svg>Mark Fully Paid</button>
+        <!-- Super User / Sales User / Production Manager (js/onlineOrders.js openAdvCodDialog, sql/supabase_advance_order_cod_addon.sql). -->
+        <button class="bc-cmd hidden" id="advanceCardAddCodBtn" type="button" title="Add products paid on delivery or pickup, as a separate linked order">+ Add COD Items</button>
       </div>
 
       <!-- Same split as the Online Order card: the document on the left, the Serials FactBox on the right. -->
@@ -756,6 +761,19 @@
             <div>
               <div class="bc-doc-field"><label>Tank Maker</label><div class="bc-doc-value" id="acTankMaker"></div></div>
               <div class="bc-doc-field"><label>Stand Maker</label><div class="bc-doc-value" id="acStandMaker"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Orders made with + Add COD Items (js/onlineOrders.js loadAdvanceCardAddOns). Hidden when none. -->
+        <details class="doc-fasttab hidden" id="advanceCardAddOnsTab" open>
+          <summary>COD Add-on Orders <span class="doc-fasttab-summary" id="advanceCardAddOnsSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="bc-grid-wrap">
+              <table class="bc-grid">
+                <thead><tr><th>Order</th><th>Status</th><th class="num">Total</th><th class="num">Balance</th><th>Created</th></tr></thead>
+                <tbody id="acAddOnsBody"></tbody>
+              </table>
             </div>
           </div>
         </details>
@@ -890,6 +908,86 @@
 
   <!-- Mark an advance order fully paid on the portal (js/onlineOrders.js openAdvPayDialog,
        admin_advance_order_mark_fully_paid). Super Users only. -->
+  <!-- + Add COD Items on the Advance Order card (js/onlineOrders.js openAdvCodDialog). -->
+  <div id="advCodDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="advCodTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">ADD COD ITEMS</div>
+          <h2 id="advCodTitle">Advance order</h2>
+        </div>
+        <button class="bc-iconbtn" id="advCodCloseBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="muted" style="margin-top:0;">These go on a new linked order with the full amount as COD. The advance order and its balance don't change.</p>
+        <div class="bc-field">
+          <label for="advCodSearch">Search product</label>
+          <input type="text" id="advCodSearch" autocomplete="off" placeholder="e.g. white paint, AST-003" />
+        </div>
+        <div id="advCodOptions" class="oo-sb-parts" style="max-height:200px; overflow:auto;"></div>
+        <div class="bc-field">
+          <label for="advCodQty">Quantity</label>
+          <input type="number" id="advCodQty" min="1" step="1" value="1" />
+        </div>
+        <div class="bc-field" id="advCodPriceField">
+          <label for="advCodPrice">Unit Price (list price filled in - change if agreed otherwise)</label>
+          <input type="number" id="advCodPrice" min="0" step="0.01" />
+        </div>
+        <div class="bc-field">
+          <label for="advCodNote">Note (optional)</label>
+          <input type="text" id="advCodNote" autocomplete="off" />
+        </div>
+        <button class="bc-btn" id="advCodAddLineBtn" type="button">Add to list</button>
+        <button class="bc-btn" id="advCodCustomAquariumBtn" type="button">+ Custom Aquarium</button>
+        <button class="bc-btn" id="advCodCustomStandBtn" type="button">+ Custom Stand</button>
+        <div id="advCodLines" style="margin-top:10px;"></div>
+        <p id="advCodTotal" style="font-weight:600;"></p>
+        <div class="bc-field">
+          <label for="advCodCustomer">Customer</label>
+          <input type="text" id="advCodCustomer" autocomplete="off" />
+        </div>
+        <div class="bc-field">
+          <label for="advCodPhone">Contact No. (optional)</label>
+          <input type="text" id="advCodPhone" autocomplete="off" />
+        </div>
+        <div class="bc-field">
+          <label for="advCodFulfillment">Fulfillment</label>
+          <select id="advCodFulfillment">
+            <option value="Delivery">Delivery</option>
+            <option value="Pickup">Pickup</option>
+          </select>
+        </div>
+        <div class="bc-field" id="advCodAddressField">
+          <label for="advCodAddress">Delivery Address</label>
+          <input type="text" id="advCodAddress" autocomplete="off" />
+        </div>
+        <p id="advCodStopHint" class="muted hidden"></p>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="advCodError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="advCodSaveBtn" type="button">Create COD Order</button>
+        <button class="bc-btn" id="advCodCancelBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The real calculators for Add COD Items' custom builds (js/onlineOrders.js openAdvCalc). Above #advCodDialog. -->
+  <div id="advCalcModal" class="bc-dialog-backdrop hidden" style="z-index:210; padding:2vh 16px;">
+    <div class="bc-dialog" role="dialog" aria-modal="true" aria-labelledby="advCalcTitle" style="width:min(1280px, 96vw); max-width:none; height:92vh; display:flex; flex-direction:column;">
+      <div class="bc-dialog-head">
+        <h2 id="advCalcTitle">Custom Aquarium</h2>
+        <button class="bc-iconbtn" id="advCalcCloseBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <iframe id="advCalcFrame" title="Custom calculator" style="flex:1 1 auto; width:100%; min-height:0; border:0;"></iframe>
+      <div class="bc-dialog-foot">
+        <p id="advCalcLines" class="bc-dialog-msg" style="flex:1; min-width:0;"></p>
+        <b id="advCalcTotal" style="white-space:nowrap;">-</b>
+        <button class="bc-btn bc-btn-primary" id="advCalcAddBtn" type="button" disabled>Add to list</button>
+      </div>
+    </div>
+  </div>
+
   <div id="advPayDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="advPayTitle">
       <div class="bc-dialog-head">
@@ -1556,7 +1654,8 @@
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/videoCompress.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
-  <script src="js/onlineOrders.js?v=returns1"></script>
+  <script src="js/calcEmbedLines.js?v=addoncod3"></script>
+  <script src="js/onlineOrders.js?v=addoncod3"></script>
   <script src="js/onlineNewOrders.js?v=newconv1"></script>
   <script src="js/pwa.js"></script>
 </body>

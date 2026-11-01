@@ -5778,6 +5778,7 @@ async function loadOrderCardLines(orderId) {
   renderLinesHistoryButton();
   document.getElementById('ocAddLineBtn')?.classList.add('hidden');
   document.getElementById('ocReturnsPart').classList.add('hidden');
+  document.getElementById('ocAddonOf').classList.add('hidden');
   cardAttachmentsByLineId = {};
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
@@ -5817,6 +5818,7 @@ async function loadOrderCardLines(orderId) {
   renderOrderCardLines();
   renderAddLineButton();
   loadOrderCardReturns(orderId);
+  loadOrderCardAddonParent(orderId);
   loadOrderCardGlassTanks();
   loadOrderCardStock(orderId);
 }
@@ -6269,6 +6271,19 @@ async function loadOrderCardReturns(orderId) {
   // Not set up yet shows nothing here - saving a return says what to run.
   cardReturns = error ? [] : (data || []);
   renderOrderCardReturns();
+}
+
+// "COD add-on to advance order ..." (sql/supabase_advance_order_cod_addon.sql). Hidden when it isn't one.
+async function loadOrderCardAddonParent(orderId) {
+  const { data, error } = await supabaseClient.rpc('staff_get_order_cod_addon_parent', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderId
+  });
+  if (openCardOrderId !== orderId || error || !data) return;
+  const el = document.getElementById('ocAddonOf');
+  el.textContent = `COD add-on to advance order ${data}. Its balance is separate from the advance order's.`;
+  el.classList.remove('hidden');
 }
 
 function orderReturnRowHtml(r) {
@@ -8702,7 +8717,332 @@ function updateAdvanceCardActions(o) {
   document.getElementById('advanceCardShowSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
   document.getElementById('advanceCardMarkPaidBtn').classList.toggle('hidden',
     !currentSession?.isSuperUser || voided || o.fully_paid || !(Number(o.balance) > 0));
+  document.getElementById('advanceCardAddCodBtn').classList.toggle('hidden', !canAddAdvanceCodItems(o));
   document.getElementById('advanceCardBody').classList.toggle('no-factbox', !canAssignOrders());
+}
+
+// ---- Add COD Items (#advCodDialog): per "they want to add new products but it will be COD". The items go on a
+// new linked online order, not this one - the POS owns this order's lines and balance
+// (sql/supabase_advance_order_cod_addon.sql).
+let advCodNo = null;
+let advCodClientKey = null;
+let advCodLines = [];
+let advCodOptions = [];
+let advCodSearchGeneration = 0;
+
+function canAddAdvanceCodItems(o) {
+  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser || currentSession?.isProductionManager) && !!o
+    && !['Voided', 'Shipped', 'Delivered'].includes(advanceStatus(o));
+}
+
+function advCodMissingSetupMessage(message) {
+  return /could not find the function|schema cache/i.test(message)
+    ? `${message} - run sql/supabase_advance_order_cod_addon.sql.` : message;
+}
+
+// "COD Add-on Orders" FastTab. Hidden when none (or the SQL isn't run yet).
+async function loadAdvanceCardAddOns(transactionNo) {
+  const no = String(transactionNo);
+  const tab = document.getElementById('advanceCardAddOnsTab');
+  tab.classList.add('hidden');
+  const { data, error } = await advanceRpc('staff_get_advance_order_cod_addons', { p_no: no });
+  if (openAdvanceNo !== no || error || !data?.addons?.length) return;
+  const rows = data.addons;
+  document.getElementById('advanceCardAddOnsSummary').textContent = hidePrices()
+    ? `${rows.length} order${rows.length === 1 ? '' : 's'}`
+    : `${rows.length} order${rows.length === 1 ? '' : 's'} · Balance ${money(rows.reduce((sum, r) => sum + (Number(r.balance) || 0), 0))}`;
+  document.getElementById('acAddOnsBody').innerHTML = rows.map((r) => `<tr>
+      <td>${escapeHtml(r.order_id)}</td>
+      <td>${escapeHtml(r.status || '')}</td>
+      <td class="num">${hidePrices() ? '' : money(r.total)}</td>
+      <td class="num">${hidePrices() ? '' : money(r.balance)}</td>
+      <td>${escapeHtml(r.created_by || '')}<br><span class="muted">${escapeHtml(advanceDateTime(r.created_at))}</span></td>
+    </tr>`).join('');
+  tab.classList.remove('hidden');
+}
+
+async function openAdvCodDialog(transactionNo) {
+  const no = String(transactionNo);
+  advCodNo = no;
+  advCodClientKey = `${no}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  advCodLines = [];
+  advCodOptions = [];
+  document.getElementById('advCodTitle').textContent = `Advance order ${no}`;
+  document.getElementById('advCodSearch').value = '';
+  document.getElementById('advCodQty').value = '1';
+  document.getElementById('advCodPrice').value = '';
+  document.getElementById('advCodPriceField').classList.toggle('hidden', hidePrices());
+  document.getElementById('advCodNote').value = '';
+  document.getElementById('advCodOptions').innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+  document.getElementById('advCodError').classList.add('hidden');
+  document.getElementById('advCodCustomer').value = advanceRowsByNo.get(no)?.customer_name || '';
+  document.getElementById('advCodPhone').value = '';
+  document.getElementById('advCodAddress').value = '';
+  document.getElementById('advCodFulfillment').value = 'Delivery';
+  document.getElementById('advCodSaveBtn').disabled = true;
+  renderAdvCodLines();
+  syncAdvCodFulfillment();
+  document.getElementById('advCodStopHint').classList.add('hidden');
+  document.getElementById('advCodDialog').classList.remove('hidden');
+  document.getElementById('advCodSearch').focus();
+
+  const { data, error } = await advanceRpc('staff_get_advance_order_cod_addons', { p_no: no });
+  if (advCodNo !== no) return;
+  if (error) {
+    showAdvCodError(advCodMissingSetupMessage(error.message));
+    return;
+  }
+  // Same name + address as the advance order's stop, so both group as one drop on the delivery calendar.
+  if (data?.customer_name) document.getElementById('advCodCustomer').value = data.customer_name;
+  document.getElementById('advCodPhone').value = data?.phone || '';
+  document.getElementById('advCodAddress').value = data?.address || '';
+  if (data?.delivery_date) {
+    const hint = document.getElementById('advCodStopHint');
+    hint.textContent = `This advance order is scheduled for delivery on ${data.delivery_date}. Keep these details the same and put the new order on that date so both go as one drop.`;
+    hint.classList.remove('hidden');
+  }
+  document.getElementById('advCodSaveBtn').disabled = false;
+}
+
+function closeAdvCodDialog() {
+  advCodNo = null;
+  document.getElementById('advCodDialog').classList.add('hidden');
+}
+
+function showAdvCodError(message) {
+  const el = document.getElementById('advCodError');
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+function syncAdvCodFulfillment() {
+  document.getElementById('advCodAddressField').classList.toggle('hidden', document.getElementById('advCodFulfillment').value !== 'Delivery');
+}
+
+async function loadAdvCodOptions() {
+  const box = document.getElementById('advCodOptions');
+  const query = document.getElementById('advCodSearch').value.trim();
+  const generation = ++advCodSearchGeneration;
+  if (!query) {
+    advCodOptions = [];
+    box.innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="muted">Loading...</div>';
+  const { data, error } = await advanceRpc('staff_search_advance_cod_items', { p_query: query });
+  if (generation !== advCodSearchGeneration || !advCodNo) return;
+  if (error) {
+    box.innerHTML = `<div class="error-text">${escapeHtml(advCodMissingSetupMessage(error.message))}</div>`;
+    return;
+  }
+  advCodOptions = data?.options || [];
+  box.innerHTML = advCodOptions.length
+    ? advCodOptions.map((v) => `
+      <label class="oo-sb-part"><input type="radio" name="advCodPick" value="${escapeHtml(v.variation_id)}" />
+        <span><b>${escapeHtml(v.label || v.name)}</b>
+        <small>${escapeHtml([v.item_code, v.sku].filter(Boolean).join(' · '))}${hidePrices() ? '' : ` · list price ${money(v.price)}`}</small></span></label>`).join('')
+    : '<div class="muted">No matching products.</div>';
+}
+
+function addAdvCodLine() {
+  document.getElementById('advCodError').classList.add('hidden');
+  const picked = document.querySelector('#advCodOptions input[name="advCodPick"]:checked');
+  const option = picked && advCodOptions.find((v) => v.variation_id === picked.value);
+  if (!option) return showAdvCodError('Pick the product to add.');
+  const quantity = Number(document.getElementById('advCodQty').value);
+  if (!Number.isInteger(quantity) || quantity < 1) return showAdvCodError('Quantity must be a whole number, 1 or more.');
+  const priceText = document.getElementById('advCodPrice').value.trim();
+  const price = hidePrices() || priceText === '' ? null : Number(priceText);
+  if (price !== null && (!Number.isFinite(price) || price < 0)) return showAdvCodError('Unit Price can\'t be negative.');
+  advCodLines.push({
+    variation_id: option.variation_id,
+    label: option.label || option.name,
+    quantity,
+    price,
+    list_price: Number(option.price) || 0,
+    note: document.getElementById('advCodNote').value.trim() || null
+  });
+  document.getElementById('advCodSearch').value = '';
+  document.getElementById('advCodQty').value = '1';
+  document.getElementById('advCodPrice').value = '';
+  document.getElementById('advCodNote').value = '';
+  document.getElementById('advCodOptions').innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+  renderAdvCodLines();
+  document.getElementById('advCodSearch').focus();
+}
+
+// Custom Aquarium / Custom Stand: the real calculator pages in an iframe, same as Conversations' Create Order;
+// js/calcEmbedLines.js turns what they post into order lines.
+const ADV_CALC_KINDS = {
+  aquarium: { src: 'WebAquariumCalculator/index.html?embed=gma', title: 'Custom Aquarium' },
+  stand: { src: 'WebAquariumCalculator/stand.html?embed=gma', title: 'Custom Stand' }
+};
+let advCalcKind = null;
+let advCalcSnapshot = null;
+let advCalcOpenedAt = 0;
+let advCalcTimer = null;
+
+function advCalcSendInit() {
+  try {
+    document.getElementById('advCalcFrame').contentWindow.postMessage({ type: 'rs-calc-embed-init' }, '*');
+  } catch (err) {
+    // not loaded yet - the next poll retries
+  }
+}
+
+function openAdvCalc(kind) {
+  const cfg = ADV_CALC_KINDS[kind];
+  advCalcKind = kind;
+  advCalcSnapshot = null;
+  advCalcOpenedAt = Date.now();
+  document.getElementById('advCalcTitle').textContent = cfg.title;
+  const frame = document.getElementById('advCalcFrame');
+  frame.onload = advCalcSendInit;
+  frame.src = cfg.src;
+  document.getElementById('advCalcModal').classList.remove('hidden');
+  clearInterval(advCalcTimer);
+  advCalcTimer = setInterval(() => {
+    advCalcSendInit();
+    renderAdvCalcFooter();
+  }, 1500);
+  renderAdvCalcFooter();
+}
+
+function closeAdvCalc() {
+  clearInterval(advCalcTimer);
+  advCalcTimer = null;
+  advCalcKind = null;
+  document.getElementById('advCalcFrame').src = 'about:blank';
+  document.getElementById('advCalcModal').classList.add('hidden');
+}
+
+function readAdvCalcState() {
+  if (!advCalcSnapshot) {
+    return {
+      lines: [],
+      problem: Date.now() - advCalcOpenedAt < 8000
+        ? 'Loading the calculator...'
+        : "The calculator isn't responding - press Ctrl+F5 to reload this page, then open it again."
+    };
+  }
+  const win = calcEmbedWinFromSnapshot(advCalcSnapshot);
+  const missing = calcEmbedMissingFields(win.document, advCalcKind);
+  if (missing.length) return { lines: [], problem: `Missing: ${missing.join(', ')}` };
+  const r = win.lastResult;
+  if (r && !r.ok) return { lines: [], problem: r.error || 'The calculator could not price this - check its fields.' };
+  if (!r) return { lines: [], problem: 'Waiting for a price - press Calculate in the calculator.' };
+  try {
+    const lines = advCalcKind === 'stand' ? buildStandCalcLines(win) : buildAquariumCalcLines(win);
+    return lines.length ? { lines, problem: '' } : { lines: [], problem: 'Waiting for a price - press Calculate in the calculator.' };
+  } catch (err) {
+    return { lines: [], problem: `Could not read the quote: ${err.message}` };
+  }
+}
+
+function renderAdvCalcFooter() {
+  if (!advCalcKind) return;
+  const { lines, problem } = readAdvCalcState();
+  const btn = document.getElementById('advCalcAddBtn');
+  btn.disabled = !lines.length;
+  document.getElementById('advCalcLines').textContent = lines.length
+    ? lines.map((l) => `${l.quantity} x ${l.item_name}`).join(' + ')
+    : problem;
+  document.getElementById('advCalcTotal').textContent = lines.length
+    ? money(lines.reduce((sum, l) => sum + l.price * l.quantity, 0)) : '-';
+}
+
+function addAdvCalcLines() {
+  const { lines } = readAdvCalcState();
+  if (!lines.length) return;
+  lines.forEach((l) => advCodLines.push({
+    category_code: l.category_code,
+    label: l.item_name,
+    quantity: l.quantity,
+    price: l.price,
+    list_price: l.price,
+    note: l.note || null
+  }));
+  renderAdvCodLines();
+  closeAdvCalc();
+}
+
+function renderAdvCodLines() {
+  const lineAmount = (l) => (l.price ?? l.list_price) * l.quantity;
+  document.getElementById('advCodLines').innerHTML = advCodLines.length
+    ? advCodLines.map((l, index) => `<div style="padding:4px 0; border-bottom:1px solid var(--panel-border);">
+        ${l.quantity} x ${escapeHtml(l.label)}${hidePrices() ? '' : ` · ${money(lineAmount(l))}`}
+        <button type="button" class="bc-link" data-adv-cod-remove="${index}">Remove</button>
+      </div>`).join('')
+    : '<div class="muted">No products added yet.</div>';
+  document.getElementById('advCodTotal').textContent = advCodLines.length && !hidePrices()
+    ? `COD total: ${money(advCodLines.reduce((sum, l) => sum + lineAmount(l), 0))}` : '';
+}
+
+async function saveAdvCodDialog() {
+  const no = advCodNo;
+  if (!no) return;
+  document.getElementById('advCodError').classList.add('hidden');
+  if (!advCodLines.length) return showAdvCodError('Add at least one product with "Add to list".');
+  const fulfillment = document.getElementById('advCodFulfillment').value;
+  const address = document.getElementById('advCodAddress').value.trim();
+  if (fulfillment === 'Delivery' && !address) return showAdvCodError('Enter the delivery address.');
+
+  const btn = document.getElementById('advCodSaveBtn');
+  btn.disabled = true;
+  const { data, error } = await advanceRpc('staff_create_advance_order_cod_addon', {
+    p_no: no,
+    p_fulfillment: fulfillment,
+    p_address: address || null,
+    p_phone: document.getElementById('advCodPhone').value.trim() || null,
+    p_client_key: advCodClientKey,
+    p_lines: advCodLines.map((l) => (l.category_code
+      ? { category_code: l.category_code, item_name: l.label, quantity: l.quantity, price: l.price, note: l.note }
+      : { variation_id: l.variation_id, quantity: l.quantity, price: l.price, note: l.note })),
+    p_customer_name: document.getElementById('advCodCustomer').value.trim() || null
+  });
+  btn.disabled = false;
+  if (error) return showAdvCodError(advCodMissingSetupMessage(error.message));
+  closeAdvCodDialog();
+  if (openAdvanceNo === no) loadAdvanceCardAddOns(no);
+  alert(`Created order ${data?.order_id}${hidePrices() ? '' : ` with ${money(data?.total)} to collect as COD`}.\n\n`
+    + (fulfillment === 'Delivery'
+      ? 'Put it on the same delivery date as the advance order so both go as one drop.'
+      : 'At pickup, the cashier collects it with Online Pay on the POS using this order number.'));
+}
+
+function wireAdvCodDialog() {
+  document.getElementById('advanceCardAddCodBtn').addEventListener('click', () => openAdvanceNo && openAdvCodDialog(openAdvanceNo));
+  let debounce = null;
+  document.getElementById('advCodSearch').addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(loadAdvCodOptions, 300);
+  });
+  // Picking a product fills in its list price (still editable).
+  document.getElementById('advCodOptions').addEventListener('change', (e) => {
+    const v = advCodOptions.find((x) => x.variation_id === e.target.value);
+    if (v) document.getElementById('advCodPrice').value = linePriceText(v.price);
+  });
+  document.getElementById('advCodLines').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-adv-cod-remove]');
+    if (!btn) return;
+    advCodLines.splice(Number(btn.dataset.advCodRemove), 1);
+    renderAdvCodLines();
+  });
+  document.getElementById('advCodCustomAquariumBtn').addEventListener('click', () => openAdvCalc('aquarium'));
+  document.getElementById('advCodCustomStandBtn').addEventListener('click', () => openAdvCalc('stand'));
+  document.getElementById('advCalcAddBtn').addEventListener('click', addAdvCalcLines);
+  document.getElementById('advCalcCloseBtn').addEventListener('click', closeAdvCalc);
+  window.addEventListener('message', (event) => {
+    const frame = document.getElementById('advCalcFrame');
+    if (!advCalcKind || event.source !== frame.contentWindow || event.data?.type !== 'rs-calc-state') return;
+    advCalcSnapshot = event.data;
+    renderAdvCalcFooter();
+  });
+  document.getElementById('advCodFulfillment').addEventListener('change', syncAdvCodFulfillment);
+  document.getElementById('advCodAddLineBtn').addEventListener('click', addAdvCodLine);
+  document.getElementById('advCodSaveBtn').addEventListener('click', saveAdvCodDialog);
+  document.getElementById('advCodCancelBtn').addEventListener('click', closeAdvCodDialog);
+  document.getElementById('advCodCloseBtn').addEventListener('click', closeAdvCodDialog);
 }
 
 // "Paid on Portal" rows under the Payment FastTab (sql/supabase_advance_order_portal_payments.sql):
@@ -8826,6 +9166,7 @@ function openAdvanceCard(transactionNo) {
   loadAdvanceCardDeliveryFee(openAdvanceNo);
   loadAdvanceCardPortalPayments(openAdvanceNo);
   loadAdvanceCardTransfers(openAdvanceNo);
+  loadAdvanceCardAddOns(openAdvanceNo);
   renderSerialsFactbox('advanceCard', []); // clear the previous order's while loading
   loadAdvanceCardSerials(openAdvanceNo);
 }
@@ -9366,6 +9707,7 @@ function wireAdvanceCard() {
   document.getElementById('saveAdvPayBtn').addEventListener('click', saveAdvPayDialog);
   document.getElementById('cancelAdvPayBtn').addEventListener('click', closeAdvPayDialog);
   document.getElementById('closeAdvPayBtn').addEventListener('click', closeAdvPayDialog);
+  wireAdvCodDialog();
 
   // The list's action bar - same actions, on the selected row.
   document.getElementById('advOpenBtn').addEventListener('click', () => selectedAdvanceNo && openAdvanceCard(selectedAdvanceNo));
@@ -9390,6 +9732,8 @@ function wireAdvanceCard() {
     if (isOpen('assignDialog')) closeAdvanceAssignDialog();
     else if (isOpen('advTransferDialog')) closeAdvTransferDialog();
     else if (isOpen('advPayDialog')) closeAdvPayDialog();
+    else if (isOpen('advCalcModal')) closeAdvCalc();
+    else if (isOpen('advCodDialog')) closeAdvCodDialog();
     else if (isOpen('sendBackDialog')) closeAdvanceSendBackDialog();
     else if (isOpen('advanceCardModal')) closeAdvanceCard();
   });
