@@ -242,7 +242,7 @@ namespace AquariumPOS
                 .Sum(GetListViewItemTotal);
         }
 
-        private void EnsureCardProcessingFeeLogTable(SqlConnection connection)
+        internal static void EnsureCardProcessingFeeLogTable(SqlConnection connection)
         {
             using var command = new SqlCommand(@"
 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'CardProcessingFeeLog')
@@ -10380,7 +10380,13 @@ END", connection);
             }
         }
 
-        private static decimal ApplyMarkupPercent(decimal baseAmount, decimal markupPercent)
+        // Online Pay's card fee % for a tender: the same CardMarkupPercent as checkout, 0 if it isn't a card.
+        public decimal GetCardFeePercentForTender(string tenderCode, string tenderDescription)
+        {
+            return IsCreditCardTender(tenderCode, tenderDescription) ? LoadCardMarkupPercent() : 0m;
+        }
+
+        internal static decimal ApplyMarkupPercent(decimal baseAmount, decimal markupPercent)
         {
             if (baseAmount <= 0m || markupPercent <= 0m)
             {

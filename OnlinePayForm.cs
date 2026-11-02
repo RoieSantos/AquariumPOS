@@ -22,6 +22,9 @@ namespace AquariumPOS
     /// only once that succeeds is the local till entry written (TransactionHeader + TransPaymentEntry, same
     /// rows the old Online Orders PAY wrote, so the cash drawer / EOD still balance) and the receipt printed.
     /// No internet = no payment. See sql/supabase_pos_online_pay.sql.
+    ///
+    /// Card tenders add the same CardMarkupPercent fee as checkout, on top of the amount: only the amount
+    /// comes off the order's balance, the fee goes to the portal as card_fee, and the till records both.
     /// </summary>
     public class OnlinePayForm : ThemedForm
     {
@@ -58,10 +61,15 @@ namespace AquariumPOS
             public string Code = string.Empty;
             public string Description = string.Empty;
             public string BankId = string.Empty;
+            public decimal FeePercent;
             public override string ToString() => Description;
         }
 
-        private sealed record TenderPick(TenderType Tender, decimal Amount);
+        // Amount = what comes off the order's balance; Charged = what the customer pays (Amount + Fee).
+        private sealed record TenderPick(TenderType Tender, decimal Amount, decimal Fee)
+        {
+            public decimal Charged => Amount + Fee;
+        }
 
         private sealed class PaymentResult
         {
@@ -246,15 +254,25 @@ namespace AquariumPOS
             if (order == null || !order.CanPay || order.Balance <= 0) return;
 
             var tenders = LoadTenderTypes();
+            if (_mainForm != null)
+            {
+                foreach (var t in tenders) t.FeePercent = _mainForm.GetCardFeePercentForTender(t.Code, t.Description);
+            }
             var picks = PickTenders(order, tenders);
             if (picks == null || picks.Count == 0) return;
             decimal total = picks.Sum(p => p.Amount);
+            decimal totalFee = picks.Sum(p => p.Fee);
 
             var confirm = new StringBuilder();
             confirm.AppendLine($"Receive payment for order {order.OrderId} ({order.CustomerName})?");
             confirm.AppendLine();
-            foreach (var p in picks) confirm.AppendLine($"   {p.Tender.Description}: {p.Amount:N2}");
+            foreach (var p in picks)
+            {
+                confirm.AppendLine($"   {p.Tender.Description}: {p.Amount:N2}");
+                if (p.Fee > 0m) confirm.AppendLine($"      + {p.Tender.FeePercent:0.##}% card fee: {p.Fee:N2}  =  charge {p.Charged:N2}");
+            }
             confirm.AppendLine($"   Total: {total:N2}");
+            if (totalFee > 0m) confirm.AppendLine($"   Total to charge the customer: {total + totalFee:N2}");
             confirm.AppendLine();
             confirm.AppendLine($"Balance after this payment: {Math.Max(0m, order.Balance - total):N2}");
             if (MessageBox.Show(this, confirm.ToString(), "Online Pay", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
@@ -267,7 +285,8 @@ namespace AquariumPOS
                 tender_code = p.Tender.Code,
                 tender_name = p.Tender.Description,
                 bank_key = string.IsNullOrWhiteSpace(p.Tender.BankId) ? null : p.Tender.BankId.Trim(),
-                amount = p.Amount
+                amount = p.Amount,
+                card_fee = p.Fee
             }).ToArray();
 
             PaymentResult? result = null;
@@ -328,13 +347,13 @@ namespace AquariumPOS
             // Recorded online - now the till entry and the receipt.
             try
             {
-                SaveLocalPayment(receiptNo, order.OrderId, picks, total);
+                SaveLocalPayment(receiptNo, order.OrderId, picks);
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this,
                     $"The payment IS recorded on the portal, but the POS couldn't save it locally:\n\n{ex.Message}\n\n"
-                    + $"Write it down for the end-of-day: order {order.OrderId}, {string.Join(", ", picks.Select(p => p.Tender.Description + " " + p.Amount.ToString("N2")))}.",
+                    + $"Write it down for the end-of-day: order {order.OrderId}, {string.Join(", ", picks.Select(p => p.Tender.Description + " " + p.Charged.ToString("N2") + (p.Fee > 0m ? " (card fee " + p.Fee.ToString("N2") + ")" : string.Empty)))}.",
                     "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
 
@@ -385,9 +404,19 @@ namespace AquariumPOS
                 cmb.SelectedItem = last ?? tenders.FirstOrDefault(t => string.Equals(t.Code, "CASH", StringComparison.OrdinalIgnoreCase)) ?? tenders.FirstOrDefault();
                 var lblAmount = new Label { Location = new Point(16, 108), Size = new Size(100, 28), Text = "Amount:", Font = new Font("Arial", 11, FontStyle.Bold) };
                 var nud = new NumericUpDown { Location = new Point(120, 104), Size = new Size(200, 32), DecimalPlaces = 2, Minimum = 0.01m, Maximum = remaining, Value = remaining, Increment = 0.50m, ThousandsSeparator = true, Font = new Font("Arial", 13) };
+                var lblFee = new Label { Location = new Point(16, 140), Size = new Size(528, 24), ForeColor = Color.Firebrick, Font = new Font("Arial", 11, FontStyle.Bold) };
+                void ShowFee()
+                {
+                    var t = cmb.SelectedItem as TenderType;
+                    decimal fee = t == null ? 0m : CardFee(nud.Value, t);
+                    lblFee.Text = fee > 0m ? $"+ {t!.FeePercent:0.##}% card fee {fee:N2}  =  CHARGE {nud.Value + fee:N2}" : string.Empty;
+                }
+                cmb.SelectedIndexChanged += (s, e) => ShowFee();
+                nud.ValueChanged += (s, e) => ShowFee();
+                ShowFee();
                 var btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(316, 168), Size = new Size(110, 44) };
                 var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(434, 168), Size = new Size(110, 44) };
-                dlg.Controls.AddRange(new Control[] { lblRemaining, cmb, lblAmount, nud, btnOk, btnCancel });
+                dlg.Controls.AddRange(new Control[] { lblRemaining, cmb, lblAmount, nud, lblFee, btnOk, btnCancel });
                 dlg.AcceptButton = btnOk;
                 dlg.CancelButton = btnCancel;
 
@@ -413,12 +442,15 @@ namespace AquariumPOS
                     continue;
                 }
 
-                picks.Add(new TenderPick(tender, amount));
+                picks.Add(new TenderPick(tender, amount, CardFee(amount, tender)));
                 last = tender;
                 remaining -= amount;
             }
             return picks;
         }
+
+        private static decimal CardFee(decimal amount, TenderType tender)
+            => MainForm.ApplyMarkupPercent(amount, tender.FeePercent) - amount;
 
         private static List<TenderType> LoadTenderTypes()
         {
@@ -447,9 +479,12 @@ namespace AquariumPOS
 
         // The till entry - same rows the old Online Orders PAY wrote (RecordAdvanceOrderPayment): one
         // TransactionHeader (Type SALES, Description = order ID) and one TransPaymentEntry per tender, under
-        // receipt ONL-<order>. One header for the whole payment, in one SQL transaction.
-        private static void SaveLocalPayment(string receiptNo, string orderId, List<TenderPick> picks, decimal total)
+        // receipt ONL-<order>. One header for the whole payment, in one SQL transaction. Amounts include the
+        // card fee, so the till matches the card terminal. Description stays the order ID: the "| CardFee:"
+        // marker is for receipts with item lines (a reprint of this one would show only the fee).
+        private static void SaveLocalPayment(string receiptNo, string orderId, List<TenderPick> picks)
         {
+            decimal total = picks.Sum(p => p.Charged);
             using var conn = new SqlConnection(GlobalSettings.ConnectionString);
             conn.Open();
             using var tx = conn.BeginTransaction();
@@ -488,7 +523,7 @@ namespace AquariumPOS
                 pay.Parameters.AddWithValue("@LineNo", lineNo++);
                 pay.Parameters.AddWithValue("@ReceiptNo", receiptNo);
                 pay.Parameters.AddWithValue("@Description", orderId);
-                pay.Parameters.AddWithValue("@Amount", p.Amount);
+                pay.Parameters.AddWithValue("@Amount", p.Charged);
                 pay.Parameters.AddWithValue("@UserID", user);
                 pay.Parameters.AddWithValue("@Date", now.Date);
                 pay.Parameters.AddWithValue("@Time", now.TimeOfDay);
@@ -497,6 +532,30 @@ namespace AquariumPOS
             }
 
             tx.Commit();
+
+            // Same log as checkout; like checkout, a failure here never undoes the payment.
+            try
+            {
+                foreach (var p in picks.Where(p => p.Fee > 0m))
+                {
+                    MainForm.EnsureCardProcessingFeeLogTable(conn);
+                    using var log = new SqlCommand(@"
+                        INSERT INTO CardProcessingFeeLog (StoreNo, POSTerminalNo, TransactionNo, ReceiptNo, TenderTypeCode, FeeAmount, SaleAmount, MarkupPercent, UserID)
+                        VALUES ('001', '001', @TransactionNo, @ReceiptNo, @TenderTypeCode, @FeeAmount, @SaleAmount, @MarkupPercent, @UserID)", conn);
+                    log.Parameters.AddWithValue("@TransactionNo", txNo.ToString(CultureInfo.InvariantCulture));
+                    log.Parameters.AddWithValue("@ReceiptNo", receiptNo);
+                    log.Parameters.AddWithValue("@TenderTypeCode", p.Tender.Code);
+                    log.Parameters.AddWithValue("@FeeAmount", p.Fee);
+                    log.Parameters.AddWithValue("@SaleAmount", p.Charged);
+                    log.Parameters.AddWithValue("@MarkupPercent", p.Tender.FeePercent);
+                    log.Parameters.AddWithValue("@UserID", user);
+                    log.ExecuteNonQuery();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Card processing fee log warning: {ex.Message}");
+            }
         }
 
         // 58mm receipt, same header / item layout as the old online-order receipt, built from the live order.
@@ -546,7 +605,15 @@ namespace AquariumPOS
             r.AppendLine(Row("ORDER TOTAL:", order.Total));
             r.AppendLine(line);
             r.AppendLine(Row("Previous Payment:", result.AmountPaidBefore));
-            foreach (var p in picks) r.AppendLine(Row(p.Tender.Description + ":", p.Amount));
+            foreach (var p in picks)
+            {
+                r.AppendLine(Row(p.Tender.Description + ":", p.Amount));
+                if (p.Fee > 0m)
+                {
+                    r.AppendLine(Row($"Card Fee {p.Tender.FeePercent:0.##}%:", p.Fee));
+                    r.AppendLine(Row("Charged:", p.Charged));
+                }
+            }
             r.AppendLine(Row("Total Paid:", result.AmountPaidAfter));
             r.AppendLine(result.BalanceAfter > 0 ? Row("BALANCE:", result.BalanceAfter) : "BALANCE: FULLY PAID");
             r.AppendLine(line);
