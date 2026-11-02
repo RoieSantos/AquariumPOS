@@ -1,17 +1,15 @@
-// Xendit invoice webhook ("Invoices paid" callback) - marks the XenditPayments row Paid / Expired and
-// applies a paid invoice to its order (_xendit_record_invoice_status, sql/supabase_xendit_payments.sql).
+// Xendit webhook (Payment Sessions and POS Payments events) - marks the XenditPayments row Paid / Expired and
+// applies a paid session to its order (_xendit_record_invoice_status, sql/supabase_xendit_payments.sql).
 //
-// Trust: the x-callback-token header must equal XENDIT_CALLBACK_TOKEN, AND the invoice is re-read from
-// Xendit's own API before anything is recorded - the posted body is never taken at its word.
-// Idempotent: Xendit retries a webhook until it gets a 2xx, and a repeated PAID never pays twice.
+// Trust: the x-callback-token header must equal the test or live callback token, AND the session is re-read
+// from Xendit's own API, with that same mode's key, before anything is recorded - the posted body is never taken
+// at its word. Idempotent: Xendit retries a webhook until it gets a 2xx, and a repeated PAID never pays twice.
 //
-// Secrets (`npx supabase secrets set NAME=value --project-ref hymcmesqgpliyyeghpgq`):
-//   XENDIT_SECRET_KEY      - same key as xendit-create-invoice (test or live).
-//   XENDIT_CALLBACK_TOKEN  - Xendit Dashboard > Settings > Webhooks > "View webhook verification token".
-//                             Test and live mode have DIFFERENT tokens - swap it with the key at go-live.
+// Secrets: see _shared/xendit-keys.ts. Both modes work whichever way the Xendit Payments page's switch is set, so
+// a payment already started is still recorded after switching.
 //
-// Xendit Dashboard > Settings > Webhooks > Invoices > "Invoices paid", in TEST mode now (and again in LIVE
-// mode at go-live):  https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/xendit-webhook
+// Xendit Dashboard > Settings > Webhooks > Payment Session (completed and expired) and Payments, in both TEST
+// and LIVE mode:  https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/xendit-webhook
 //
 // After a payment is applied, the customer gets a "payment received" message on the order's Messenger
 // chat (sendReceiptMessage below; uses the FACEBOOK_PAGE_ACCESS_TOKEN / FACEBOOK_PAGE_TOKENS secrets the
@@ -21,8 +19,10 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getPageAccessToken } from '../_shared/page-tokens.ts';
+import { callbackTokenFor, secretKeyFor } from '../_shared/xendit-keys.ts';
+import { readPaymentRequest, toRecordedInvoice } from '../_shared/xendit-qrph.ts';
+import { readSession, toRecordedSession } from '../_shared/xendit-session.ts';
 
-const XENDIT_API = 'https://api.xendit.co';
 const DEFAULT_GRAPH_VERSION = 'v21.0';
 
 function jsonResponse(body: unknown, status = 200) {
@@ -83,63 +83,86 @@ function timingSafeEqual(a: string, b: string): boolean {
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405);
 
-  const secretKey = Deno.env.get('XENDIT_SECRET_KEY');
-  const callbackToken = Deno.env.get('XENDIT_CALLBACK_TOKEN');
+  const sentToken = req.headers.get('x-callback-token') ?? '';
+  const liveToken = callbackTokenFor(false);
+  const testToken = callbackTokenFor(true);
+  const isLive = !!liveToken && timingSafeEqual(sentToken, liveToken);
+  if (!isLive && !(testToken && timingSafeEqual(sentToken, testToken))) {
+    return jsonResponse({ error: 'Invalid callback token.' }, 401);
+  }
+
+  const secretKey = secretKeyFor(!isLive);
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!secretKey || !callbackToken || !supabaseUrl || !serviceRoleKey) {
+  if (!secretKey || !supabaseUrl || !serviceRoleKey) {
     console.error('xendit-webhook: secrets not configured');
     return jsonResponse({ error: 'Not configured.' }, 500);
   }
 
-  if (!timingSafeEqual(req.headers.get('x-callback-token') ?? '', callbackToken)) {
-    return jsonResponse({ error: 'Invalid callback token.' }, 401);
-  }
-
   const payload = await req.json().catch(() => null);
-  const invoiceId = String(payload?.id ?? '').trim();
-  if (!invoiceId) return jsonResponse({ ok: false, error: 'No invoice id in the callback.' });
 
-  // Re-read the invoice from Xendit.
-  let invoice: any = null;
-  try {
-    const response = await fetch(`${XENDIT_API}/v2/invoices/${encodeURIComponent(invoiceId)}`, {
-      headers: { 'Authorization': 'Basic ' + btoa(secretKey + ':') }
-    });
-    if (response.status === 404) {
-      // The dashboard's "Test" button posts a made-up invoice id - acknowledge it so the test shows success.
-      return jsonResponse({ ok: true, note: `Invoice ${invoiceId} is not on this Xendit account (dashboard test callback?) - ignored.` });
+  // Pay page sessions (xendit-create-invoice): re-read the session from Xendit, record it, send the receipt.
+  if (typeof payload?.event === 'string' && payload.event.startsWith('payment_session.')) {
+    const sessionId = String(payload?.data?.payment_session_id ?? payload?.data?.id ?? '').trim();
+    if (!sessionId) {
+      console.error('xendit-webhook: no session id in the callback', JSON.stringify(payload));
+      return jsonResponse({ error: 'No session id in the callback.' }, 400); // Xendit retries, and it shows as failed there
     }
-    invoice = await response.json().catch(() => null);
-    if (!response.ok || !invoice?.id) {
-      console.error('xendit-webhook: invoice lookup failed', response.status, JSON.stringify(invoice));
-      return jsonResponse({ error: `Invoice lookup failed (${response.status}).` }, 502); // Xendit retries
-    }
-  } catch (err) {
-    console.error('xendit-webhook: could not reach Xendit', err);
-    return jsonResponse({ error: 'Could not reach Xendit.' }, 502);
-  }
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const { data, error } = await supabase.rpc('_xendit_record_invoice_status', {
-    // Xendit's own copy wins; the callback only fills fields the GET leaves out (e.g. payment_id).
-    p_invoice: { ...payload, ...invoice },
-    p_webhook: payload
-  });
-  if (error) {
-    console.error('xendit-webhook: record failed', error.message);
-    return jsonResponse({ error: error.message }, 500); // Xendit retries
-  }
-
-  // "Payment received" message in the customer's Messenger chat. Never fails the webhook - the payment
-  // is already safely recorded.
-  if (data?.status === 'Paid' && data?.apply_status === 'Applied') {
+    let session: Awaited<ReturnType<typeof readSession>>;
     try {
-      await sendReceiptMessage(supabase, data.payment_id);
+      session = await readSession(secretKey, sessionId);
     } catch (err) {
-      console.error('xendit-webhook: receipt message failed', err);
+      console.error('xendit-webhook: could not reach Xendit', err);
+      return jsonResponse({ error: 'Could not reach Xendit.' }, 502);
     }
+    if (session.status === 404) {
+      // The dashboard's "Test" button posts a made-up session id - acknowledge it so the test shows success.
+      return jsonResponse({ ok: true, note: `Session ${sessionId} is not on this Xendit account (dashboard test callback?) - ignored.` });
+    }
+    if (!session.ok) {
+      console.error('xendit-webhook: session lookup failed', session.status, JSON.stringify(session.body));
+      return jsonResponse({ error: `Session lookup failed (${session.status}).` }, 502); // Xendit retries
+    }
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const { data, error } = await supabase.rpc('_xendit_record_invoice_status', {
+      p_invoice: await toRecordedSession(secretKey, session.body),
+      p_webhook: payload
+    });
+    if (error) {
+      console.error('xendit-webhook: record failed', error.message);
+      return jsonResponse({ error: error.message }, 500); // Xendit retries
+    }
+    if (data?.status === 'Paid' && data?.apply_status === 'Applied') {
+      try {
+        await sendReceiptMessage(supabase, data.payment_id);
+      } catch (err) {
+        console.error('xendit-webhook: receipt message failed', err);
+      }
+    }
+    return jsonResponse(data ?? { ok: true });
   }
-  // An invoice we didn't create (another integration on the same account) - nothing to retry.
-  return jsonResponse(data ?? { ok: true });
+
+  // POS QR Ph payments (xendit-pos-payment) come from the Payments API, which posts { event, data }. Covers a
+  // payment the POS stopped watching, e.g. it closed after the customer scanned. No Messenger message: the
+  // POS prints the receipt. Xendit Dashboard > Settings > Webhooks > Payments, same URL as Invoices.
+  if (typeof payload?.event === 'string') {
+    const paymentRequestId = String(payload?.data?.payment_request_id ?? '').trim();
+    if (!paymentRequestId) return jsonResponse({ ok: true, note: `Event ${payload.event} ignored.` });
+    const request = await readPaymentRequest(secretKey, paymentRequestId);
+    if (!request) return jsonResponse({ error: 'Could not read the payment request from Xendit.' }, 502); // Xendit retries
+    // A pay page session's attempts land here too. Skip them: a failed attempt must not close a session the
+    // customer can still retry, and its payment_session.* event covers the outcome.
+    if (!String(request.reference_id ?? '').startsWith('RSPS-POS-')) {
+      return jsonResponse({ ok: true, note: `Event ${payload.event} is not a POS payment - ignored.` });
+    }
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const { data, error } = await supabase.rpc('_xendit_record_invoice_status', { p_invoice: toRecordedInvoice(request), p_webhook: payload });
+    if (error) {
+      console.error('xendit-webhook: record failed', error.message);
+      return jsonResponse({ error: error.message }, 500); // Xendit retries
+    }
+    return jsonResponse(data ?? { ok: true });
+  }
+
+  return jsonResponse({ ok: true, note: 'Not a Payment Sessions or Payments event - ignored.' });
 });

@@ -283,6 +283,7 @@
     }
     .inbox-order-top .inbox-order-no {
       color: var(--primary);
+      white-space: nowrap;
     }
     .inbox-order-badges {
       display: flex;
@@ -290,6 +291,62 @@
       gap: 4px;
       justify-content: flex-end;
       flex-shrink: 0;
+    }
+    /* Conversation order card: order no + amounts on the first row, badges on their own full-width row,
+       so several badges can't squeeze the order no in the narrow customer panel. */
+    .inbox-order-top-summary {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
+    .inbox-order-top-summary .inbox-order-top-left {
+      flex: 1;
+      align-items: flex-start;
+    }
+    .inbox-order-top-summary .inbox-order-chevron {
+      margin-top: 3px;
+    }
+    .inbox-order-heading,
+    .inbox-order-amounts {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .inbox-order-heading {
+      min-width: 0;
+    }
+    .inbox-order-amounts {
+      align-items: flex-end;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .inbox-order-total {
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .inbox-order-sub,
+    .inbox-order-balance {
+      font-size: 11px;
+    }
+    .inbox-order-sub {
+      font-weight: 500;
+      color: var(--muted-text, #61738f);
+    }
+    .inbox-order-balance.balance-due {
+      color: #b91c1c;
+    }
+    .inbox-order-balance.balance-clear {
+      color: #15803d;
+    }
+    .inbox-order-top-summary .inbox-order-badges {
+      flex-basis: 100%;
+      flex-shrink: 1;
+      justify-content: flex-start;
+      align-items: center;
+      padding-left: 18px;
+    }
+    .inbox-order-top-summary .inbox-order-badges .inbox-badge {
+      margin-left: 0;
+      padding: 2px 8px;
     }
     /* Status badge is an actual <select> here (see orderStatusSelectHtml in gmaConversations.js) so
        staff can change an order's status right from the conversation panel, same as the standalone
@@ -4515,7 +4572,7 @@ Message: ..."></textarea>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sumpsticker3"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
   <script src="js/calcEmbedLines.js?v=addoncod3"></script>
-  <script src="js/gmaConversations.js?v=addoncod3"></script>
+  <script src="js/gmaConversations.js?v=ordercard1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -5644,6 +5644,10 @@ WHERE ISNULL(SentToOnline,0) = 0
             return successes;
         }
 
+        // This POS's warehouse, for the Xendit tender (XenditPayForm).
+        public static Task<string> GetCurrentWarehouseIdForPosAsync()
+            => GetCurrentWarehouseIdAsync(GlobalSettings.OnlineOrdersShopId ?? string.Empty);
+
         private static async Task<string> GetCurrentWarehouseIdAsync(string shopId)
         {
             // Uses the local Warehouses table. Expect a bit column Current_Location and an ID column.

@@ -7317,22 +7317,22 @@ async function loadOrderCardPaymentMethods(orderId) {
   });
   if (openCardOrderId !== String(orderId)) return;
   if (error) {
-    el.textContent = 'Could not load from Pancake';
+    el.textContent = 'Could not load';
     return;
   }
   const rows = data || [];
   if (!rows.length) {
-    el.textContent = Number(findFlatOrder(orderId)?.amount_paid) > 0 ? 'Not recorded in Pancake' : 'No payment yet';
+    el.textContent = Number(findFlatOrder(orderId)?.amount_paid) > 0 ? 'Method not recorded' : 'No payment yet';
     return;
   }
   // method is the Payment Methods name (supabase_payment_methods_master.sql), or "Unnamed (cbe9ddfa)"
-  // until a super user names that Pancake ID on payment-methods.html.
+  // until a super user names that code on payment-methods.html.
   el.innerHTML = rows.map((r) => `<div title="${escapeHtml(r.code || '')}">${escapeHtml(r.method)}: ${money(r.amount)}</div>`).join('');
 }
 
 // Super-user-only "Delete Order" (cleanup of junk/test orders) - admin_delete_online_order in
-// supabase_online_order_admin_delete.sql. The RPC refuses orders that already posted stock or have
-// serials sold against them, and remembers the ID so the POS / Pancake sync can't push it back.
+// supabase_online_order_admin_delete.sql. The RPC puts back any stock and serials the order took, and
+// remembers the ID so the POS / Pancake sync can't push it back.
 async function deleteOnlineOrder(orderId, btn) {
   if (!currentSession?.isSuperUser) {
     alert('Only super users can delete orders.');
@@ -7340,7 +7340,7 @@ async function deleteOnlineOrder(orderId, btn) {
   }
   const o = findFlatOrder(orderId);
   const label = `#${orderId}${o?.customer_name ? ' (' + o.customer_name + ')' : ''}`;
-  if (!confirm(`Permanently delete order ${label} from the portal?\n\nThis is for cleaning up junk/test orders only - its lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring it back. This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete order ${label} from the portal?\n\nThis is for cleaning up junk/test orders only - its lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring it back. Any stock it took goes back to inventory and its serials return to In Stock. This cannot be undone.`)) return;
   if (prompt(`Type the order number (${orderId}) to confirm:`)?.trim() !== String(orderId)) {
     alert('Order number did not match - nothing deleted.');
     return;
@@ -7362,7 +7362,7 @@ async function deleteOnlineOrder(orderId, btn) {
 
 // List multi-select delete (super users) - the ticks in the Order ID cells, per "can we do multi
 // selection deletion on the list?". admin_delete_online_orders deletes each order on its own, so one
-// refused order (stock posted / serials sold) doesn't stop the rest - it's listed in the result alert.
+// refused order doesn't stop the rest - it's listed in the result alert.
 const checkedOrderIds = new Set();
 
 function updateCheckedOrdersState() {
@@ -7404,7 +7404,7 @@ async function deleteCheckedOrders(btn) {
     const o = findFlatOrder(id);
     return `#${id}${o?.customer_name ? ' - ' + o.customer_name : ''}`;
   }).join('\n') + (ids.length > 15 ? `\n...and ${ids.length - 15} more` : '');
-  if (!confirm(`Permanently delete ${ids.length} order(s) from the portal?\n\n${preview}\n\nThis is for cleaning up junk/test orders only - their lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring them back. This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete ${ids.length} order(s) from the portal?\n\n${preview}\n\nThis is for cleaning up junk/test orders only - their lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring them back. Any stock they took goes back to inventory and their serials return to In Stock. This cannot be undone.`)) return;
   if (prompt(`Type DELETE ${ids.length} to confirm:`)?.trim().toUpperCase() !== `DELETE ${ids.length}`) {
     alert('Confirmation did not match - nothing deleted.');
     return;

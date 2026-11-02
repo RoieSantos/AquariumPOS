@@ -230,6 +230,8 @@ namespace AquariumPOS
         public static string CustomerHistoryRpcEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/rest/v1/rpc/pos_get_customer_history";
         // The picked Messenger customer's Facebook picture (live from Facebook, nothing saved) - PosApiKey.
         public static string CustomerProfilePicEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/chatbot-profile-pics";
+        // Xendit tender at checkout (XenditPayForm, sql/supabase_xendit_pos_walkin.sql) - PosApiKey.
+        public static string XenditPosPaymentEndpoint { get; } = "https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/xendit-pos-payment";
         // Fallback only: set AQUARIUMPOS_WALKIN_VIA_PANCAKE=1 on a machine to send its walk-ins to Pancake again.
         public static bool WalkinOrdersDirectToPortal { get; } =
             Environment.GetEnvironmentVariable("AQUARIUMPOS_WALKIN_VIA_PANCAKE") != "1";

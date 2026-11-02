@@ -978,6 +978,20 @@ INSERT INTO CardProcessingFeeLog (
                         command4.ExecuteNonQuery();
                     }
 
+                    // The Xendit tender (PayWithXendit) - per "can you add it upon open of POS". Whether it can
+                    // take a payment is still decided by the POS switch on the portal's Xendit Payments page.
+                    string addXenditTender = @"
+                        IF EXISTS (SELECT * FROM sysobjects WHERE name='TenderTypes' AND xtype='U')
+                        AND NOT EXISTS (SELECT * FROM TenderTypes WHERE Code = 'XENDIT')
+                        BEGIN
+                            INSERT INTO TenderTypes (Code, Description) VALUES ('XENDIT', 'Xendit');
+                        END";
+
+                    using (var commandXendit = new SqlCommand(addXenditTender, connection))
+                    {
+                        commandXendit.ExecuteNonQuery();
+                    }
+
                     // Checkout's customer box address (for delivery) - too long for Description's 255 chars,
                     // so its own column; the walk-in send reads it from here (incl. offline catch-up).
                     string addCustomerAddressColumn = @"
@@ -17435,6 +17449,7 @@ END", connection);
 
         private void ClearButton_Click(object? sender, EventArgs e)
         {
+            xenditOrderDescription = null;
             salesListView.Items.Clear();
             currentTotal = 0;
             currentDiscount = 0;
@@ -18163,6 +18178,12 @@ END", connection);
                     return;
                 }
 
+                if (tenderCode.Equals(XenditTenderCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    PayWithXendit(button.Text, tenderCode);
+                    return;
+                }
+
                 // Show payment entry form
                 decimal defaultPaymentAmount = grandTotal;
                 decimal cardMarkupPercent = 0m;
@@ -18190,6 +18211,104 @@ END", connection);
                     }
                 }
             }
+        }
+
+        // Xendit tender: the customer pays on their phone first (XenditPayForm); the tender is only added, and
+        // the sale completed, once Xendit says it's Paid. No change can be given, so the amount can't be more
+        // than what's left, and QR Ph allows 1.00 to 50,000.00 per payment (a bigger sale is split).
+        // Add a tender with this code in Tender Types to turn it on for a store.
+        private const string XenditTenderCode = "XENDIT";
+        private const decimal XenditMinAmount = 1m;
+        private const decimal XenditMaxAmount = 50000m;
+
+        // Customer + order description are asked BEFORE the QR - per "put the fill data before the checkout so we
+        // ensure that the payout will save". Once set, CompleteSale / SaveAdvanceOrder post without prompting, so
+        // a cancelled prompt can't leave a paid sale unposted. The customer is kept in currentCustomerName etc.
+        private string? xenditOrderDescription;
+
+        // False if the cashier cancelled a prompt - nothing has been charged yet.
+        private bool PromptSaleDetailsForXendit()
+        {
+            if (isReturnExchangeMode || xenditOrderDescription != null) return true;
+
+            bool advanceOrder = SaleNeedsAdvanceOrder()
+                || string.Equals(checkoutButton.Tag?.ToString(), "DOWNPAYMENT", StringComparison.OrdinalIgnoreCase);
+
+            string? initialName;
+            if (advanceOrder)
+                initialName = string.Equals(currentCustomerName?.Trim(), DefaultWalkInCustomerName, StringComparison.OrdinalIgnoreCase) ? string.Empty : currentCustomerName?.Trim();
+            else
+                initialName = string.IsNullOrWhiteSpace(currentCustomerName) ? DefaultWalkInCustomerName : currentCustomerName.Trim();
+
+            var customer = FunctionEvents.PromptForCustomer(this, initialName, currentCustomerPhone, currentCustomerPsid, currentCustomerAddress);
+            if (string.IsNullOrWhiteSpace(customer.Name)) return false;
+
+            string description;
+            if (SaleNeedsAdvanceOrder())
+                description = FunctionEvents.PromptForOrderDescription(null, "PAID IN FULL - TO FOLLOW (no stock): " +
+                    string.Join(", ", GetSaleLinesMissingAquariumSerials().Select(line => $"{line.Description} x{line.Count}")));
+            else if (advanceOrder)
+                description = FunctionEvents.PromptForOrderDescription();
+            else
+                description = FunctionEvents.PromptForOrderDescription(this, string.IsNullOrWhiteSpace(pendingCustomAquariumSpecialNote)
+                    ? string.Empty
+                    : $"Special note: {pendingCustomAquariumSpecialNote}");
+            if (string.IsNullOrWhiteSpace(description)) return false;
+
+            currentCustomerName = customer.Name;
+            currentCustomerPhone = customer.Phone;
+            currentCustomerPsid = customer.Psid;
+            currentCustomerAddress = customer.Address;
+            xenditOrderDescription = description;
+            return true;
+        }
+
+        private void PayWithXendit(string tenderDescription, string tenderCode)
+        {
+            // Stop here when offline, before any prompt - per "if the internet is down they cannot proceed".
+            bool online;
+            Cursor previousCursor = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;
+            try { online = XenditPayForm.CanReachXenditFunction(); }
+            finally { Cursor.Current = previousCursor; }
+            if (!online)
+            {
+                MessageBox.Show(this, "No internet connection, so Xendit can't be used right now.\n\nNo money was taken. Please pick another tender.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            decimal remaining = currentTotal - currentDiscount - totalPaid;
+            using var paymentForm = new PaymentEntryForm(tenderDescription, Math.Min(remaining, XenditMaxAmount));
+            if (paymentForm.ShowDialog(this) != DialogResult.OK) return;
+
+            decimal amount = paymentForm.Amount;
+            if (amount > remaining)
+            {
+                MessageBox.Show(this, $"Xendit can't give change. The amount can't be more than the remaining P{remaining:N2}.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (amount < XenditMinAmount || amount > XenditMaxAmount)
+            {
+                MessageBox.Show(this, $"A QR Ph payment must be between P{XenditMinAmount:N2} and P{XenditMaxAmount:N2}. Split a bigger sale into more than one payment.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Details from an earlier Xendit part payment on this sale stay; new ones go if this QR isn't paid,
+            // so a different tender picked next gets the usual prompts.
+            bool detailsAlreadyTaken = xenditOrderDescription != null;
+            if (!PromptSaleDetailsForXendit()) return;
+
+            using var xenditForm = new XenditPayForm(amount);
+            if (xenditForm.ShowDialog(this) != DialogResult.OK)
+            {
+                if (!detailsAlreadyTaken) xenditOrderDescription = null;
+                return;
+            }
+
+            RestoreOriginalBottomButtons();
+            BeginPaymentModeIfNeeded();
+            _ = XenditPayForm.LinkToReceiptAsync(xenditForm.PaymentId, currentReceiptNo);
+            ProcessCheckout(tenderDescription, tenderCode, amount);
         }
 
         private void ShowTenderTypesPanel()
@@ -18326,9 +18445,9 @@ END", connection);
         //     }
         // }
 
-        private void ProcessCheckout(string tenderDescription, string tenderCode, decimal paymentAmount)
+        // If not in payment mode yet, initialize payment tracking
+        private void BeginPaymentModeIfNeeded()
         {
-            // If not in payment mode yet, initialize payment tracking
             if (!isInPaymentMode)
             {
                 isInPaymentMode = true;
@@ -18338,6 +18457,11 @@ END", connection);
                 totalPaid = 0;
                 //ShowPaymentMode();
             }
+        }
+
+        private void ProcessCheckout(string tenderDescription, string tenderCode, decimal paymentAmount)
+        {
+            BeginPaymentModeIfNeeded();
 
             // Add this payment to the payment tracking
             AddPayment(tenderDescription, tenderCode, paymentAmount);
@@ -18519,6 +18643,12 @@ END", connection);
                 customerName = string.IsNullOrWhiteSpace(currentCustomerName) ? "RETURN / EXCHANGE" : currentCustomerName;
                 currentCustomerName = customerName;
                 orderDescription = $"Exchange from Receipt {returnExchangeOriginalReceiptNo}";
+            }
+            else if (xenditOrderDescription != null)
+            {
+                // Already asked before the Xendit QR.
+                customerName = currentCustomerName;
+                orderDescription = xenditOrderDescription;
             }
             else
             {
@@ -25229,7 +25359,10 @@ ORDER BY [Name]", conn);
                 //MessageBox.Show("Downpayment should not be equal to Grand Total. Please checkout full amount instead", "Invalid Downpayment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 // Same customer box as a regular sale (CompleteSale): search by mobile / name and tap the
                 // Messenger customer to link the advance order to their chat (supabase_advance_order_customer_tag.sql).
-                var customer = FunctionEvents.PromptForCustomer(
+                // Already asked before the Xendit QR when xenditOrderDescription is set.
+                var customer = xenditOrderDescription != null
+                    ? (Name: currentCustomerName, Phone: currentCustomerPhone, Psid: currentCustomerPsid, Address: currentCustomerAddress)
+                    : FunctionEvents.PromptForCustomer(
                     this,
                     string.Equals(currentCustomerName?.Trim(), DefaultWalkInCustomerName, StringComparison.OrdinalIgnoreCase)
                         ? string.Empty
@@ -25255,7 +25388,9 @@ ORDER BY [Name]", conn);
                     return;
                 }
                 // Prompt for Order Description
-                orderDescription = isPaidInFullToFollow
+                orderDescription = xenditOrderDescription != null
+                    ? xenditOrderDescription
+                    : isPaidInFullToFollow
                     ? FunctionEvents.PromptForOrderDescription(null, "PAID IN FULL - TO FOLLOW (no stock): " +
                         string.Join(", ", GetSaleLinesMissingAquariumSerials().Select(line => $"{line.Description} x{line.Count}")))
                     : FunctionEvents.PromptForOrderDescription();

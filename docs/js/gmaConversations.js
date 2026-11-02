@@ -2192,6 +2192,33 @@ function orderAddressHtml(o) {
   return `<div class="inbox-order-kv">${rows.join('')}</div>`;
 }
 
+// The branch that fulfils the order - not pageBadgeHtml, which is the Facebook Page the chat came in
+// on, so an Amaya order from a chat on the GMA Page would show as GMA.
+function orderBranchBadgeHtml(location) {
+  const branch = String(location || '').trim();
+  if (!branch) return '';
+  const cls = /gma/i.test(branch) ? 'inbox-badge-page-gma' : /amaya/i.test(branch) ? 'inbox-badge-page-rspetstop' : '';
+  return `<span class="inbox-badge inbox-badge-page ${cls}" title="Order branch">${escapeHtml(branch)} branch</span>`;
+}
+
+function formatOrderPeso(value) {
+  return `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function orderSummarySubHtml(o) {
+  const date = o.created_at_utc
+    ? new Date(o.created_at_utc).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' })
+    : '';
+  return [o.fulfillment_type, date].filter(Boolean).map(escapeHtml).join(' &middot; ');
+}
+
+function orderBalanceSummaryHtml(o, balance) {
+  if (o.status === 'Cancelled') return '';
+  if (balance > 0) return `<span class="inbox-order-balance balance-due">${formatOrderPeso(balance)} due</span>`;
+  if (Number(o.estimated_total || 0) > 0) return '<span class="inbox-order-balance balance-clear">Fully paid</span>';
+  return '';
+}
+
 function renderConversationOrderCards() {
   const listEl = document.getElementById('conversationOrdersEl');
   if (!listEl) return;
@@ -2204,13 +2231,20 @@ function renderConversationOrderCards() {
     const pancakeHtml = cardExpanded ? pancakeLiveStatusHtml(o) : '';
     return `
     <div class="inbox-order-item${cardExpanded ? ' expanded' : ''}">
-      <div class="inbox-order-top" data-order="${escapeHtml(o.order_no)}">
+      <div class="inbox-order-top inbox-order-top-summary" data-order="${escapeHtml(o.order_no)}">
         <div class="inbox-order-top-left">
           <svg class="inbox-order-chevron" viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span class="inbox-order-no">${escapeHtml(o.order_no)}</span>
+          <div class="inbox-order-heading">
+            <span class="inbox-order-no">${escapeHtml(o.order_no)}</span>
+            <span class="inbox-order-sub">${orderSummarySubHtml(o)}</span>
+          </div>
+        </div>
+        <div class="inbox-order-amounts">
+          <span class="inbox-order-total">${formatOrderPeso(o.estimated_total)}</span>
+          ${orderBalanceSummaryHtml(o, balance)}
         </div>
         <div class="inbox-order-badges">
-          ${pageBadgeHtml(conversationOrdersConv?.page_id)}
+          ${orderBranchBadgeHtml(o.location)}
           ${pancakeStatusBadgeHtml(o)}
           ${o.order_no === flaggedOrderNo ? '<span class="badge badge-danger">Payment to confirm</span>' : ''}
           ${o.status === 'New' && o.receipt_confirmed_at_utc ? '<span class="badge badge-success">Customer confirmed - ready for Order ID</span>' : ''}

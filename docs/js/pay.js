@@ -192,12 +192,14 @@ async function findStaffTester() {
   if (result === 'success') {
     showMsg('resultMsg', 'ok', 'Payment received - updating your order...');
     // Payments made in the last hour count (the customer may have taken a while at the checkout).
-    await lookup(orderRef);
+    if (await lookup(orderRef)) hide('lookupForm');
     waitForPaymentRecorded(orderRef, new Date(Date.now() - 60 * 60 * 1000));
     return;
   }
   if (result === 'failed') {
     showMsg('resultMsg', 'warn', 'The payment was not completed. You can try again below, or message us if you need help.');
   }
-  await lookup(orderRef);
+  // A link already names the order (e.g. from Conversations), so there's nothing to find. If the order can't be
+  // found, the box stays so the customer can correct it.
+  if (await lookup(orderRef)) hide('lookupForm');
 })();

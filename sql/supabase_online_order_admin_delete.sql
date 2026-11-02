@@ -7,12 +7,14 @@
 --   admin_delete_online_orders(user, pass, order_ids[])  Same, for the list's Delete Selected; returns one
 --                                                        row per order (deleted / refusal reason).
 --
--- Refuses an order (nothing deleted for it) when it already touched stock:
---   * ItemLedgerEntries rows with DocumentType 'Sales Order' for it - ledger rows are never deleted,
---     that case needs a reversing entry instead.
---   * Serials sold against it (ItemSerialTracking.SoldOnlineOrderId) - they'd be left pointing at an
---     order that no longer exists.
--- Otherwise deletes the order and every portal row keyed on it (same list as the 1821 script, plus
+-- Puts back whatever the order took out of stock - per "upon deleting the order can you automatically
+-- reverse what ever it has sold ?":
+--   * Item Ledger: _ile_reconcile_online_order posts the opposite entries, dated today. An order that no
+--     longer exists counts as nothing sold, same as a cancelled one. Ledger rows are never deleted, so the
+--     sale and its reversal both stay in the history, netting to 0. If they don't net to 0, nothing is deleted.
+--   * Serials: SOLD to the order or RESERVED for it go back to IN_STOCK, same as voiding an advance order
+--     (supabase_advance_order_void.sql). UpdatedAtUtc makes the desktop POS pull the change down.
+-- Deletes the order and every portal row keyed on it (same list as the 1821 script, plus
 -- ItemLedgerOrderDirty).
 --
 -- OnlineOrdersDeleted remembers each deleted OrderID, and BEFORE INSERT triggers on OnlineOrders /
@@ -75,11 +77,13 @@ declare
   v_id text := trim(coalesce(p_order_id, ''));
   v_customer text;
   v_status text;
-  v_count int;
 begin
   if v_id = '' then
     raise exception 'Order is required.';
   end if;
+
+  -- Waits for a running ledger cron pass on this order, so the reversal below can't be skipped or doubled.
+  perform pg_advisory_xact_lock(hashtext('ile_sales|' || v_id));
 
   select "CustomerName", "Status" into v_customer, v_status
   from public."OnlineOrders" where "OrderID" = v_id
@@ -88,17 +92,11 @@ begin
     raise exception 'Order % not found.', v_id;
   end if;
 
-  select count(*) into v_count from public."ItemLedgerEntries"
-  where "DocumentType" = 'Sales Order' and "DocumentNo" = v_id;
-  if v_count > 0 then
-    raise exception 'Order % already posted stock (% Item Ledger entr%) - it can''t be deleted. Reverse the stock first.',
-      v_id, v_count, case when v_count = 1 then 'y' else 'ies' end;
-  end if;
-
-  select count(*) into v_count from public."ItemSerialTracking" where "SoldOnlineOrderId" = v_id;
-  if v_count > 0 then
-    raise exception 'Order % has % serial(s) sold against it - it can''t be deleted.', v_id, v_count;
-  end if;
+  perform public._serial_release_order_reservations(v_id, p_deleted_by);
+  update public."ItemSerialTracking"
+     set "Status" = 'IN_STOCK', "SoldOnlineOrderId" = null, "SoldReceiptNo" = null,
+         "UpdatedAtUtc" = now(), "UpdatedBy" = left(coalesce(p_deleted_by, 'order deleted'), 100)
+   where "Status" = 'SOLD' and "SoldOnlineOrderId" = v_id;
 
   insert into public."OnlineOrdersDeleted" ("OrderID", "CustomerName", "Status", "DeletedBy")
   values (v_id, v_customer, v_status, p_deleted_by)
@@ -118,10 +116,23 @@ begin
   delete from public."OnlineOrderProductionDone"   where "OrderID" = v_id;
   delete from public."OnlineOrderProductionRework" where "OrderID" = v_id;
   delete from public."OnlineOrderShipments"        where "OrderID" = v_id;
-  delete from public."ItemLedgerOrderSync"         where "OrderID" = v_id;
-  delete from public."ItemLedgerOrderDirty"        where "OrderID" = v_id;
 
   delete from public."OnlineOrders" where "OrderID" = v_id;
+
+  -- With the order gone, the reconcile posts the opposite of everything still out of stock for it.
+  perform public._ile_reconcile_online_order(v_id);
+  if exists (
+    select 1 from public."ItemLedgerEntries" e
+    where e."DocumentType" = 'Sales Order' and e."DocumentNo" = v_id
+    group by e."ItemCode", e."VariantId", e."WarehouseId"
+    having sum(e."Quantity") <> 0
+  ) then
+    raise exception 'Order % could not put its stock back on the Item Ledger - nothing was deleted.', v_id;
+  end if;
+
+  -- After the reconcile: it writes the sync row, and deleting the lines queued dirty rows.
+  delete from public."ItemLedgerOrderSync"         where "OrderID" = v_id;
+  delete from public."ItemLedgerOrderDirty"        where "OrderID" = v_id;
 end;
 $$;
 
@@ -153,7 +164,7 @@ grant execute on function public.admin_delete_online_order(text, text, text) to 
 
 -- ---------------------------------------------------------------------------
 -- 4. Bulk delete (list's Delete Selected). Each order is its own sub-transaction: a refused one
--- (stock posted / serials sold / not found) comes back with the reason and the rest still go.
+-- (stock couldn't be put back / not found) comes back with the reason and the rest still go.
 drop function if exists public.admin_delete_online_orders(text, text, text[]);
 
 create or replace function public.admin_delete_online_orders(
