@@ -101,6 +101,7 @@
                 <span>Received from</span><b>${odEsc(p.customer_name || '-')}</b>
                 <span>Payment for</span><b>${odEsc(p.purpose || '')} - Order ${odEsc(p.order_ref || '')}</b>
                 <span>Paid via</span><b>${odEsc(p.paid_via || '')}</b>
+                ${Number(p.card_fee) > 0 ? `<span>Card fee</span><b>${prPeso(p.card_fee)}</b><span>Total charged</span><b>${prPeso(Number(p.amount) + Number(p.card_fee))}</b>` : ''}
                 <span>Xendit reference</span><b>${odEsc(p.xendit_reference || '-')}</b>
               </div>
             </div>

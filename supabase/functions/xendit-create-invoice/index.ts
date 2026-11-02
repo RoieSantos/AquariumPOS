@@ -26,6 +26,9 @@ const CORS_HEADERS = {
 };
 
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
+// The checkout's methods when the customer didn't choose card, so a card can't skip the card fee.
+// https://docs.xendit.co/docs/available-payment-channels
+const NON_CARD_CHANNELS = ['GCASH', 'PAYMAYA', 'GRABPAY', 'SHOPEEPAY', 'QRPH', 'BPI_DIRECT_DEBIT', 'UBP_EADA', 'BDO_ONLINE_BANKING'];
 
 // Return pages the customer may be sent back to - anything else falls back to PUBLIC_SITE_URL, so the
 // invoice can't be turned into a redirect to someone else's site.
@@ -155,6 +158,17 @@ Deno.serve(async (req) => {
     return jsonResponse({ invoiceUrl: prepared.invoice_url, amount: prepared.amount, isTest, reused: true });
   }
 
+  // Card fee, worked out in the database (sql/supabase_xendit_card_fee.sql). 0% = no fee and all methods together.
+  const payByCard = body?.payByCard === true;
+  const { data: feeRows, error: feeError } = await supabase.rpc('_xendit_set_card_fee', { p_payment_id: prepared.payment_id, p_pay_by_card: payByCard });
+  if (feeError || !feeRows?.[0]) {
+    console.error('xendit-create-invoice: card fee failed', feeError?.message);
+    await supabase.rpc('_xendit_set_invoice', { p_payment_id: prepared.payment_id, p_invoice_id: null, p_invoice_url: null, p_expires_at: null, p_error: 'Card fee failed' });
+    return jsonResponse({ error: 'We could not start the online payment. Please try again in a moment.' }, 500);
+  }
+  const cardFee = Number(feeRows[0].card_fee);
+  const channels = Number(feeRows[0].fee_percent) > 0 ? { allowed_payment_channels: payByCard ? ['CARDS'] : NON_CARD_CHANNELS } : {};
+
   const back = returnBase(body?.returnUrl);
   const orderParam = encodeURIComponent(prepared.order_ref);
   const individual_detail = { given_names: String(prepared.customer_name || 'RS Pet Stop customer').slice(0, 100) };
@@ -170,8 +184,9 @@ Deno.serve(async (req) => {
   try {
     const created = await createSession(secretKey, {
       reference_id: prepared.external_id,
-      amount: Number(prepared.amount),
-      description: `RS Pet Stop order ${prepared.order_ref} - ${prepared.purpose}`,
+      amount: Math.round((Number(prepared.amount) + cardFee) * 100) / 100,
+      ...channels,
+      description: `RS Pet Stop order ${prepared.order_ref} - ${prepared.purpose}${cardFee > 0 ? ` (includes PHP ${cardFee.toFixed(2)} card fee)` : ''}`,
       expires_at: new Date(Date.now() + SESSION_DURATION_MS).toISOString(),
       customer,
       success_return_url: `${back}?order=${orderParam}&result=success`,

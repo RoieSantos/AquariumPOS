@@ -9,6 +9,8 @@
 // test - their login is sent along and re-checked server side (_xendit_prepare_invoice).
 let currentOrderRef = null;
 let staffTester = null;
+let currentOrder = null;
+let cardFeePercent = 0; // sql/supabase_xendit_card_fee.sql - only for showing it, the server works out the real fee
 
 function peso(value) {
   return '₱' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -34,8 +36,25 @@ async function fetchOrder(orderRef) {
   return (data && data[0]) || null;
 }
 
+function payingByCard() {
+  return cardFeePercent > 0 && document.querySelector('input[name="payMethod"]:checked')?.value === 'card';
+}
+
+function withCardFee(amount) {
+  const value = Number(amount);
+  return payingByCard() ? value + Math.round(value * cardFeePercent) / 100 : value;
+}
+
+function renderPayButtons() {
+  if (!currentOrder) return;
+  const feeNote = payingByCard() ? ` (includes ${cardFeePercent}% card fee)` : '';
+  document.getElementById('payDownBtn').textContent = `Pay 50% down payment - ${peso(withCardFee(currentOrder.down_payment_due))}${feeNote}`;
+  document.getElementById('payFullBtn').textContent = `Pay full balance - ${peso(withCardFee(currentOrder.balance))}${feeNote}`;
+}
+
 function renderOrder(order) {
   currentOrderRef = order.order_ref;
+  currentOrder = order;
   setText('orderRef', order.order_ref);
   setText('orderStatus', order.order_status || '-');
   const showOnline = order.online_order_id && order.online_order_id !== order.order_ref;
@@ -61,8 +80,9 @@ function renderOrder(order) {
     document.getElementById('payActions').classList.remove('hidden');
     const hasDown = Number(order.down_payment_due) > 0 && Number(order.down_payment_due) < Number(order.balance);
     downBtn.classList.toggle('hidden', !hasDown);
-    downBtn.textContent = `Pay 50% down payment - ${peso(order.down_payment_due)}`;
-    fullBtn.textContent = `Pay full balance - ${peso(order.balance)}`;
+    document.getElementById('payMethodChoice').classList.toggle('hidden', !(cardFeePercent > 0));
+    document.getElementById('payCardLabel').textContent = `Credit or debit card (+${cardFeePercent}% card fee)`;
+    renderPayButtons();
     // The primary (filled) style goes on whichever option is first.
     fullBtn.className = `land-btn ${hasDown ? 'land-btn-secondary' : 'land-btn-primary'}`;
   } else {
@@ -115,6 +135,7 @@ async function startPayment(purpose) {
       body: JSON.stringify({
         orderRef: currentOrderRef,
         purpose,
+        payByCard: payingByCard(),
         returnUrl: window.location.origin + window.location.pathname,
         staffUsername: staffTester?.username,
         staffPassword: staffTester?.password
@@ -183,6 +204,9 @@ async function findStaffTester() {
     const value = document.getElementById('orderInput').value.trim();
     if (value) lookup(value);
   });
+  const { data: feePercent, error: feeError } = await supabaseClient.rpc('public_get_xendit_card_fee_percent');
+  cardFeePercent = feeError ? 0 : Number(feePercent) || 0;
+  document.querySelectorAll('input[name="payMethod"]').forEach((radio) => radio.addEventListener('change', renderPayButtons));
   document.getElementById('payDownBtn').addEventListener('click', () => startPayment('Down payment'));
   document.getElementById('payFullBtn').addEventListener('click', () => startPayment('Full balance'));
 

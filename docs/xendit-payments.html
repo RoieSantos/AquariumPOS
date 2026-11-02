@@ -51,6 +51,11 @@
           Allow the XENDIT tender at the POS (walk-in sales)
         </label>
         <p class="muted" style="margin:0 0 10px 26px; font-size:13px;">Separate from the customer switch above. Every POS on the new build shows the Xendit button; while this is off, it only shows a "switched off" message. In test mode a POS can only take test payments, so switching to test turns this off. Only turn it back on in test mode to test a POS yourself.</p>
+        <label style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
+          Card fee on the pay page
+          <input type="number" id="xenditCardFeePercent" min="0" max="20" step="0.01" style="width:90px;" /> %
+        </label>
+        <p class="muted" style="margin:0 0 10px 0; font-size:13px;">Added on top when a customer chooses to pay by card. Only the order amount comes off the balance. At 0%, all methods show together with no fee. The POS has its own card fee setting.</p>
         <button class="btn btn-primary" id="saveSettingsBtn" type="button">Save Settings</button>
         <span class="muted hidden" id="settingsSaved">Saved</span>
         <p class="muted" id="settingsUpdated" style="margin-bottom:0;"></p>
@@ -101,7 +106,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=tenderdeposit1"></script>
-  <script src="js/xenditPayments.js?v=xendit8"></script>
+  <script src="js/xenditPayments.js?v=xendit9"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

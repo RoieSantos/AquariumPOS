@@ -2691,7 +2691,7 @@ async function sendPayLinkToCustomer(o, btn) {
     ? `Down payment (50%): ${payLinkPeso(downDue)}\nFull balance: ${payLinkPeso(balance)}`
     : `Balance: ${payLinkPeso(balance)}`;
   const message = `💳 You can pay for your order ${o.order_no} online here:\n${link}\n\n${amounts}\n\n`
-    + 'Pay with GCash, Maya, card, QR Ph or online banking (secured by Xendit). Your payment shows on your order automatically.';
+    + 'Pay with GCash, Maya, QR Ph, online banking or card (secured by Xendit). Card payments add a card fee, shown before you pay. Your payment shows on your order automatically.';
 
   const offNote = xenditEnabled ? '' : '\n\n⚠️ Xendit is switched OFF - the customer will see "Online payment isn\'t available yet". Only send this to a test chat.';
   if (!window.confirm(`Send this to the customer?\n\n${message}${offNote}`)) return;

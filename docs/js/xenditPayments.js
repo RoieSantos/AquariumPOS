@@ -72,7 +72,7 @@ function renderRows(rows) {
         <td>${r.is_test ? '<strong style="color:#b45309;">TEST</strong>' : 'Live'}</td>
         <td>${status}</td>
         <td>${esc([r.payment_channel, r.payment_method].filter(Boolean).join(' / ')) || '<span class="muted">-</span>'}</td>
-        <td>${r.paid_at ? `${peso(r.paid_amount)}<div class="muted" style="font-size:12px;">${new Date(r.paid_at).toLocaleString()}</div>${r.source === 'POS' ? `<span class="muted" style="font-size:12px;">${esc(r.receipt_no || '')}</span>` : `<a href="payment-receipt.html?id=${encodeURIComponent(r.payment_id)}" target="_blank" rel="noopener" style="font-size:12px;">🧾 ${esc(r.receipt_no || 'Receipt')}</a>`}` : '<span class="muted">-</span>'}</td>
+        <td>${r.paid_at ? `${peso(r.paid_amount)}${Number(r.card_fee) > 0 ? `<div class="muted" style="font-size:12px;">+ ${peso(r.card_fee)} card fee</div>` : ''}<div class="muted" style="font-size:12px;">${new Date(r.paid_at).toLocaleString()}</div>${r.source === 'POS' ? `<span class="muted" style="font-size:12px;">${esc(r.receipt_no || '')}</span>` : `<a href="payment-receipt.html?id=${encodeURIComponent(r.payment_id)}" target="_blank" rel="noopener" style="font-size:12px;">🧾 ${esc(r.receipt_no || 'Receipt')}</a>`}` : '<span class="muted">-</span>'}</td>
         <td>${applyCell(r)}</td>
         <td>${r.status === 'Paid' && r.apply_status === 'Failed' ? `<button class="btn btn-secondary btn-sm" data-retry="${esc(r.payment_id)}" type="button">Retry</button>` : ''}</td>
       </tr>`;
@@ -121,6 +121,7 @@ async function loadSettings() {
   document.getElementById('xenditEnabled').checked = savedEnabled;
   document.getElementById('showOnOrderNow').checked = !!s.show_on_order_now;
   document.getElementById('xenditPosEnabled').checked = !!s.pos_enabled;
+  document.getElementById('xenditCardFeePercent').value = s.card_fee_percent ?? 0;
   savedLiveMode = !!s.live_mode;
   document.getElementById('xenditLiveMode').checked = savedLiveMode;
   renderLiveModeHint();
@@ -176,6 +177,14 @@ async function saveSettings() {
   });
   if (posError) {
     window.alert(`Failed to save the POS setting: ${posError.message}`);
+    return;
+  }
+  const { error: feeError } = await supabaseClient.rpc('admin_set_xendit_card_fee', {
+    ...authArgs(),
+    p_percent: Number(document.getElementById('xenditCardFeePercent').value)
+  });
+  if (feeError) {
+    window.alert(`Failed to save the card fee: ${feeError.message}`);
     return;
   }
   const saved = document.getElementById('settingsSaved');

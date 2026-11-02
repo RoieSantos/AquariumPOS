@@ -42,19 +42,42 @@ async function sendReceiptMessage(supabase: ReturnType<typeof createClient>, pay
     let status = 'Failed: no Facebook Page token';
     let mid: string | null = null;
     if (token) {
-      const send = (extra: Record<string, unknown>) => fetch(`https://graph.facebook.com/${graphVersion}/me/messages?access_token=${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: { id: claim.psid }, message: { text: claim.message }, ...extra })
-      }).then(async (res) => ({ ok: res.ok, body: await res.json().catch(() => null) }));
-      // Normal reply first; outside Facebook's 24h window a payment receipt is a post-purchase update.
-      let result = await send({ messaging_type: 'RESPONSE' });
-      if (!result.ok) result = await send({ messaging_type: 'MESSAGE_TAG', tag: 'POST_PURCHASE_UPDATE' });
+      const result = await sendOnMessenger(token, graphVersion, claim.psid, claim.message);
       status = result.ok ? 'Sent' : `Failed: ${result.body?.error?.message || 'Facebook refused the message'}`;
       mid = result.ok ? (result.body?.message_id ?? null) : null;
     }
     await supabase.rpc('_xendit_set_receipt_message_status', { p_payment_id: paymentId, p_status: status, p_facebook_mid: mid });
   }
+  await broadcastGmaEvent(claim.psid);
+}
+
+async function sendOnMessenger(token: string, graphVersion: string, psid: string, text: string) {
+  const send = (extra: Record<string, unknown>) => fetch(`https://graph.facebook.com/${graphVersion}/me/messages?access_token=${token}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: psid }, message: { text }, ...extra })
+  }).then(async (res) => ({ ok: res.ok, body: await res.json().catch(() => null) }));
+  // Normal reply first; outside Facebook's 24h window a payment update is a post-purchase update.
+  let result = await send({ messaging_type: 'RESPONSE' });
+  if (!result.ok) result = await send({ messaging_type: 'MESSAGE_TAG', tag: 'POST_PURCHASE_UPDATE' });
+  return result;
+}
+
+// A real payment that reaches the 50% down payment confirms an order waiting for confirmation, and the customer
+// gets the usual "order confirmed" message. sql/supabase_xendit_auto_confirm.sql
+async function autoConfirmOrder(supabase: ReturnType<typeof createClient>, paymentId: string): Promise<void> {
+  const { data: rows, error } = await supabase.rpc('_xendit_try_auto_confirm', { p_payment_id: paymentId });
+  if (error) throw new Error(error.message);
+  const claim = rows?.[0];
+  if (!claim?.message_id) return;
+  const token = getPageAccessToken(claim.page_id ?? null);
+  const graphVersion = Deno.env.get('FACEBOOK_GRAPH_API_VERSION') || DEFAULT_GRAPH_VERSION;
+  const result = token ? await sendOnMessenger(token, graphVersion, claim.psid, claim.message) : null;
+  await supabase.rpc('_xendit_set_confirm_message_status', {
+    p_message_id: claim.message_id,
+    p_sent: !!result?.ok,
+    p_facebook_mid: result?.ok ? (result.body?.message_id ?? null) : null
+  });
   await broadcastGmaEvent(claim.psid);
 }
 
@@ -137,6 +160,11 @@ Deno.serve(async (req) => {
         await sendReceiptMessage(supabase, data.payment_id);
       } catch (err) {
         console.error('xendit-webhook: receipt message failed', err);
+      }
+      try {
+        await autoConfirmOrder(supabase, data.payment_id);
+      } catch (err) {
+        console.error('xendit-webhook: auto-confirm failed', err);
       }
     }
     return jsonResponse(data ?? { ok: true });
