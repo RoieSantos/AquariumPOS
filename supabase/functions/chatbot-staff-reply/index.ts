@@ -587,6 +587,7 @@ Deno.serve(async (req) => {
     if (mid && !mid.startsWith('comment:')) replyToMid = mid;
   }
   let replyNotQuoted = false;
+  let replyNotQuotedReason: string | null = null;
 
   let friendlyError: string | null = null;
 
@@ -625,8 +626,12 @@ Deno.serve(async (req) => {
         // Facebook may refuse the reply_to itself (message too old/deleted, or not supported for
         // this Page) - the message matters more than the quote, so it's resent plain.
         console.log('reply_to send refused, retrying without quote:', sendResult.friendlyError);
+        const quoteError = sendResult.friendlyError;
         sendResult = await sendWithFallback(psid, messageBody, pageAccessToken, graphVersion, useForce);
-        if (sendResult.ok) replyNotQuoted = true;
+        if (sendResult.ok) {
+          replyNotQuoted = true;
+          replyNotQuotedReason = quoteError;
+        }
         quoted = false;
       }
 
@@ -670,5 +675,5 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, loggedOnly: true, error: friendlyError }, 502);
   }
 
-  return jsonResponse({ ok: true, ...(replyNotQuoted ? { replyNotQuoted: true } : {}) });
+  return jsonResponse({ ok: true, ...(replyNotQuoted ? { replyNotQuoted: true, replyNotQuotedReason } : {}) });
 });

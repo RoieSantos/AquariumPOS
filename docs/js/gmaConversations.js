@@ -4268,7 +4268,7 @@ async function deliverPendingSend(sendId) {
     errorEl.textContent = result.error || `Send failed (${response.status}).`;
     errorEl.classList.remove('hidden');
   } else if (result.replyNotQuoted && req.psid === selectedPsid) {
-    errorEl.textContent = "Sent, but Facebook didn't accept it as a reply to that message - it went out as a normal message.";
+    errorEl.textContent = `Sent, but Facebook didn't accept it as a reply to that message - it went out as a normal message.${result.replyNotQuotedReason ? ` (${result.replyNotQuotedReason})` : ''}`;
     errorEl.classList.remove('hidden');
   }
   sendRequests.delete(sendId);
