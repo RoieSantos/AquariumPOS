@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Purchase Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=redqty5" />
-  <link rel="stylesheet" href="css/bc-list.css?v=redqty5" />
+  <link rel="stylesheet" href="css/bc-list.css?v=posuggest3" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -461,6 +461,7 @@
           <span class="po-suggest-field"><input type="number" id="poSuggestLeadDays" min="0" max="365" value="7" /><span>days</span></span></label>
         <button class="bc-btn" id="poSuggestRecalcBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Calculate</button>
         <span class="po-suggest-spacer"></span>
+        <label class="po-suggest-toggle" title="Order only what fills the stores to their maintain level, with no extra stock for the warehouse. Replaces any qty typed in by hand."><input type="checkbox" id="poSuggestStoreOnly" /> Store needs only</label>
         <label class="po-suggest-toggle"><input type="checkbox" id="poSuggestOnlyShort" checked /> Only items to order</label>
       </div>
 
@@ -477,7 +478,7 @@
             <tr class="po-suggest-groups">
               <th colspan="2"></th>
               <th colspan="4" class="grp">Sales</th>
-              <th colspan="5" class="grp">Stock &amp; pipeline</th>
+              <th colspan="5" class="grp" id="poSuggestStockGroup">Stock &amp; pipeline</th>
               <th colspan="2" class="grp grp-order">Order</th>
             </tr>
             <tr class="po-suggest-cols">
@@ -491,7 +492,7 @@
               <th class="num" title="Still to arrive on open POs into this warehouse (any vendor)">On PO</th>
               <th class="num" title="Shipped to this warehouse, not received yet">In</th>
               <th class="num" title="Requested from this warehouse, not shipped yet">Out</th>
-              <th class="num" title="On hand at the stores (info only - not subtracted)">Stores</th>
+              <th class="num" id="poSuggestStoresHead" title="On hand at the stores (info only - not subtracted)">Stores</th>
               <th class="num grp-order" title="Pieces (base unit) - converted to the line's purchase unit when added">Qty</th>
               <th class="num grp-order" title="Qty x the vendor's unit cost">Est. Cost</th>
             </tr>
@@ -502,7 +503,7 @@
       <div id="poSuggestError" class="error-text hidden po-suggest-error"></div>
 
       <div class="bc-doc-foot">
-        <span class="po-suggest-hint">Qty = Target &minus; (Warehouse + On PO + In &minus; Out). Store stock is shown, not subtracted. Production categories are left out.</span>
+        <span class="po-suggest-hint" id="poSuggestHint">Qty = Target &minus; (Warehouse + On PO + In &minus; Out). Store columns show on hand / maintain, and aren't subtracted. Production categories are left out.</span>
         <button class="bc-btn" id="poSuggestCloseBtn" type="button">Cancel</button>
         <button class="bc-btn bc-btn-primary" id="poSuggestAddBtn" type="button">Add to Lines</button>
       </div>
@@ -517,7 +518,7 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/purchaseOrders.js?v=powh1"></script>
+  <script src="js/purchaseOrders.js?v=posuggest4"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

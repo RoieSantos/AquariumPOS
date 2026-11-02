@@ -2109,6 +2109,67 @@ async function createNewPurchaseOrder() {
 // Each row carries its own pick/qty (_pick, _qty) so ticking and editing survive the "Only items
 // to order" filter re-rendering the grid.
 let poSuggestRows = [];
+let poSuggestStores = [];
+let poSuggestSalesDays = 30;
+const PO_SUGGEST_NO_LEVEL_DAYS = 14;
+
+// "Store needs only": fill the stores to their maintaining qty, nothing extra for the warehouse.
+// A row with no usable level gets PO_SUGGEST_NO_LEVEL_DAYS of sales instead - that includes a variant
+// row whose level covers all the item's variants together, since its gap can't be split per variant.
+function poSuggestStoreNeedQty(r) {
+  const levels = (r.store_levels || []).filter((s) =>
+    s.maintain !== null && s.maintain !== undefined && !(r.variant_id && s.scope === 'item'));
+  const need = levels.length > 0
+    ? levels.reduce((sum, s) => sum + Math.max(0, Number(s.maintain) - (Number(s.on_hand) || 0) - (Number(s.on_the_way) || 0)), 0)
+    : Math.ceil((Number(r.sold_qty) || 0) / poSuggestSalesDays * PO_SUGGEST_NO_LEVEL_DAYS);
+  const available = (Number(r.wh_on_hand) || 0) + (Number(r.on_po) || 0) + (Number(r.inbound) || 0) - (Number(r.outbound) || 0);
+  return Math.max(0, Math.ceil(need - available));
+}
+
+// Sets every row's qty and tick for the current mode. Replaces any qty typed in by hand.
+function applyPoSuggestMode() {
+  const storeOnly = document.getElementById('poSuggestStoreOnly').checked;
+  poSuggestRows.forEach((r) => {
+    r._suggest = storeOnly ? poSuggestStoreNeedQty(r) : Number(r.suggested_qty) || 0;
+    r._qty = r._suggest;
+    r._pick = r._suggest > 0;
+  });
+  document.getElementById('poSuggestHint').innerHTML = storeOnly
+    ? `Qty = what the stores are short of their maintain level (less what's on the way), or ${PO_SUGGEST_NO_LEVEL_DAYS} days of sales if no level applies, &minus; (Warehouse + On PO + In &minus; Out).`
+    : 'Qty = Target &minus; (Warehouse + On PO + In &minus; Out). Store columns show on hand / maintain, and aren\'t subtracted. Production categories are left out.';
+  document.getElementById('poSuggestAll').checked = poSuggestRows.length > 0 && poSuggestRows.every((r) => r._pick);
+  renderPoSuggestions();
+}
+
+function poSuggestColspan() {
+  return 12 + Math.max(poSuggestStores.length, 1);
+}
+
+// One column per store it supplies, in place of the Stores total (kept if the SQL isn't updated yet).
+function renderPoSuggestStoreHeads() {
+  document.querySelectorAll('.po-suggest-store-head').forEach((th) => th.remove());
+  const totalHead = document.getElementById('poSuggestStoresHead');
+  totalHead.classList.toggle('hidden', poSuggestStores.length > 0);
+  document.getElementById('poSuggestStockGroup').colSpan = 4 + Math.max(poSuggestStores.length, 1);
+  totalHead.insertAdjacentHTML('beforebegin', poSuggestStores.map((s) =>
+    `<th class="num po-suggest-store-head" title="${escapeHtml(s.name)}: on hand / maintaining qty (info only - not subtracted)">${escapeHtml(s.name)}</th>`
+  ).join(''));
+}
+
+function poSuggestStoreCells(r) {
+  if (poSuggestStores.length === 0) return `<td class="num">${formatSuggestQty(r.store_on_hand)}</td>`;
+  return poSuggestStores.map((store) => {
+    const level = (r.store_levels || []).find((s) => s.wh_id === store.wh_id) || {};
+    const onHand = Number(level.on_hand) || 0;
+    if (level.maintain === null || level.maintain === undefined) {
+      return `<td class="num" title="${escapeHtml(store.name)}: no maintaining qty set">${formatSuggestQty(onHand)} <span class="po-suggest-zero">/ -</span></td>`;
+    }
+    const maintain = Number(level.maintain) || 0;
+    const onTheWay = Number(level.on_the_way) || 0;
+    const title = `${store.name}: ${onHand} on hand, maintains ${maintain}, ${onTheWay} on the way - ${level.rule}${level.scope === 'item' ? ', all variants together' : ''}`;
+    return `<td class="num${onHand < maintain ? ' po-suggest-below' : ''}" title="${escapeHtml(title)}">${onHand.toLocaleString()} / ${maintain.toLocaleString()}</td>`;
+  }).join('');
+}
 
 function formatSuggestQty(value, extraClass = '') {
   const n = Number(value) || 0;
@@ -2148,10 +2209,10 @@ function renderPoSuggestions() {
   const body = document.getElementById('poSuggestBody');
   const shown = poSuggestRows
     .map((r, i) => ({ r, i }))
-    .filter(({ r }) => !onlyShort || Number(r.suggested_qty) > 0);
+    .filter(({ r }) => !onlyShort || Number(r._suggest) > 0);
 
   if (shown.length === 0) {
-    body.innerHTML = `<tr><td colspan="13" class="po-suggest-empty">${poSuggestRows.length === 0
+    body.innerHTML = `<tr><td colspan="${poSuggestColspan()}" class="po-suggest-empty">${poSuggestRows.length === 0
       ? "No sales in this period for this vendor's items at this warehouse or its stores."
       : 'Nothing to order - stock and open POs already cover the target.<br>Untick <b>Only items to order</b> to see every item.'}</td></tr>`;
     refreshPoSuggestSummary();
@@ -2176,7 +2237,7 @@ function renderPoSuggestions() {
         <td class="num">${formatSuggestQty(r.on_po)}</td>
         <td class="num">${formatSuggestQty(r.inbound)}</td>
         <td class="num">${formatSuggestQty(r.outbound)}</td>
-        <td class="num">${formatSuggestQty(r.store_on_hand)}</td>
+        ${poSuggestStoreCells(r)}
         <td class="num grp-order"><input type="number" class="po-suggest-qty" min="0" step="1" value="${Number(r._qty) || 0}" /></td>
         <td class="num grp-order po-suggest-cost">${cost === null ? '<span class="po-suggest-zero" title="No cost set for this item">-</span>' : formatSuggestMoney(cost)}</td>
       </tr>
@@ -2214,7 +2275,7 @@ async function loadPoSuggestions() {
   const errorEl = document.getElementById('poSuggestError');
   const body = document.getElementById('poSuggestBody');
   errorEl.classList.add('hidden');
-  body.innerHTML = '<tr><td colspan="13" class="po-suggest-empty">Calculating...</td></tr>';
+  body.innerHTML = `<tr><td colspan="${poSuggestColspan()}" class="po-suggest-empty">Calculating...</td></tr>`;
 
   const salesDays = parseInt(document.getElementById('poSuggestSalesDays').value, 10) || 30;
   const coverDays = parseInt(document.getElementById('poSuggestCoverDays').value, 10);
@@ -2232,6 +2293,8 @@ async function loadPoSuggestions() {
 
   if (error) {
     poSuggestRows = [];
+    poSuggestStores = [];
+    renderPoSuggestStoreHeads();
     body.innerHTML = '';
     refreshPoSuggestSummary();
     errorEl.textContent = describeSupabaseError(error, 'Failed to calculate suggestions - run supabase_purchase_order_suggestions.sql.');
@@ -2239,10 +2302,10 @@ async function loadPoSuggestions() {
     return;
   }
 
-  poSuggestRows = (data || []).map((r) => {
-    const qty = Number(r.suggested_qty) || 0;
-    return { ...r, _qty: qty, _pick: qty > 0 };
-  });
+  poSuggestRows = data || [];
+  poSuggestSalesDays = salesDays;
+  poSuggestStores = poSuggestRows[0]?.store_levels || [];
+  renderPoSuggestStoreHeads();
 
   // demand_from lists the PO warehouse first, then the stores it supplies.
   const names = (poSuggestRows[0]?.demand_from || newPoHeaderWarehouseName() || '')
@@ -2252,8 +2315,7 @@ async function loadPoSuggestions() {
       `<span class="po-suggest-sub">last ${salesDays} days</span>`
     : '<span class="po-suggest-sub">-</span>';
 
-  document.getElementById('poSuggestAll').checked = poSuggestRows.length > 0 && poSuggestRows.every((r) => r._pick);
-  renderPoSuggestions();
+  applyPoSuggestMode();
 }
 
 function closePoSuggestModal() {
@@ -2568,6 +2630,7 @@ function addPoSuggestionsToLines() {
   document.getElementById('suggestPoLinesBtn').addEventListener('click', openPoSuggestModal);
   document.getElementById('poSuggestRecalcBtn').addEventListener('click', loadPoSuggestions);
   document.getElementById('poSuggestOnlyShort').addEventListener('change', renderPoSuggestions);
+  document.getElementById('poSuggestStoreOnly').addEventListener('change', applyPoSuggestMode);
   document.getElementById('poSuggestAddBtn').addEventListener('click', addPoSuggestionsToLines);
   document.getElementById('poSuggestCloseBtn').addEventListener('click', closePoSuggestModal);
   document.getElementById('poSuggestXBtn').addEventListener('click', closePoSuggestModal);

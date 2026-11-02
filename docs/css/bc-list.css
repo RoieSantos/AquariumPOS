@@ -3598,6 +3598,11 @@ textarea.oc-line-input { min-width: 220px; resize: vertical; line-height: 1.35; 
   font-weight: 600;
 }
 
+.bc-doc table.po-suggest-table > tbody > tr > td.po-suggest-below {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .po-suggest-qty {
   width: 76px;
   height: 30px;

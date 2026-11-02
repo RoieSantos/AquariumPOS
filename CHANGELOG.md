@@ -2,6 +2,13 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-02
+
+- **Suggest Lines: "Store needs only" option.** To save cash, it orders only what the stores are short of their maintain level, less what's on the way and what the warehouse already has. Items with no usable level get 14 days of sales. Page only, no new SQL ([purchaseOrders.js](docs/js/purchaseOrders.js), [purchase-orders.html](docs/purchase-orders.html); `v=posuggest4`).
+- **Suggest Lines shows each store's maintaining qty.** The Stores total becomes one column per store, showing on hand / maintain from the same level that caps Transfer Orders, in red when below it. Display only: Target and Qty are unchanged ([supabase_purchase_order_suggestions.sql](sql/supabase_purchase_order_suggestions.sql), [purchaseOrders.js](docs/js/purchaseOrders.js), [purchase-orders.html](docs/purchase-orders.html), [bc-list.css](docs/css/bc-list.css); `v=posuggest3`).
+- **Retire old AS set items.** New [supabase_retire_old_as_set_items.sql](sql/supabase_retire_old_as_set_items.sql) makes an AS-xxx item inactive once its SET-xxx package is on sale, so staff can't pick it in Conversations or Online Orders at the old price. Prices and history are untouched.
+- **Set price increase check.** New read-only [supabase_check_set_price_increase.sql](sql/supabase_check_set_price_increase.sql) lists every aquarium set and old AS item with its package and item prices, last applied increase, and a status that flags any set that didn't go up. Corrected: an active item marked hidden no longer counts as OK, because staff product search only checks IsActive and can still pick it at the old price.
+
 ## 2026-11-01
 
 - Deployed the 6 Alice functions for the raised chamber and sump sticker handoff: `facebook-messenger-webhook`, `chatbot-web-reply`, `chatbot-sandbox-reply`, `chatbot-suggest-reply` (all `--no-verify-jwt` kept), `portal-chat-alice-reply`, `telegram-alice-webhook`.

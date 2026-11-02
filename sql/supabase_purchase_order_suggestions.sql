@@ -19,6 +19,9 @@
 --   suggested      = target - available, never below 0
 --   store on hand  = the stores' own stock - shown for the reviewer only, NOT subtracted (it sits on
 --                    their shelves; the shelf caps on Transfer Orders already manage store levels)
+--   store_levels   = per store it supplies: on hand and maintaining qty - the same _tr_request_cap
+--                    level Transfer Orders cap requests to (Production Shelf rack, else Shelf Map).
+--                    Shown for the reviewer only, NOT part of target or suggested. No level = null.
 --
 -- Left out: production categories (Categories.IsProductionCategory), categories excluded from
 -- transfers (same as the PO item picker), inactive items. Only rows with sales in the period are
@@ -27,8 +30,9 @@
 -- Read-only: nothing is written. The page fills the New PO lines; Create Purchase Order is unchanged.
 --
 -- Run AFTER supabase_item_ledger_entries.sql, supabase_item_vendors_catalog.sql,
--- supabase_purchase_order_header_warehouse.sql and supabase_transfer_order_post_partial.sql.
--- Needs js/purchaseOrders.js + purchase-orders.html cache v=posuggest1. Safe to re-run.
+-- supabase_purchase_order_header_warehouse.sql, supabase_transfer_order_post_partial.sql and
+-- supabase_transfer_request_cap.sql.
+-- Needs js/purchaseOrders.js + purchase-orders.html cache v=posuggest3. Safe to re-run.
 
 drop function if exists public.staff_suggest_purchase_order_lines(text, text, text, text, int, int, int);
 
@@ -44,7 +48,8 @@ create or replace function public.staff_suggest_purchase_order_lines(
 returns table(item_code text, item_name text, description text, variant_id text, variant_name text,
               sku text, unit_cost numeric, lead_days int, sold_qty numeric, avg_daily numeric,
               wh_on_hand numeric, store_on_hand numeric, on_po numeric, inbound numeric,
-              outbound numeric, target_qty numeric, suggested_qty numeric, demand_from text)
+              outbound numeric, target_qty numeric, suggested_qty numeric, demand_from text,
+              store_levels jsonb)
 language plpgsql
 stable
 security definer
@@ -183,7 +188,24 @@ begin
     select s.code::text, s.name::text, s.descr::text, s.variant::text, s.vname::text, s.vsku::text,
            s.cost, s.lead, s.sold, s.per_day, s.here, s.stores, s.on_po, s.in_qty, s.out_qty, s.target,
            greatest(0, ceil(s.target - (s.here + s.on_po + s.in_qty - s.out_qty))),
-           v_network_names
+           v_network_names,
+           (select jsonb_agg(jsonb_build_object(
+                     'wh_id', w."ID"::text,
+                     'name', w."Name",
+                     'maintain', cap.maintain,
+                     'rule', cap.rule,
+                     'scope', cap.scope,
+                     'on_the_way', cap.on_the_way,
+                     -- With a level, its own on hand so the pair matches the Transfer Order cap.
+                     'on_hand', case when cap.rule is not null then cap.on_hand
+                                     else coalesce((select sum(greatest(0, l.bal)) from led l
+                                                     where l.wh = w."ID"::text
+                                                       and case when s.variant is not null then l.variant = s.variant
+                                                                else l.code = s.code and l.variant is null end), 0) end
+                   ) order by w."Name")
+              from public."Warehouses" w
+              cross join lateral public._tr_request_cap(null, null, w."ID"::text, s.code::text, s.variant::text) cap
+             where w."ID"::text = any(v_network) and w."ID"::text <> v_wh)
       from sized s
      order by greatest(0, s.target - (s.here + s.on_po + s.in_qty - s.out_qty)) desc, s.name, s.vname;
 end;
