@@ -12,6 +12,14 @@ function formatMoney(value) {
   return `₱ ${Number(value || 0).toFixed(2)}`;
 }
 
+// Same as js/deliveryReceipt.js: where a combined delivery's one fee was charged (textContent, no escaping).
+function deliveryFeeNoteText(result) {
+  const row = !result?.error && Array.isArray(result?.data) ? result.data[0] : null;
+  if (row?.fee_charged_on) return ` (charged on ${row.fee_charged_on})`;
+  if (row?.fee_covers) return ` (covers ${row.fee_covers})`;
+  return '';
+}
+
 function formatReceiptDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(`${dateStr}T00:00:00`);
@@ -79,11 +87,11 @@ async function loadInvoice(stopId) {
     return;
   }
 
-  const { data, error } = await supabaseClient.rpc('admin_get_delivery_receipt', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_stop_id: stopId
-  });
+  const auth = { p_admin_username: currentSession.username, p_admin_password: currentSession.password, p_stop_id: stopId };
+  const [{ data, error }, feeNote] = await Promise.all([
+    supabaseClient.rpc('admin_get_delivery_receipt', auth),
+    supabaseClient.rpc('admin_get_delivery_stop_fee_note', auth)
+  ]);
 
   if (error || !data || data.length === 0) {
     errorEl.textContent = (error && error.message) || 'Could not load this invoice.';
@@ -124,7 +132,7 @@ async function loadInvoice(stopId) {
     deliveryNoteEl.classList.add('hidden');
   }
 
-  document.getElementById('receiptDeliveryFee').textContent = `Delivery Fee : ${formatMoney(header.delivery_fee)}`;
+  document.getElementById('receiptDeliveryFee').textContent = `Delivery Fee : ${formatMoney(header.delivery_fee)}${deliveryFeeNoteText(feeNote)}`;
 
   document.getElementById('summaryTotal').textContent = formatMoney(header.money_to_collect);
   document.getElementById('summaryDiscount').textContent = formatMoney(header.discount);

@@ -34,6 +34,16 @@ function formatReceiptDate(dateStr) {
   return `${dd}/${mm}/${d.getFullYear()}`;
 }
 
+// Combined delivery charged once: " (charged on AO-00172)" on the orders riding on another order's fee,
+// " (covers AO-00184)" on the one carrying it (admin_get_delivery_stop_fee_note,
+// sql/supabase_delivery_receipt_combined_fee_note.sql). Blank when that SQL isn't run yet.
+function deliveryFeeNoteText(result) {
+  const row = !result?.error && Array.isArray(result?.data) ? result.data[0] : null;
+  if (row?.fee_charged_on) return ` (charged on ${row.fee_charged_on})`;
+  if (row?.fee_covers) return ` (covers ${row.fee_covers})`;
+  return '';
+}
+
 function escapeHtml(value) {
   return (value ?? '').toString()
     .replace(/&/g, '&amp;')
@@ -140,7 +150,7 @@ function deliveryReceiptBlockHtml(info, header, lines, copyLabel) {
                pos Walkin can you fill in notes too... notes will need to flow to the printout
                too". -->
           ${header.stop_notes ? `<div class="delivery-receipt-note">Delivery Instructions: ${escapeHtml(header.stop_notes)}</div>` : ''}
-          <div class="delivery-receipt-fee">Delivery Fee : ${formatMoney(header.delivery_fee)}</div>
+          <div class="delivery-receipt-fee">Delivery Fee : ${formatMoney(header.delivery_fee)}${escapeHtml(header.fee_note)}</div>
         </div>
         <div class="delivery-receipt-section">
           <ul class="delivery-receipt-terms">
@@ -231,7 +241,7 @@ function invoiceBlockHtml(info, header, lines) {
           </div>
           ${header.note_print ? `<div class="delivery-receipt-note">Additional NOTE: ${escapeHtml(header.note_print)}</div>` : ''}
           ${header.stop_notes ? `<div class="delivery-receipt-note">Delivery Instructions: ${escapeHtml(header.stop_notes)}</div>` : ''}
-          <div class="delivery-receipt-fee">Delivery Fee : ${formatMoney(header.delivery_fee)}</div>
+          <div class="delivery-receipt-fee">Delivery Fee : ${formatMoney(header.delivery_fee)}${escapeHtml(header.fee_note)}</div>
         </div>
         <div class="delivery-receipt-section">
           <p>Thank you for choosing RSPETSTOP. Please settle your balance according to the payment terms stated above. Delivery fees are customer-shouldered unless arranged in advance.</p>
@@ -263,11 +273,11 @@ async function loadReceipt(stopId) {
     return;
   }
 
-  const { data, error } = await supabaseClient.rpc('admin_get_delivery_receipt', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_stop_id: stopId
-  });
+  const auth = { p_admin_username: currentSession.username, p_admin_password: currentSession.password, p_stop_id: stopId };
+  const [{ data, error }, feeNote] = await Promise.all([
+    supabaseClient.rpc('admin_get_delivery_receipt', auth),
+    supabaseClient.rpc('admin_get_delivery_stop_fee_note', auth)
+  ]);
 
   if (error || !data || data.length === 0) {
     errorEl.textContent = (error && error.message) || 'Could not load this delivery receipt.';
@@ -275,7 +285,7 @@ async function loadReceipt(stopId) {
     return;
   }
 
-  const header = data[0];
+  const header = { ...data[0], fee_note: deliveryFeeNoteText(feeNote) };
   const balance = Number(header.balance) || 0;
 
   const printArea = document.getElementById('printArea');
