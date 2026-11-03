@@ -770,7 +770,7 @@ function aoPayRender(container) {
     ? `<div class="ao-pay-row is-editing">${aoPayFormHtml(p)}</div>`
     : `<div class="ao-pay-row">
         <div class="ao-pay-main">
-          <div class="ao-pay-method-label">${escapeHtml(p.method || '')}${p.reference ? ` <span class="ao-pay-sub">&middot; ${escapeHtml(p.reference)}</span>` : ''}</div>
+          <div class="ao-pay-method-label">${escapeHtml(p.method || '')}${p.reference ? ` <span class="ao-pay-sub">&middot; ${escapeHtml(p.reference)}</span>` : ''}${p.xendit_payment_id && currentSession?.isSuperUser ? ` <a class="ao-pay-sub" href="payment-receipt.html?id=${encodeURIComponent(p.xendit_payment_id)}" target="_blank" rel="noopener">&middot; 🧾 Receipt</a>` : ''}</div>
           <div class="ao-pay-sub">${p.recorded_at_utc ? new Date(p.recorded_at_utc).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}${p.recorded_by ? ` by ${escapeHtml(p.recorded_by)}` : ''}</div>
         </div>
         <div class="ao-pay-amount-label">${newOrderMoney(p.amount)}</div>

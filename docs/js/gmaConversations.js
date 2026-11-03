@@ -2116,6 +2116,12 @@ function orderLinesHtml(orderNo) {
   `).join('');
 }
 
+// Super users only: the Xendit receipt page for a payment that came from Xendit (sql/supabase_xendit_order_receipt_link.sql).
+function xenditReceiptLinkHtml(p) {
+  if (!p.xendit_payment_id || !currentSession?.isSuperUser) return '';
+  return ` &middot; <a href="payment-receipt.html?id=${encodeURIComponent(p.xendit_payment_id)}" target="_blank" rel="noopener">🧾 Receipt</a>`;
+}
+
 function orderPaymentsHtml(orderNo) {
   const payments = orderPaymentsCache.get(orderNo);
   if (!payments || payments === 'loading') return '<div class="inbox-empty-state">Loading...</div>';
@@ -2123,7 +2129,7 @@ function orderPaymentsHtml(orderNo) {
   if (payments.length === 0) return '<div class="inbox-empty-state">No payments recorded yet.</div>';
   return payments.map((p) => `
     <div class="inbox-order-payment-row">
-      <span>${escapeHtml(p.method || '')}${p.reference ? ' &middot; ' + escapeHtml(p.reference) : ''}</span>
+      <span>${escapeHtml(p.method || '')}${p.reference ? ' &middot; ' + escapeHtml(p.reference) : ''}${xenditReceiptLinkHtml(p)}</span>
       <span>${Number(p.amount).toFixed(2)}</span>
     </div>
   `).join('');
