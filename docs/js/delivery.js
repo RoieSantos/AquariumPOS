@@ -1425,7 +1425,8 @@ function stopHasDeliveryFee(s) {
 
 // --- Combined drops ----------------------------------------------------------------------------
 // Per "if an customer has multiple orders and plan to deliver it on one day" - stops on one date with
-// the same customer + address (drop_key, sql/supabase_delivery_combined_drops.sql) are one drop: one
+// the same customer + address (drop_key, sql/supabase_delivery_combined_drops.sql; same Messenger PSID +
+// address, or PSID + blank address, also counts - sql/supabase_delivery_drops_by_psid.sql) are one drop: one
 // header row in the office table, one driver card, one map pin, one Mark Done, one payment. Each order
 // is still its own stop underneath. The drop is charged once (default) or per order
 // (staff_set_delivery_drop_fee_mode) - the server moves the fee onto one order and 0 on the others.

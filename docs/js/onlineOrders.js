@@ -2409,12 +2409,27 @@ async function handleProductionDoneClick(orderId, btn) {
   if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
 }
 
-function makerSelectHtml(order, role, currentUsername) {
-  const staffRole = MAKER_ROLES[role].staffRole;
-  const members = productionMembers.filter((m) => (m.staff_roles || []).includes(staffRole));
-  let options = members
+// Staff for one maker dropdown. Per "can you mix it for stand maker and tank maker": a top cover
+// (CUSTOM-TOPCOVER) lands in the Stand slot and either maker can build it, so the Stand dropdown also
+// lists Tank Makers in their own group. The server only accepts one there when the order's only stand
+// work is a top cover (supabase_maker_top_cover_either_maker.sql).
+function makerPoolOptionsHtml(role, currentUsername) {
+  const own = productionMembers.filter((m) => (m.staff_roles || []).includes(MAKER_ROLES[role].staffRole));
+  const extra = role === 'stand'
+    ? productionMembers.filter((m) => (m.staff_roles || []).includes('TankMaker') && !own.includes(m))
+    : [];
+  const optionsHtml = (list) => list
     .map((m) => `<option value="${escapeHtml(m.username)}" ${currentUsername === m.username ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
     .join('');
+  return {
+    members: own.concat(extra),
+    html: optionsHtml(own) + (extra.length ? `<optgroup label="Tank Makers (top cover only)">${optionsHtml(extra)}</optgroup>` : '')
+  };
+}
+
+function makerSelectHtml(order, role, currentUsername) {
+  const { members, html } = makerPoolOptionsHtml(role, currentUsername);
+  let options = html;
   // An assignment made before roles existed (or to someone whose role was since removed) stays
   // visible instead of the dropdown silently showing blank - it just can't be re-picked.
   if (currentUsername && !members.some((m) => m.username === currentUsername)) {
@@ -5001,10 +5016,8 @@ let assignDialogOrderId = null;
 function assignOptionsHtml(order, role) {
   const cfg = MAKER_ROLES[role];
   const current = order[`assigned_${cfg.field}`] || '';
-  const pool = productionMembers.filter((m) => (m.staff_roles || []).includes(cfg.staffRole));
-  let html = `<option value="">(Not assigned)</option>` + pool
-    .map((m) => `<option value="${escapeHtml(m.username)}" ${m.username === current ? 'selected' : ''}>${escapeHtml(m.display_name)}</option>`)
-    .join('');
+  const { members: pool, html: poolHtml } = makerPoolOptionsHtml(role, current);
+  let html = `<option value="">(Not assigned)</option>` + poolHtml;
   if (current && !pool.some((m) => m.username === current)) {
     html += `<option value="${escapeHtml(current)}" selected disabled>${escapeHtml(order[`assigned_${cfg.field}_name`] || current)} (no role)</option>`;
   }

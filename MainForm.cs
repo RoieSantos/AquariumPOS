@@ -7739,7 +7739,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         ShowSalesItemsDialog();
                         break;
                     case "CustomAquarium":
-                        ShowWebAquariumCalculatorOrClassic();
+                        ShowWebAquariumCalculator();
                         break;
                     case "VoidLine":
                         VoidSelectedLine();
@@ -7830,7 +7830,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                         ShowIncomeDialog();
                         break;
                     case "CustomStickers":
-                        ShowWebStickerCalculatorOrClassic();
+                        ShowWebStickerCalculator();
                         break;
                     case "TransferOrder":
                         try

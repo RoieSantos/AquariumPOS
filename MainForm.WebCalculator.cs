@@ -19,25 +19,24 @@ namespace AquariumPOS
     // Prices = the raw rows of the last successful pricing sync (OnlinefunctionsEvents.WebCalculatorPricingCache),
     // lights/pumps = the local Items table. "Add to sale" in the page posts the quote back here and
     // AddWebCalculatorQuoteToSale turns it into the same component sale lines the classic dialog made.
-    // Falls back to the classic WinForms dialog (ShowCustomAquariumDialog) if WebView2 or the files are missing.
+    // The classic WinForms dialogs are no longer reachable: if WebView2 or the files are missing, staff get an error.
     public partial class MainForm
     {
-        private void ShowWebAquariumCalculatorOrClassic()
+        private void ShowWebAquariumCalculator()
         {
-            ShowWebCalculatorOrClassic("index.html", "Custom Aquarium Calculator", AddWebCalculatorQuoteToSale, ShowCustomAquariumDialog);
+            ShowWebCalculator("index.html", "Custom Aquarium Calculator", AddWebCalculatorQuoteToSale);
         }
 
         // Custom Stickers screen = the portal's Custom Sticker & Panel Calculator (docs/WebAquariumCalculator/sticker.html),
         // per "we use the portal way on how we calculate custom aquarium.. can we do that to custom sticker as well?".
         // Same prices (calculateStandaloneSticker on the synced StickerPricingSetup / GlassPricingSetup rows),
-        // so the POS now also has Acrylic Sump Cover, Tempered / 19mm glass and Plywood. Falls back to the
-        // classic ShowCustomStickersDialog.
-        private void ShowWebStickerCalculatorOrClassic()
+        // so the POS now also has Acrylic Sump Cover, Tempered / 19mm glass and Plywood.
+        private void ShowWebStickerCalculator()
         {
-            ShowWebCalculatorOrClassic("sticker.html", "Custom Sticker & Panel Calculator", AddWebStickerQuoteToSale, ShowCustomStickersDialog);
+            ShowWebCalculator("sticker.html", "Custom Sticker & Panel Calculator", AddWebStickerQuoteToSale);
         }
 
-        private void ShowWebCalculatorOrClassic(string pageFile, string title, Func<JsonElement, bool> addToSale, Action showClassic)
+        private void ShowWebCalculator(string pageFile, string title, Func<JsonElement, bool> addToSale)
         {
             string pagePath = Path.Combine(WebAquariumCalculatorForm.RootFolder, "WebAquariumCalculator", pageFile);
             bool runtimeAvailable;
@@ -52,20 +51,17 @@ namespace AquariumPOS
 
             if (!runtimeAvailable || !File.Exists(pagePath))
             {
-                showClassic();
+                MessageBox.Show(this,
+                    !runtimeAvailable
+                        ? "The calculator needs the Microsoft Edge WebView2 Runtime, which is not installed on this PC."
+                        : $"The calculator files are missing:\n{pagePath}\n\nReinstall or update the POS.",
+                    title, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
-            bool openClassic = false;
             using (var form = new WebAquariumCalculatorForm(BuildWebCalculatorHostJson(), addToSale, pageFile, title))
             {
-                form.ClassicRequested += () => openClassic = true;
                 form.ShowDialog(this);
-            }
-
-            if (openClassic)
-            {
-                showClassic();
             }
         }
 
@@ -423,7 +419,7 @@ namespace AquariumPOS
     }
 
     /// <summary>WebView2 window hosting a bundled portal calculator page - the Aquarium Calculator or the
-    /// Custom Sticker &amp; Panel Calculator (see MainForm.ShowWebCalculatorOrClassic).</summary>
+    /// Custom Sticker &amp; Panel Calculator (see MainForm.ShowWebCalculator).</summary>
     public class WebAquariumCalculatorForm : ThemedForm
     {
         public static string RootFolder => Path.Combine(AppContext.BaseDirectory, "WebCalculator");
@@ -433,8 +429,6 @@ namespace AquariumPOS
         private readonly string hostJson;
         private readonly Func<JsonElement, bool> addToSale;
         private readonly string pageFile;
-
-        public event Action? ClassicRequested;
 
         public WebAquariumCalculatorForm(string hostJson, Func<JsonElement, bool> addToSale,
             string pageFile = "index.html", string title = "Custom Aquarium Calculator")
@@ -449,18 +443,6 @@ namespace AquariumPOS
             MinimumSize = new Size(900, 600);
 
             var topBar = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = Color.FromArgb(245, 245, 245) };
-            var classicButton = new Button
-            {
-                Text = "Open classic calculator",
-                AutoSize = true,
-                Font = new Font("Arial", 10),
-                Location = new Point(8, 6)
-            };
-            classicButton.Click += (s, e) =>
-            {
-                ClassicRequested?.Invoke();
-                Close();
-            };
             var closeButton = new Button
             {
                 Text = "Close",
@@ -469,7 +451,6 @@ namespace AquariumPOS
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             closeButton.Click += (s, e) => Close();
-            topBar.Controls.Add(classicButton);
             topBar.Controls.Add(closeButton);
             topBar.Resize += (s, e) => closeButton.Location = new Point(topBar.ClientSize.Width - closeButton.Width - 8, 6);
 
@@ -520,8 +501,7 @@ namespace AquariumPOS
 
         private void ShowLoadFailure(string reason)
         {
-            MessageBox.Show(this, $"{reason}\n\nOpening the classic calculator instead.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            ClassicRequested?.Invoke();
+            MessageBox.Show(this, reason, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
 

@@ -4,9 +4,19 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-03
 
+- **Delivery calendar: combined deliveries also match by Messenger PSID.** On one date, orders with the same PSID and the same address, or one with a blank address, become one drop charged once, even when the names differ (e.g. "Christopher Salaver" / "Christopher T. Salaver"). Same PSID at different addresses stays separate; orders with no PSID still match by name + address ([supabase_delivery_drops_by_psid.sql](sql/supabase_delivery_drops_by_psid.sql)).
+- **Top cover jobs can go to a Tank Maker or a Stand Maker.** The Stand Maker dropdown on Online Orders and Advance Orders also lists Tank Makers under "Tank Makers (top cover only)". The server accepts one only when the order's only stand work is a top cover; a real stand still needs a Stand Maker ([supabase_maker_top_cover_either_maker.sql](sql/supabase_maker_top_cover_either_maker.sql), [onlineOrders.js](docs/js/onlineOrders.js)).
+- Deployed the 7 Alice functions again for the walk-in / advance order change rule, the "store order or new online order?" question, the Create Order button wording and the pay link expiry note, with `verify_jwt` settings kept.
+- **Local POS: removed the "Open classic calculator" button** from the Custom Aquarium and Custom Sticker calculators, and the automatic fallback to the classic dialogs. If WebView2 or the page files are missing, staff now get an error instead ([MainForm.WebCalculator.cs](MainForm.WebCalculator.cs), [MainForm.cs](MainForm.cs)).
+- **Vic and Alice: change requests for walk-in / advance orders.** They don't change these themselves. They confirm the customer has the receipt (number or photo), confirm the exact old to new change, then pass it to staff, who confirm the new price and balance.
+- **Vic and Alice ask "store order or new online order?"** when a customer mentions an existing order or payment but no order shows in the chat, then follow the matching flow.
 - **Create Order button on Alice's custom aquarium link.** Customers can turn the estimate into Order Now cart lines (aquarium, stand and sump) and check out; staff still Confirm Order in Online Orders. New [supabase_order_now_line_notes.sql](sql/supabase_order_now_line_notes.sql) saves each line's build sheet, and Alice now mentions the button.
 - **Vic and Alice: no Lalamove booking while the shop is closed.** They can still quote and take the order, but now say the shop is closed and the Lalamove can only be booked once it opens, including when customers book their own rider. No cutoff before closing; own-truck delivery is unchanged ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
 - Deployed the 7 Alice functions (`facebook-messenger-webhook`, `chatbot-web-reply`, `chatbot-sandbox-reply`, `chatbot-suggest-reply`, `telegram-alice-webhook`, `delivery-fee-from-pin`, `portal-chat-alice-reply`) and `chatbot-followup-dispatcher` for the Lalamove rule and the 2026-11-02 Xendit pay-online work, with `verify_jwt` settings kept.
+
+## 2026-11-03
+
+- **Vic and Alice explain an expired checkout.** The pay link never expires; only the Xendit checkout opened from it does. When a customer says it expired, the bot looks up the order and resends the pay link, which starts a fresh checkout ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
 
 ## 2026-11-02
 
