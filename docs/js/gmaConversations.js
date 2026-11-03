@@ -2246,6 +2246,7 @@ function renderConversationOrderCards() {
         <div class="inbox-order-badges">
           ${orderBranchBadgeHtml(o.location)}
           ${pancakeStatusBadgeHtml(o)}
+          ${o.awaiting_online_payment ? '<span class="badge badge-warning">Waiting for online payment</span>' : ''}
           ${o.order_no === flaggedOrderNo ? '<span class="badge badge-danger">Payment to confirm</span>' : ''}
           ${o.status === 'New' && o.receipt_confirmed_at_utc ? '<span class="badge badge-success">Customer confirmed - ready for Order ID</span>' : ''}
         </div>

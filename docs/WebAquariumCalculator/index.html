@@ -911,6 +911,7 @@
           <div class="quote-actions">
             <button id="calculate" class="btn btn-primary" type="button">Calculate</button>
             <button id="addToSale" class="btn btn-success full" type="button">Add to sale</button>
+            <button id="createOrderButton" class="btn btn-success full hidden" type="button">Create Order</button>
             <button id="cutSheetButton" class="btn btn-neutral" type="button">Glass Cut Sheet</button>
             <button id="closeButton" class="btn btn-neutral" type="button">Reset</button>
             <button id="openSummaryButton" class="btn btn-neutral" type="button">View full summary</button>
@@ -965,6 +966,7 @@
   <script src="../js/supabaseClient.js"></script>
   <script src="./custom-aquarium-calculator.js?v=sumpsticker3"></script>
   <script src="../js/glassCutList.js"></script>
+  <script src="../js/calcEmbedLines.js?v=calcorder1"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
     var addToSaleButton = document.getElementById('addToSale');
@@ -3579,7 +3581,54 @@
       });
       byId('summaryIncludeCutSheet').checked = false;
       byId('summaryIncludeCutSheet').parentNode.classList.add('hidden');
+      // Not when a staff page embeds this link in an iframe - those have their own Add to Order.
+      if (window.parent === window) byId('createOrderButton').classList.remove('hidden');
     })();
+
+    // Customer view's Create Order: turns the current estimate into Order Now cart lines (same
+    // builder as GMA's Create Order, js/calcEmbedLines.js) and opens the cart there, so the customer
+    // only adds their details. Replaces any earlier estimate's aquarium/stand/sump lines, so a stand
+    // they've since removed doesn't stay behind; other cart items are kept. Same cart keys and expiry
+    // as js/orderNow.js.
+    byId('createOrderButton').addEventListener('click', async function () {
+      await calculateAquarium(false);
+      if (!lastResult || !lastResult.ok) {
+        window.alert('Please complete the required details so we can compute the price first.');
+        return;
+      }
+      var missing = calcEmbedMissingFields(document, 'aquarium');
+      if (missing.length) {
+        window.alert('Please choose these first: ' + missing.join(', '));
+        if (missing.indexOf('Sealant color') >= 0) byId('sealant').focus();
+        else if (missing.indexOf('Stand paint color') >= 0) byId('standPaint').focus();
+        return;
+      }
+
+      var estimateLines = buildAquariumCalcLines(window).map(function (line) {
+        return {
+          categoryCode: line.category_code,
+          itemCode: null,
+          itemName: line.item_name.slice(0, 255),
+          price: line.price,
+          quantity: line.quantity,
+          note: line.note.slice(0, 2000)
+        };
+      });
+      try {
+        var savedAt = Number(localStorage.getItem('order_now_cart_saved_at')) || 0;
+        var isFresh = Date.now() - savedAt <= 3 * 24 * 60 * 60 * 1000;
+        var existing = isFresh ? JSON.parse(localStorage.getItem('order_now_cart') || '[]') : [];
+        var kept = existing.filter(function (line) {
+          return ['CUSTOM-AQUARIUM', 'CUSTOM-STAND', 'CUSTOM-SUMP'].indexOf(line.categoryCode) < 0;
+        });
+        localStorage.setItem('order_now_cart', JSON.stringify(kept.concat(estimateLines)));
+        localStorage.setItem('order_now_cart_saved_at', String(Date.now()));
+      } catch (error) {
+        window.alert('Your browser blocked saving this order. Please message us and we will place it for you.');
+        return;
+      }
+      window.location.href = '../order-now.html?start=cart';
+    });
 
     // Sump Quantity is a total for the whole quote, so it mirrors the aquarium Quantity (one sump
     // per tank) until staff type their own value - after that it's left alone. Stand Quantity

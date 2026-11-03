@@ -192,16 +192,20 @@ async function sendWithFallback(
   messageBody: Record<string, unknown>,
   pageAccessToken: string,
   graphVersion: string,
-  forceHumanAgent = false
+  forceHumanAgent = false,
+  quoteMid: string | null = null
 ): Promise<{ ok: true; mid: string | null } | { ok: false; friendlyError: string }> {
+  // reply_to goes beside recipient/message in the request, not inside message (Facebook answers that
+  // with "(#100) Invalid keys "reply_to" were found in param "message"").
+  const replyTo = quoteMid ? { reply_to: { mid: quoteMid } } : {};
   if (forceHumanAgent) {
-    const forced = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' });
+    const forced = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT', ...replyTo });
     if (forced.ok) return { ok: true, mid: forced.bodyJson?.message_id ?? null };
     const e = forced.bodyJson?.error;
     return { ok: false, friendlyError: `HUMAN_AGENT send rejected (code ${e?.code ?? '?'}, subcode ${e?.error_subcode ?? '?'}): ${e?.message || forced.bodyText}` };
   }
 
-  const first = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'RESPONSE' });
+  const first = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'RESPONSE', ...replyTo });
   if (first.ok) return { ok: true, mid: first.bodyJson?.message_id ?? null };
 
   const firstCode = first.bodyJson?.error?.code;
@@ -212,7 +216,7 @@ async function sendWithFallback(
     return { ok: false, friendlyError: `Facebook rejected the message: ${first.bodyJson?.error?.message || first.bodyText}` };
   }
 
-  const tagged = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' });
+  const tagged = await callSendApi(psid, messageBody, pageAccessToken, graphVersion, { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT', ...replyTo });
   if (tagged.ok) return { ok: true, mid: tagged.bodyJson?.message_id ?? null };
 
   if (tagged.bodyJson?.error?.error_subcode === 2018276) {
@@ -620,7 +624,7 @@ Deno.serve(async (req) => {
       const useForce = !item.isLike && !item.attachmentUrl && forceHumanAgent;
       const quoteMid = index === 0 ? replyToMid : null;
 
-      let sendResult = await sendWithFallback(psid, quoteMid ? { ...messageBody, reply_to: { mid: quoteMid } } : messageBody, pageAccessToken, graphVersion, useForce);
+      let sendResult = await sendWithFallback(psid, messageBody, pageAccessToken, graphVersion, useForce, quoteMid);
       let quoted = !!quoteMid && sendResult.ok;
       if (quoteMid && !sendResult.ok) {
         // Facebook may refuse the reply_to itself (message too old/deleted, or not supported for

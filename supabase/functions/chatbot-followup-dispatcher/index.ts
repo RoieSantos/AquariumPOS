@@ -225,6 +225,16 @@ async function dispatchDueFollowUps(
       continue;
     }
 
+    // Held by bot hours, and paid or confirmed since (sql/supabase_xendit_bot_pay_online.sql).
+    if (followUp.RelatedOrderNo) {
+      const { data: stillNeeded, error: stillNeededError } = await supabase.rpc('_xendit_unpaid_reminder_still_needed', { p_order_no: followUp.RelatedOrderNo });
+      if (!stillNeededError && stillNeeded === false) {
+        await supabase.from('ChatbotFollowUps').update({ Status: 'Skipped', SkipReason: 'Order was paid, confirmed or cancelled.' }).eq('Id', followUp.Id);
+        skipped++;
+        continue;
+      }
+    }
+
     const { data: historyRows } = await supabase
       .from('ChatbotMessages')
       .select('Role, Content')
@@ -233,7 +243,7 @@ async function dispatchDueFollowUps(
       .limit(HISTORY_CONTEXT_LIMIT);
 
     try {
-      const text = await composeFollowUpMessage(
+      let text = await composeFollowUpMessage(
         anthropic,
         model,
         aiSettings,
@@ -241,6 +251,9 @@ async function dispatchDueFollowUps(
         followUp.Reason || 'Check in with the customer.',
         (historyRows ?? []) as Array<{ Role: string; Content: string }>
       );
+      // A pay reminder is no use without its link, whatever the message came out as.
+      const payLink = followUp.Reason?.match(/https:\/\/www\.rspetstop\.com\/pay\.html\?order=\S+/)?.[0];
+      if (payLink && !text.includes(payLink)) text += `\n${payLink}`;
 
       await sendMessengerReply(followUp.Psid, text, pageAccessToken, graphVersion);
       await supabase.from('ChatbotMessages').insert({ Psid: followUp.Psid, Role: 'assistant', Content: text });
@@ -278,6 +291,10 @@ Deno.serve(async (req) => {
   const anthropic = new Anthropic({ apiKey: anthropicApiKey });
 
   try {
+    // Not tied to the follow-up settings or bot hours: unpaid pay-link orders still need to expire.
+    const { error: unpaidError } = await supabase.rpc('_xendit_unpaid_orders_tick');
+    if (unpaidError) console.error('Unpaid order check failed:', unpaidError.message);
+
     const { data: followUpSettings } = await supabase.from('ChatbotFollowUpSettings').select('*').eq('Id', 1).maybeSingle();
     if (!followUpSettings) {
       return jsonResponse({ ok: true, note: 'ChatbotFollowUpSettings not configured yet.' });

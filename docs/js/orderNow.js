@@ -3145,7 +3145,9 @@ async function submitOrder(event) {
       item_code: line.itemCode,
       item_name: line.itemName,
       quantity: line.quantity,
-      price: line.price
+      price: line.price,
+      // Build sheet from the Aquarium Calculator's Create Order - other lines don't have one.
+      note: line.note || null
     }))
   });
 
