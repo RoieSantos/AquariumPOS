@@ -2179,8 +2179,12 @@ async function saveRelease() {
   await refreshCurrentOrders();
   if (openCardOrderId === orderId) loadOrderCardReleaseHistory(orderId);
   if (!myAssignmentsLocked && !document.getElementById('statusSummaryBar').classList.contains('hidden')) loadStatusSummary();
-  if (!result.fully_shipped) alert(result.message);
-  else await postShipPhotoToFacebook(o);
+  if (!result.fully_shipped) {
+    // Partial batch: offer the Partial Delivery Slip (what's in this delivery + what's still to come).
+    if (confirm(`${result.message}\n\nPrint the Partial Delivery Slip for this batch now?`)) {
+      window.open(partialDeliverySlipUrl(orderId, result.batch_no), '_blank', 'noopener');
+    }
+  } else await postShipPhotoToFacebook(o);
 }
 
 function wireReleaseDialog() {
@@ -2231,7 +2235,7 @@ async function loadOrderCardReleaseHistory(orderId) {
   document.getElementById('orderCardReleaseSummary').textContent =
     `${Number(r.released_qty)} of ${Number(r.ordered_qty)} released in ${r.batches} batch${r.batches === 1 ? '' : 'es'}`;
   const body = document.getElementById('ocReleaseBody');
-  body.innerHTML = '<tr><td colspan="5" class="cell-msg">Loading...</td></tr>';
+  body.innerHTML = '<tr><td colspan="6" class="cell-msg">Loading...</td></tr>';
   const { data, error } = await supabaseClient.rpc('staff_get_online_order_release_history', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
@@ -2239,18 +2243,29 @@ async function loadOrderCardReleaseHistory(orderId) {
   });
   if (openCardOrderId !== String(orderId)) return;
   if (error) {
-    body.innerHTML = `<tr><td colspan="5" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="cell-msg error-text">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
   const fmt = (t) => (t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
-  body.innerHTML = (data || []).map((h) => `
+  // Print (Partial Delivery Slip, partial-delivery.html) on the first row of each batch.
+  const seen = new Set();
+  body.innerHTML = (data || []).map((h) => {
+    const first = !seen.has(h.batch_no);
+    seen.add(h.batch_no);
+    return `
     <tr>
       <td>#${h.batch_no}</td>
       <td>${escapeHtml(fmt(h.released_at))}<small class="oo-rh-sub">by ${escapeHtml(h.released_by_name || '')}</small></td>
       <td>${escapeHtml(h.description || '')}</td>
       <td class="num">${Number(h.quantity)}</td>
       <td>${escapeHtml(h.note || '')}</td>
-    </tr>`).join('') || '<tr><td colspan="5" class="cell-msg">Nothing released yet.</td></tr>';
+      <td>${first ? `<a class="btn" style="padding:2px 8px;font-size:12px;white-space:nowrap;" target="_blank" rel="noopener" title="Print the delivery slip for batch #${h.batch_no}: this delivery, delivered before, still to deliver" href="${partialDeliverySlipUrl(orderId, h.batch_no)}">&#128424; Print</a>` : ''}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="cell-msg">Nothing released yet.</td></tr>';
+}
+
+function partialDeliverySlipUrl(orderId, batchNo) {
+  return `partial-delivery.html?order=${encodeURIComponent(orderId)}${batchNo ? `&batch=${batchNo}` : ''}`;
 }
 
 function wireNextStepButtons() {
@@ -7468,6 +7483,7 @@ function wireOrderCard() {
   document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardShowSerialsBtn').addEventListener('click', (e) => openCardOrderId && showOrderSerials(openCardOrderId, e.currentTarget));
   document.getElementById('cardPrintSerialsBtn').addEventListener('click', (e) => openCardOrderId && printOrderSerialLabels(openCardOrderId, e.currentTarget));
+  document.getElementById('cardDeliverySlipBtn').addEventListener('click', () => openCardOrderId && window.open(partialDeliverySlipUrl(openCardOrderId), '_blank', 'noopener'));
   document.getElementById('cardDeleteOrderBtn').addEventListener('click', (e) => openCardOrderId && deleteOnlineOrder(openCardOrderId, e.currentTarget));
   document.getElementById('cardCancelOrderBtn').addEventListener('click', (e) => openCardOrderId && cancelCardOrder(openCardOrderId, e.currentTarget));
   document.getElementById('ocWalkinSaveBtn').addEventListener('click', saveWalkinCustomer);
@@ -9716,6 +9732,8 @@ function wireAdvanceCard() {
   document.getElementById('advanceCardStepBackBtn').addEventListener('click', (e) => setAdvanceStage(openAdvanceNo, null, e.currentTarget));
   document.getElementById('advanceCardShowSerialsBtn').addEventListener('click', (e) => openAdvanceNo && showAdvanceSerials(openAdvanceNo, e.currentTarget));
   document.getElementById('advanceCardPrintSerialsBtn').addEventListener('click', (e) => openAdvanceNo && printAdvanceSerialLabels(openAdvanceNo, e.currentTarget));
+  document.getElementById('advanceCardDeliverySlipBtn').addEventListener('click', () => openAdvanceNo
+    && window.open(`partial-delivery.html?advance=${encodeURIComponent(openAdvanceNo)}`, '_blank', 'noopener'));
   document.getElementById('advanceCardRequestTransferBtn').addEventListener('click', () => openAdvanceNo && requestAdvanceTransfer(openAdvanceNo));
   document.getElementById('advTransferFrom').addEventListener('change', renderAdvTransferLines);
   document.getElementById('saveAdvTransferBtn').addEventListener('click', saveAdvTransferDialog);

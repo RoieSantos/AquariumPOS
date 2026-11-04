@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Partial Delivery Slip - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .pd-batch-pick { display: inline-flex; align-items: center; gap: 6px; }
+    .pd-grid th.num, .pd-grid td.num { text-align: right; white-space: nowrap; }
+    .pd-st { font-weight: 700; white-space: nowrap; }
+    .pd-st-pending { color: #a15c00; }
+    .pd-status { font-weight: 700; margin-top: 8px; }
+    .pd-editor { margin: 0 0 16px; }
+    .pd-editor tr.pd-done-before td { color: #888; text-decoration: line-through; }
+    .pd-sign { display: flex; gap: 32px; margin-top: 36px; }
+    .pd-sign > div { flex: 1; text-align: center; }
+    .pd-sign-line { border-top: 1px solid #000; padding-top: 4px; font-size: 13px; }
+    @media (max-width: 560px) { .pd-sign { flex-direction: column; gap: 28px; } }
+    .pd-manual-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 10px; border: 1px dashed #c9a227; border-radius: 6px; background: rgba(201, 162, 39, 0.08); font-size: 14px; }
+    .pd-manual-bar input { width: 64px; }
+    .pd-qty { width: 64px; text-align: right; font-weight: inherit; }
+    .pd-line-status { min-width: 130px; }
+    .pd-bulk { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+    @media print { .pd-st-pending { color: #000; } }
+  </style>
+</head>
+<body>
+  <div id="topnav" class="no-print"></div>
+
+  <div class="page">
+    <div class="toolbar no-print">
+      <a href="online-orders.html">&larr; Back to Orders</a>
+      <label class="pd-batch-pick hidden" id="batchPickWrap">Batch
+        <select id="batchPick"></select>
+      </label>
+      <button class="btn btn-primary" id="printBtn" type="button">Print</button>
+    </div>
+
+    <div id="unlockBox" class="hidden no-print">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="loadError" class="error-text hidden"></div>
+
+    <!-- Editor (Advance Orders, or an online order never released in batches) - not printed, nothing saved. -->
+    <div id="manualBar" class="pd-editor no-print hidden">
+      <div class="pd-manual-bar">
+        <span>Pick each line's <strong>Status</strong> - the slip below shows exactly what prints. Not saved to the order (this browser remembers it for the next slip).</span>
+        <span class="pd-bulk">All lines not yet delivered:
+          <button class="btn" id="allNowBtn" type="button">Included in this Delivery</button>
+          <button class="btn" id="allPendingBtn" type="button">Pending to Deliver</button>
+        </span>
+        <label>Delivery # <input type="number" id="deliveryNoInput" min="1" step="1" value="1" /></label>
+        <button class="btn" id="nextDeliveryBtn" type="button" title="Mark what's in this delivery as delivered already and include everything still pending">Next Delivery &rarr;</button>
+        <button class="btn" id="clearTypedBtn" type="button">Clear</button>
+      </div>
+      <div class="table-wrap">
+        <table class="pd-grid">
+          <thead>
+            <tr><th>Status</th><th>#</th><th>Item</th><th class="num">Ordered</th><th class="num">Delivered already</th><th class="num">This delivery</th><th class="num">Pending</th></tr>
+          </thead>
+          <tbody id="editorBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="receiptContent" class="hidden">
+      <div class="delivery-receipt">
+        <div class="delivery-receipt-section invoice-header">
+          <div class="delivery-receipt-header">
+            <img id="receiptLogo" class="delivery-receipt-logo hidden" alt="Company logo" />
+            <div class="delivery-receipt-company-info">
+              <div id="receiptCompanyName" class="delivery-receipt-company-name"></div>
+              <div id="receiptFacebook" class="delivery-receipt-line"></div>
+              <div id="receiptAddress" class="delivery-receipt-line"></div>
+              <div id="receiptContactNo" class="delivery-receipt-line"></div>
+            </div>
+          </div>
+          <div class="invoice-order-info">
+            <div id="slipOrderNo" class="delivery-receipt-line"></div>
+            <div id="slipAoNo" class="delivery-receipt-line"></div>
+            <div id="slipOrderDate" class="delivery-receipt-line"></div>
+            <div id="slipBatch" class="delivery-receipt-line"></div>
+            <div id="slipReleased" class="delivery-receipt-line"></div>
+            <div id="slipLocation" class="delivery-receipt-line"></div>
+          </div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div id="slipReceiverName" class="delivery-receipt-line"></div>
+          <div id="slipReceiverAddress" class="delivery-receipt-line"></div>
+          <div id="slipReceiverPhone" class="delivery-receipt-line"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="delivery-receipt-title" id="slipTitle">PARTIAL DELIVERY SLIP</div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <div class="table-wrap">
+            <table class="pd-grid">
+              <thead>
+                <tr><th>#</th><th>Item</th><th class="num">Qty</th><th>Status</th></tr>
+              </thead>
+              <tbody id="slipLinesBody"></tbody>
+            </table>
+          </div>
+          <div id="slipBatchNote" class="delivery-receipt-note hidden"></div>
+          <div id="slipStatus" class="pd-status"></div>
+          <div id="slipBalance" class="delivery-receipt-fee"></div>
+        </div>
+
+        <div class="delivery-receipt-section">
+          <p>Please check the items marked "Included in this Delivery" upon receipt. Items marked "Pending to Deliver" remain reserved for you and will follow in a later delivery.</p>
+          <div class="pd-sign">
+            <div><div class="pd-sign-line">Received by (signature over printed name / date)</div></div>
+            <div><div class="pd-sign-line" id="slipReleasedBySign">Released by</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=tenderdeposit1"></script>
+  <script src="js/nav.js?v=tenderdeposit1"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/partialDelivery.js?v=pdslip5"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

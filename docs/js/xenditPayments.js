@@ -207,6 +207,35 @@ async function copyPayLink() {
   }
 }
 
+// Edge Function xendit-channels: the account's channels from Xendit, activated ones first.
+async function checkChannels() {
+  const btn = document.getElementById('checkChannelsBtn');
+  const result = document.getElementById('channelsResult');
+  btn.disabled = true;
+  result.innerHTML = '<p class="muted">Asking Xendit...</p>';
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-channels`, {
+      headers: { 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.channels) throw new Error(data?.error || `HTTP ${response.status}`);
+    const channels = [...data.channels].sort((a, b) => (b.enabled - a.enabled) || String(a.category).localeCompare(String(b.category)) || String(a.name).localeCompare(String(b.name)));
+    const on = channels.filter((c) => c.enabled).length;
+    result.innerHTML = `<p class="muted" style="margin-top:0;"><strong>${data.isTest ? 'TEST' : 'LIVE'}</strong> - ${on} of ${channels.length} activated.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Channel</th><th>Code</th><th>Type</th><th>Status</th></tr></thead>
+        <tbody>${channels.map((c) => `<tr>
+          <td>${esc(c.name)}</td><td><code>${esc(c.code)}</code></td><td>${esc(c.category)}</td>
+          <td>${c.enabled ? '<strong style="color:#16a34a;">✔ Activated</strong>' : '<span class="muted">Not activated</span>'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+  } catch (err) {
+    result.innerHTML = `<p class="error-text">Could not get the channels: ${esc(err.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -230,6 +259,7 @@ async function copyPayLink() {
   document.getElementById('xenditLiveMode').addEventListener('change', renderLiveModeHint);
   document.getElementById('refreshBtn').addEventListener('click', loadPayments);
   document.getElementById('payLinkBtn').addEventListener('click', copyPayLink);
+  document.getElementById('checkChannelsBtn').addEventListener('click', checkChannels);
   document.getElementById('searchBox').addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(loadPayments, 300);

@@ -72,6 +72,13 @@
         <p class="muted" id="payLinkResult" style="margin-bottom:0;"></p>
       </div>
 
+      <div class="card" style="margin-bottom:16px;">
+        <h2 style="margin-top:0;">Payment channels</h2>
+        <p class="muted" style="margin-top:0;">What Xendit says is activated on the account for the current mode (live or test). Activate more in the Xendit dashboard under Settings &gt; Payment Channels. The list is refreshed from Xendit at most every 10 minutes.</p>
+        <button class="btn btn-secondary" id="checkChannelsBtn" type="button">Check channels</button>
+        <div id="channelsResult" style="margin-top:10px;"></div>
+      </div>
+
       <div class="toolbar">
         <h2 style="margin:0;">Payments</h2>
         <input type="text" id="searchBox" placeholder="Search order / reference" style="min-width:220px;" />
@@ -106,7 +113,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=tenderdeposit1"></script>
-  <script src="js/xenditPayments.js?v=xendit9"></script>
+  <script src="js/xenditPayments.js?v=xchannels1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -22,6 +22,8 @@ namespace AquariumPOS
         {
             KeyPreview = true;
             this.KeyDown += TenderDeclarationForm_KeyDown;
+            // A count cut off at the reason prompt must be finished before a new count can be entered.
+            this.Shown += (s, e) => ResumeUnfinishedDeclaration();
 
             this.receiptNo = receiptNo;
             this.Text = "Tender Declaration";
@@ -364,70 +366,121 @@ namespace AquariumPOS
                         totalDeclared += kvp.Key * qty;
                     }
 
-
-                    // Short / Over: the count above is already saved, so the cashier only sees the result now
-                    // (and can't change the count to match). Any difference needs a reason, which is kept in
-                    // the TenderDecl header's Description, printed on the receipt and sent to the portal.
-                    string headerDescription = "";
-                    decimal variance = totalDeclared - FunctionEvents.GetTenderDeclSummary(connection, null).ExpectedCash;
-                    if (variance != 0m)
-                    {
-                        string reason = PromptForVarianceReason(variance);
-                        headerDescription = $"Tender Declaration | {(variance < 0 ? "Short" : "Over")} {Math.Abs(variance):F2} | {VarianceReasonPrefix}{reason}";
-                    }
-
-                    // Call WriteSalesTransactionHeader with type = 'TenderDecl'
-                    var mainForm = this.Owner as AquariumPOS.MainForm;
-                    if (mainForm != null)
-                    {
-                        mainForm.WriteSalesTransactionHeader(receiptNo, "TenderDecl", totalDeclared, eodID, headerDescription);
-                        // Print receipt after tender declaration
-                        mainForm.PrintTenderDeclReceipt(receiptNo);
-                        // Print X Report after tender declaration
-                        AquariumPOS.PostingEvents.PrintXReport(receiptNo);
-                        FunctionEvents.UpdateEODIDForAllTables(connection, eodID);
-
-                        // Send to the portal (Supabase) now that the day is stamped with this EODID. Done
-                        // before closing (not in the background) since the PC is often shut down right after
-                        // end-of-day; a failure only warns - the declaration is already posted locally and can
-                        // be re-sent with Settings > UPLOAD TENDER DECL HISTORY.
-                        try
-                        {
-                            Cursor.Current = Cursors.WaitCursor;
-                            string warehouseName = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString)?.Name ?? string.Empty;
-                            OnlinefunctionsEvents.SyncTenderDeclarationToSupabaseAsync(eodID, warehouseName, timeout: TimeSpan.FromSeconds(20))
-                                .GetAwaiter().GetResult();
-                        }
-                        catch (Exception syncEx)
-                        {
-                            MessageBox.Show($"Tender declaration posted, but it could not be sent to the portal: {syncEx.Message}\n\nIt can be re-sent later from Settings > UPLOAD TENDER DECL HISTORY.",
-                                          "Portal Sync Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        }
-                        finally
-                        {
-                            Cursor.Current = Cursors.Default;
-                        }
-                    }
-                    else
-                    {
-                        MessageBox.Show("Warning: Could not create transaction header - MainForm reference not found.",
-                                      "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    }
-
-                    MessageBox.Show($"Tender declaration posted successfully!\n\nReceipt No: {receiptNo}\nEOD ID: {eodID}\nTotal Declared: P{totalDeclared:F2}",
-                                  "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    this.Close();
-                    if (mainForm != null)
-                    {
-                        mainForm.Close();
-
-                    }
+                    FinishDeclaration(connection, eodID, totalDeclared);
                 }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error posting tender declaration: {ex.Message}", "Error",
                               MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // Everything after the count lines are saved: Short/Over reason, header, receipt, EODID stamp, portal sync.
+        // Shared by a normal post and by finishing a count that was cut off (ResumeUnfinishedDeclaration).
+        private void FinishDeclaration(System.Data.SqlClient.SqlConnection connection, string eodID, decimal totalDeclared)
+        {
+            // Short / Over: the count is already saved, so the cashier only sees the result now
+            // (and can't change the count to match). Any difference needs a reason, which is kept in
+            // the TenderDecl header's Description, printed on the receipt and sent to the portal.
+            string headerDescription = "";
+            decimal variance = totalDeclared - FunctionEvents.GetTenderDeclSummary(connection, null).ExpectedCash;
+            if (variance != 0m)
+            {
+                string reason = PromptForVarianceReason(variance);
+                headerDescription = $"Tender Declaration | {(variance < 0 ? "Short" : "Over")} {Math.Abs(variance):F2} | {VarianceReasonPrefix}{reason}";
+            }
+
+            // Call WriteSalesTransactionHeader with type = 'TenderDecl'
+            var mainForm = this.Owner as AquariumPOS.MainForm;
+            if (mainForm != null)
+            {
+                mainForm.WriteSalesTransactionHeader(receiptNo, "TenderDecl", totalDeclared, eodID, headerDescription);
+                // Print receipt after tender declaration
+                mainForm.PrintTenderDeclReceipt(receiptNo);
+                // Print X Report after tender declaration
+                AquariumPOS.PostingEvents.PrintXReport(receiptNo);
+                FunctionEvents.UpdateEODIDForAllTables(connection, eodID);
+
+                // Send to the portal (Supabase) now that the day is stamped with this EODID. Done
+                // before closing (not in the background) since the PC is often shut down right after
+                // end-of-day; a failure only warns - the declaration is already posted locally and can
+                // be re-sent with Settings > UPLOAD TENDER DECL HISTORY.
+                try
+                {
+                    Cursor.Current = Cursors.WaitCursor;
+                    string warehouseName = TransferOrderData.GetCurrentWarehouse(GlobalSettings.ConnectionString)?.Name ?? string.Empty;
+                    OnlinefunctionsEvents.SyncTenderDeclarationToSupabaseAsync(eodID, warehouseName, timeout: TimeSpan.FromSeconds(20))
+                        .GetAwaiter().GetResult();
+                }
+                catch (Exception syncEx)
+                {
+                    MessageBox.Show($"Tender declaration posted, but it could not be sent to the portal: {syncEx.Message}\n\nIt can be re-sent later from Settings > UPLOAD TENDER DECL HISTORY.",
+                                  "Portal Sync Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                finally
+                {
+                    Cursor.Current = Cursors.Default;
+                }
+            }
+            else
+            {
+                MessageBox.Show("Warning: Could not create transaction header - MainForm reference not found.",
+                              "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            MessageBox.Show($"Tender declaration posted successfully!\n\nReceipt No: {receiptNo}\nEOD ID: {eodID}\nTotal Declared: P{totalDeclared:F2}",
+                          "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            this.Close();
+            if (mainForm != null)
+            {
+                mainForm.Close();
+
+            }
+        }
+
+        // A count whose lines were saved but whose declaration never finished - the POS was closed / crashed at
+        // the Short/Over reason prompt. Its EODID is newer than any stamped EODID (the header and stamp never
+        // happened). Without this, the next attempt reused that EODID, the cashier could recount to match and skip
+        // the reason, and the portal added both counts together. Now that count stands and must be finished first.
+        private void ResumeUnfinishedDeclaration()
+        {
+            try
+            {
+                using var connection = new System.Data.SqlClient.SqlConnection(GlobalSettings.ConnectionString);
+                connection.Open();
+
+                string? eodID = null, unfinishedReceiptNo = null;
+                decimal totalDeclared = 0m;
+                using (var cmd = new System.Data.SqlClient.SqlCommand(@"
+SELECT TOP 1 l.EODID, MIN(l.ReceiptNo) AS ReceiptNo, SUM(l.TotalAmount) AS Total
+FROM TenderDeclLines l
+WHERE ISNULL(l.EODID, '') <> ''
+  AND l.EODID > ISNULL((SELECT MAX(EODID) FROM TransactionHeader WHERE ISNULL(EODID, '') <> ''), '')
+GROUP BY l.EODID
+ORDER BY l.EODID DESC", connection))
+                using (var rdr = cmd.ExecuteReader())
+                {
+                    if (!rdr.Read()) return;
+                    eodID = rdr["EODID"]?.ToString();
+                    unfinishedReceiptNo = rdr["ReceiptNo"] == DBNull.Value ? null : rdr["ReceiptNo"].ToString();
+                    totalDeclared = rdr["Total"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["Total"]);
+                }
+                if (string.IsNullOrWhiteSpace(eodID) || string.IsNullOrWhiteSpace(unfinishedReceiptNo)) return;
+
+                MessageBox.Show(this,
+                    $"A previous tender declaration was not finished (count P{totalDeclared:F2}, receipt {unfinishedReceiptNo}).\n\n" +
+                    "That count stands and must be finished now. If the cash is Short or Over you will be asked for a reason.",
+                    "Unfinished Tender Declaration", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+                receiptNo = unfinishedReceiptNo;
+                FinishDeclaration(connection, eodID, totalDeclared);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error finishing the previous tender declaration: {ex.Message}", "Error",
+                              MessageBoxButtons.OK, MessageBoxIcon.Error);
+                this.Close();
             }
         }
 

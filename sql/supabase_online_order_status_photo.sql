@@ -145,6 +145,8 @@ create index if not exists "IX_OnlineOrderStatusPhotos_OrderID" on public."Onlin
 
 revoke all on public."OnlineOrderStatusPhotos" from anon, authenticated;
 
+-- Superseded by supabase_online_order_photos_from_production.sql (also lists the linked Production
+-- Orders' photos) - re-run that file after this one.
 drop function if exists public.admin_list_online_order_status_photos(text, text, text);
 
 create or replace function public.admin_list_online_order_status_photos(p_admin_username text, p_admin_password text, p_order_id text)

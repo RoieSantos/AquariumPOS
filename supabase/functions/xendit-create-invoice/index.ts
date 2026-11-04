@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'We could not start the online payment. Please try again in a moment.' }, 500);
   }
   const cardFee = Number(feeRows[0].card_fee);
-  const channels = Number(feeRows[0].fee_percent) > 0 ? { allowed_payment_channels: payByCard ? ['CARDS'] : NON_CARD_CHANNELS } : {};
+  const channels: { allowed_payment_channels?: string[] } = Number(feeRows[0].fee_percent) > 0 ? { allowed_payment_channels: payByCard ? ['CARDS'] : NON_CARD_CHANNELS } : {};
 
   const back = returnBase(body?.returnUrl);
   const orderParam = encodeURIComponent(prepared.order_ref);
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
   let invoice: any = null;
   let createError: string | null = null;
   try {
-    const created = await createSession(secretKey, {
+    const session = {
       reference_id: prepared.external_id,
       amount: Math.round((Number(prepared.amount) + cardFee) * 100) / 100,
       ...channels,
@@ -191,7 +191,19 @@ Deno.serve(async (req) => {
       customer,
       success_return_url: `${back}?order=${orderParam}&result=success`,
       cancel_return_url: `${back}?order=${orderParam}&result=failed`
-    });
+    };
+    let created = await createSession(secretKey, session);
+    // Xendit refuses the whole session if any listed channel isn't activated on the account ("Channel(s) GCASH,
+    // SHOPEEPAY are not available..."), so retry once without those - an activated channel then shows up by itself.
+    const inactive = String(created.body?.message || '').match(/Channel\(s\) (.+?) (?:is|are) not available/);
+    if (!created.ok && inactive && session.allowed_payment_channels) {
+      const off = inactive[1].split(/\s*,\s*/);
+      const remaining = session.allowed_payment_channels.filter((c) => !off.includes(c));
+      if (remaining.length) {
+        console.warn('xendit-create-invoice: channels not activated, retrying without', off.join(', '));
+        created = await createSession(secretKey, { ...session, allowed_payment_channels: remaining });
+      }
+    }
     invoice = created.body;
     if (!created.ok) {
       createError = `Xendit ${created.status}: ${invoice?.message || invoice?.error_code || 'session was not created'}`;
