@@ -833,6 +833,7 @@ async function openReceiveModal(poNo) {
 
   document.getElementById('poEditSection').classList.toggle('hidden', !currentSession?.isSuperUser);
   document.getElementById('mergePoBtn').classList.toggle('hidden', !currentSession?.isSuperUser);
+  document.getElementById('distributePoBtn').classList.add('hidden');
   resetPoAddItemFields();
   itemUnitsByItemCode.clear();
   sellingPriceCache.clear();
@@ -873,6 +874,7 @@ async function openReceiveModal(poNo) {
   }
   warehouseSelect.value = currentReceiveWarehouseId;
   const anyReceived = (lineRows || []).some((l) => Number(l.qty_received || 0) > 0);
+  document.getElementById('distributePoBtn').classList.toggle('hidden', !anyReceived);
   warehouseSelect.disabled = anyReceived;
   warehouseSelect.title = anyReceived
     ? 'Items have already been received on this order - its warehouse can no longer be changed.'
@@ -1070,7 +1072,10 @@ async function postPurchaseOrder() {
 
     document.getElementById('poCardModal').classList.add('hidden');
     await loadPurchaseOrders();
-    window.alert(`Purchase Order ${currentReceivePoNo} has been received and posted.`);
+    // Posted orders can still be distributed later from Posted Purchase Orders.
+    if (window.PoDistribution && window.confirm(`Purchase Order ${currentReceivePoNo} has been received and posted.\n\nDistribute what it received to the stores now?`)) {
+      window.PoDistribution.open(currentReceivePoNo, currentSession);
+    }
   } catch (err) {
     errorEl.textContent = describeSupabaseError(err, 'Failed to post Purchase Order.');
     errorEl.classList.remove('hidden');
@@ -2454,6 +2459,9 @@ function addPoSuggestionsToLines() {
   document.getElementById('postPoBtn').addEventListener('click', postPurchaseOrder);
 
   document.getElementById('mergePoBtn').addEventListener('click', openMergePoModal);
+  document.getElementById('distributePoBtn').addEventListener('click', () => {
+    if (currentReceivePoNo) window.PoDistribution.open(currentReceivePoNo, currentSession);
+  });
   document.getElementById('mergePoConfirmBtn').addEventListener('click', mergePurchaseOrders);
   document.getElementById('mergePoCloseBtn').addEventListener('click', () =>
     document.getElementById('mergePoModal').classList.add('hidden')

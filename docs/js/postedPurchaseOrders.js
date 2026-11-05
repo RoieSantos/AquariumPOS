@@ -7,6 +7,7 @@ let currentSearch = '';
 let currentPage = 1;
 let currentPageSize = 50;
 let searchDebounceHandle = null;
+let currentViewPoNo = null;
 
 function formatDate(value) {
   if (!value) return '';
@@ -259,6 +260,8 @@ async function openViewModal(poNo) {
   document.getElementById('viewPrintLink').href = `purchase-order-print.html?po=${encodeURIComponent(poNo)}`;
   const body = document.getElementById('viewLinesBody');
   body.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+  currentViewPoNo = poNo;
+  document.getElementById('viewDistributeBtn').classList.add('hidden');
   document.getElementById('viewModal').classList.remove('hidden');
 
   // Restore the layout this browser last used, before the panel is seen.
@@ -325,6 +328,8 @@ async function openViewModal(poNo) {
   }
 
   renderViewLines(lineRows || []);
+  document.getElementById('viewDistributeBtn').classList.toggle('hidden',
+    !(lineRows || []).some((l) => Number(l.qty_received || 0) > 0));
 }
 
 (async function init() {
@@ -353,6 +358,9 @@ async function openViewModal(poNo) {
   document.getElementById('closeViewModalBtn').addEventListener('click', () =>
     document.getElementById('viewModal').classList.add('hidden')
   );
+  document.getElementById('viewDistributeBtn').addEventListener('click', () => {
+    if (currentViewPoNo) window.PoDistribution.open(currentViewPoNo, currentSession);
+  });
   document.getElementById('viewMaximizeBtn').addEventListener('click', () => {
     const nowMaximized = !document.getElementById('viewModal').classList.contains('modal-maximized');
     applyViewMaximized(nowMaximized);

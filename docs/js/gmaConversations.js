@@ -2474,7 +2474,9 @@ async function editOrder(orderNo, btn) {
     price: Number(l.price) || 0,
     quantity: Number(l.quantity) || 1,
     note: l.notes || null,
-    variation_id: l.variation_id || null
+    variation_id: l.variation_id || null,
+    // Keeps a custom aquarium build's lines together on re-save (sql/supabase_custom_aquarium_part_revenue.sql).
+    ...(l.bundle_key ? { bundle_key: l.bundle_key, revenue_weight: Number(l.revenue_weight) || 0 } : {})
   }));
 
   // Saved pricing flag + which lines are already on their wholesale price.
@@ -2483,7 +2485,7 @@ async function editOrder(orderNo, btn) {
   if (newOrderWholesale) {
     newOrderLines.forEach((line) => {
       const info = wholesaleInfoByCode.get(line.item_code);
-      if (info && Math.abs(line.price - info.wholesale_price) < 0.005) {
+      if (info && !line.bundle_key && Math.abs(line.price - info.wholesale_price) < 0.005) {
         line.wholesale_applied = true;
         line.retail_price = info.retail_price;
       }
@@ -3223,7 +3225,9 @@ function addOrderLineFromProduct(item, variant) {
   // Dedupe by the specific variant when one was chosen (two different variants of the same product
   // must stay separate lines) - falls back to item_code for a plain product add, same as before.
   const dedupeKey = variationId || item.code;
-  const existing = newOrderLines.find((line) => (line.variation_id || line.item_code) === dedupeKey);
+  // A custom aquarium build's P0 light / pump (bundle_key) stays its own line - adding the same pump from
+  // search is a separate, priced sale.
+  const existing = newOrderLines.find((line) => !line.bundle_key && (line.variation_id || line.item_code) === dedupeKey);
   if (existing) {
     existing.quantity += 1;
   } else {
@@ -3275,7 +3279,8 @@ async function applyWholesalePrices() {
   if (!newOrderWholesale) return;
   newOrderLines.forEach((line) => {
     const info = wholesaleInfoByCode.get(line.item_code);
-    if (!info || line.wholesale_applied) return;
+    // A build's P0 light / pump is paid for in the aquarium line's price - never re-price it.
+    if (!info || line.wholesale_applied || line.bundle_key) return;
     line.retail_price = line.price;
     line.price = info.wholesale_price;
     line.wholesale_applied = true;
@@ -3373,6 +3378,13 @@ function selectVariantForOrder(variant) {
 }
 
 function removeNewOrderLine(index) {
+  const line = newOrderLines[index];
+  // Removing a custom aquarium / sump line takes its P0 light / pump with it (they'd be left free otherwise).
+  // Removing just a part keeps the aquarium line - e.g. the customer brings their own pump.
+  if (line && line.bundle_key && line.category_code) {
+    newOrderLines = newOrderLines.filter((l) => l === line || l.bundle_key !== line.bundle_key);
+    index = newOrderLines.indexOf(line);
+  }
   newOrderLines.splice(index, 1);
   renderNewOrderLines();
 }
@@ -3397,7 +3409,7 @@ function renderNewOrderLines() {
   bodyEl.innerHTML = newOrderLines.map((line, index) => `
     <div class="order-line-card" data-row="${index}">
       <div class="order-line-top">
-        <div class="order-line-name">${escapeHtml(line.item_name)}${line.wholesale_applied ? ' <span class="wholesale-chip">Wholesale</span>' : ''}</div>
+        <div class="order-line-name">${escapeHtml(line.item_name)}${line.wholesale_applied ? ' <span class="wholesale-chip">Wholesale</span>' : ''}${line.bundle_key && !line.category_code ? ' <span class="wholesale-chip" title="Priced inside the custom aquarium line - its sales still count for this item in the reports">Part of build</span>' : ''}</div>
         <button type="button" class="line-note-btn${line.note ? ' has-note' : ''}" data-index="${index}" title="${line.note ? escapeHtml(line.note) : 'Add a note'}">&#9998;</button>
         <button type="button" class="line-remove-btn" title="Remove this item" data-index="${index}">
           <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L14 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -3655,7 +3667,11 @@ function readCalcEmbedState() {
   if (!r) return { lines: [], problem: 'Waiting for a price - press Calculate in the calculator.' };
 
   try {
-    const lines = calcEmbedKind === 'stand' ? buildStandCalcLines(win) : buildAquariumCalcLines(win);
+    // Add to Order: the light / pump as their own P0 lines (SET style, revenue split in the reports). A
+    // reply quote keeps them inside the aquarium price - a P0 bullet would just confuse the customer.
+    const lines = calcEmbedKind === 'stand'
+      ? buildStandCalcLines(win)
+      : buildAquariumCalcLines(win, { splitParts: calcEmbedMode !== 'reply' });
     return lines.length ? { lines, problem: '' } : { lines: [], problem: 'Waiting for a price - press Calculate in the calculator.' };
   } catch (err) {
     return { lines: [], problem: `Could not read the quote: ${err.message}` };

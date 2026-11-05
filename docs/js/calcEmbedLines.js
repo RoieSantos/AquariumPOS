@@ -27,8 +27,56 @@ function calcEmbedWinFromSnapshot(s) {
     lastResult: s.result,
     computeQuotedTotal: s.quote ? () => s.quote : undefined,
     lastDetailRows: Array.isArray(s.detailRows) ? s.detailRows : [],
+    accessories: s.accessories || null,
     document: doc
   };
+}
+
+// Calculator component keys (custom-aquarium-calculator.js result.components) of the filtration sump and of
+// the tank itself - which line a part's cost rides on (the stand is always its own line).
+const CALC_SUMP_COMPONENT_KEYS = ['sumpGlass', 'sumpDividers', 'raisedChamber', 'filterMedia', 'overflowBox', 'light', 'pump',
+  'piping', 'allumTopCover', 'topDrawer', 'drainValves', 'sumpStickers'];
+const CALC_TANK_COMPONENT_KEYS = ['glass', 'highStrip', 'holes', 'divider', 'stickerBackground', 'stickerBottom', 'aquascapeService'];
+
+// SET-style parts - per "can the options split too? like filter medias / light / pump" + "the sales should
+// be revenued too per item": the picked submersible light / pump become their own P0 lines (real item code,
+// so stock comes off) under the line whose price includes them (Custom Sump when the sump is its own line,
+// else Custom Aquarium). That line keeps the full price, so the order total doesn't change. The lines share
+// a bundle_key, and each carries a revenue_weight (its base cost x qty) - the reports split the build's
+// revenue by it (sql/supabase_custom_aquarium_part_revenue.sql). No light / pump picked -> lines unchanged.
+function splitCalcAccessoryParts(lines, win, r, sumpLineSeparate) {
+  const acc = win.accessories || {};
+  const comps = r.components || {};
+  const cost = (key) => Number(comps[key]) || 0;
+  const parts = [['light', 'Submersible light'], ['pump', 'Submersible pump']]
+    .filter(([key]) => acc[key] && acc[key].code && cost(key) > 0);
+  if (!parts.length) return lines;
+
+  const parent = lines.find((l) => l.category_code === (sumpLineSeparate ? 'CUSTOM-SUMP' : 'CUSTOM-AQUARIUM'));
+  if (!parent) return lines;
+  const groupKeys = sumpLineSeparate ? CALC_SUMP_COMPONENT_KEYS : CALC_TANK_COMPONENT_KEYS.concat(CALC_SUMP_COMPONENT_KEYS);
+  const groupBase = groupKeys.reduce((sum, key) => sum + cost(key), 0);
+  const partsBase = parts.reduce((sum, [key]) => sum + cost(key), 0);
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const bundleKey = `CA-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+  parent.bundle_key = bundleKey;
+  parent.revenue_weight = round2(Math.max(groupBase - partsBase, 0) * parent.quantity);
+  parent.note = `${parent.note}\nIncludes (own P0 lines): ${parts.map(([key]) => `${acc[key].name} x${acc[key].qty}`).join(', ')}`;
+
+  const partLines = parts.map(([key, label]) => ({
+    category_code: null,
+    item_code: acc[key].code,
+    item_name: acc[key].name,
+    price: 0,
+    quantity: acc[key].qty * parent.quantity,
+    note: `${label} - part of ${parent.item_name} (price included in that line)`,
+    variation_id: null,
+    bundle_key: bundleKey,
+    revenue_weight: round2(cost(key) * parent.quantity)
+  }));
+  const at = lines.indexOf(parent) + 1;
+  return lines.slice(0, at).concat(partLines, lines.slice(at));
 }
 
 function calcEmbedMissingFields(doc, calcEmbedKind) {
@@ -88,7 +136,9 @@ function buildAquariumDrawingUrlFrom(n, highStrip) {
   return `https://rspetstop.com/WebAquariumCalculator/index.html?${params.toString()}`;
 }
 
-function buildAquariumCalcLines(win) {
+// opts.splitParts: the light / pump as their own P0 lines (splitCalcAccessoryParts) - Conversations' Add
+// to Order only; Put in reply, Add COD Items and the customer calculator keep one line per part group.
+function buildAquariumCalcLines(win, opts = {}) {
   const r = win.lastResult;
   if (!r || !r.ok || typeof win.computeQuotedTotal !== 'function') return [];
   const n = r.normalized;
@@ -101,7 +151,7 @@ function buildAquariumCalcLines(win) {
   // "Sump only" Build type - no aquarium, so the whole quote is one CUSTOM-SUMP line.
   if (r.sumpOnly) {
     const so = n.sumpOnly || {};
-    return [{
+    const sumpOnlyLines = [{
       category_code: 'CUSTOM-SUMP',
       item_code: null,
       item_name: `Custom ${so.type} Sump (${fmtIn(n.lengthInches)}x${fmtIn(n.widthInches)}x${fmtIn(n.heightInches)}in)`,
@@ -112,6 +162,7 @@ function buildAquariumCalcLines(win) {
         .join('\n'),
       variation_id: null
     }];
+    return opts.splitParts ? splitCalcAccessoryParts(sumpOnlyLines, win, r, true) : sumpOnlyLines;
   }
 
   const sumpSeparate = q.sumpEnabled && q.sumpUnitPrice > 0;
@@ -190,7 +241,7 @@ function buildAquariumCalcLines(win) {
     });
   }
 
-  return lines;
+  return opts.splitParts ? splitCalcAccessoryParts(lines, win, r, sumpSeparate) : lines;
 }
 
 function buildStandCalcLines(win) {

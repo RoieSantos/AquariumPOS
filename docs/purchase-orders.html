@@ -6,6 +6,7 @@
   <title>Purchase Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=redqty5" />
   <link rel="stylesheet" href="css/bc-list.css?v=posuggest3" />
+  <link rel="stylesheet" href="css/po-distribution.css?v=podist1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -144,6 +145,8 @@
         <span id="poCardExistingFooter" class="bc-cmd-group hidden">
           <button class="bc-cmd bc-cmd-accent" id="postPoBtn" type="button" title="Receive the Qty Received entered below into inventory; posts the order once nothing is outstanding"><svg class="bc-ico"><use href="#ico-posted"/></svg>Post</button>
           <!-- Super users only (openReceiveModal) - pulls another open PO from this vendor into this one. -->
+          <!-- Shown once anything is received (openReceiveModal) - js/poDistribution.js. -->
+          <button class="bc-cmd hidden" id="distributePoBtn" type="button" title="Split what this order received into Requested transfer orders for the stores, by their shelf level need and sales"><svg class="bc-ico"><use href="#ico-merge"/></svg>Distribute to Stores</button>
           <button class="bc-cmd hidden" id="mergePoBtn" type="button" title="Move another open Purchase Order from this vendor into this one"><svg class="bc-ico"><use href="#ico-merge"/></svg>Merge</button>
           <span class="bc-cmd-sep"></span>
           <a id="poCardPrintLink" href="#" class="bc-cmd hidden"><svg class="bc-ico"><use href="#ico-print"/></svg>Print</a>
@@ -518,7 +521,8 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/purchaseOrders.js?v=posuggest4"></script>
+  <script src="js/poDistribution.js?v=podist1"></script>
+  <script src="js/purchaseOrders.js?v=podist1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

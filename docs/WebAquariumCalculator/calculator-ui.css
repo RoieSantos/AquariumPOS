@@ -609,6 +609,75 @@ canvas {
   height: auto;
 }
 
+/* Pinned drawing (Custom Aquarium calculator): sticks just under the step nav so the drawing stays
+   visible while options are changed. --step-nav-h / --pinned-drawing-h are set by calculator-ui.js. */
+.drawing-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.drawing-head h2 {
+  margin-bottom: 0 !important;
+}
+
+.drawing-pin-btn {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--panel-bg);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.drawing-pin-btn[aria-pressed="true"] {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.drawing-card.drawing-pinned.is-pinned {
+  position: sticky;
+  top: calc(var(--step-nav-h, 54px) + 6px);
+  z-index: 15;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  transition: box-shadow 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+/* Once it is actually floating over the form (calculator-ui.js adds .is-stuck), lift it off the
+   page: deeper layered shadow + accent border so it reads as separate from the cards scrolling under. */
+.drawing-card.drawing-pinned.is-pinned.is-stuck {
+  border-color: #a9c0e2;
+  box-shadow:
+    0 2px 4px rgba(20, 40, 80, 0.08),
+    0 12px 28px rgba(20, 40, 80, 0.22),
+    0 24px 48px -12px rgba(20, 40, 80, 0.18);
+  transform: translateY(-1px);
+}
+
+.drawing-card.drawing-pinned.is-pinned .drawing-head {
+  margin-bottom: 8px;
+}
+
+/* Keep the drawing from eating the screen - shrink it (aspect ratio kept) instead. */
+.drawing-card.drawing-pinned.is-pinned canvas {
+  width: auto;
+  max-width: 100%;
+  max-height: 26vh;
+  margin: 0 auto;
+}
+
+/* Jumping to a step via the nav lands below the pinned drawing, not hidden behind it. */
+body.drawing-is-pinned .calc-main > section {
+  scroll-margin-top: calc(var(--step-nav-h, 54px) + var(--pinned-drawing-h, 0px) + 16px);
+}
+
 details {
   margin-top: 12px;
   padding: 10px 12px;

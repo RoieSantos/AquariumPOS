@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Posted Purchase Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <link rel="stylesheet" href="css/po-distribution.css?v=podist1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -61,7 +62,9 @@
     <div class="modal-panel po-doc-panel">
       <div class="toolbar">
         <h2 id="viewModalTitle">Purchase Order</h2>
-        <a id="viewPrintLink" href="#" class="btn btn-secondary btn-sm" style="margin-left:auto;">Print</a>
+        <!-- js/poDistribution.js - shown when the order received anything (openViewModal). -->
+        <button class="btn btn-primary btn-sm hidden" id="viewDistributeBtn" type="button" style="margin-left:auto;" title="Split what this order received into Requested transfer orders for the stores, by their shelf level need and sales">Distribute to Stores</button>
+        <a id="viewPrintLink" href="#" class="btn btn-secondary btn-sm">Print</a>
         <button class="btn btn-secondary btn-sm" id="viewMaximizeBtn" type="button" title="Maximize this document to fill the window">Maximize</button>
         <button class="btn btn-secondary btn-sm" id="closeViewModalBtn" type="button">Close</button>
       </div>
@@ -144,7 +147,8 @@
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=tenderdeposit1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/postedPurchaseOrders.js?v=whoby1"></script>
+  <script src="js/poDistribution.js?v=podist1"></script>
+  <script src="js/postedPurchaseOrders.js?v=podist1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

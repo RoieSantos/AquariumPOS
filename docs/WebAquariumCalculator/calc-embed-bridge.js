@@ -7,7 +7,8 @@
 // Aquarium/Stand Calculator pages (which also iframe these) are unaffected. After init it hides this
 // page's own demo "Add to sale" button + title, then posts a snapshot whenever it changes:
 //   { type: 'rs-calc-state', result: lastResult, quote: computeQuotedTotal(lastResult) | null,
-//     detailRows: lastDetailRows | null, fields: { id: value | checked } }
+//     detailRows: lastDetailRows | null, fields: { id: value | checked },
+//     accessories: { light: { code, name, qty } | null, pump: ... } | null }
 // Read-only over the pricing script's globals - never calls back into the calculation.
 (function () {
   if (window.parent === window) return;
@@ -32,6 +33,22 @@
     return fields;
   }
 
+  // The picked submersible light / pump (item code, name, qty) when it's priced into this build - so the
+  // order can carry them as their own P0 lines (js/calcEmbedLines.js splitParts). Same "on" rule as the
+  // POS's Add to sale in index.html: ticked, priced, and a real item picked.
+  function readAccessory(checkId, selectId, qtyId, componentKey, result) {
+    var check = document.getElementById(checkId);
+    var select = document.getElementById(selectId);
+    var cost = result && result.components ? Number(result.components[componentKey]) || 0 : 0;
+    if (!check || !check.checked || !select || cost <= 0) return null;
+    var code = select.value;
+    if (!code || code === '0') return null;
+    var opt = select.options[select.selectedIndex];
+    var name = opt ? String(opt.textContent || '').replace(/\s+-\s+₱[\d.,]+$/, '').trim() : code;
+    var qty = Math.max(1, Math.round(Number((document.getElementById(qtyId) || {}).value) || 1));
+    return { code: code, name: name || code, qty: qty };
+  }
+
   function snapshot() {
     var result = typeof lastResult !== 'undefined' ? lastResult : null;
     var quote = null;
@@ -43,7 +60,11 @@
       result: result ? JSON.parse(JSON.stringify(result)) : null,
       quote: quote,
       detailRows: typeof lastDetailRows !== 'undefined' ? lastDetailRows : null,
-      fields: readFields()
+      fields: readFields(),
+      accessories: result && result.ok ? {
+        light: readAccessory('submersibleLight', 'lightItemSelect', 'lightQuantity', 'light', result),
+        pump: readAccessory('submersiblePump', 'pumpItemSelect', 'pumpQuantity', 'pump', result)
+      } : null
     };
   }
 

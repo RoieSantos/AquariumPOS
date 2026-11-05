@@ -43,4 +43,50 @@
     new MutationObserver(syncBar).observe(priceLine, { childList: true, subtree: true, characterData: true });
     syncBar();
   }
+
+  // 3. Pinned drawing (Custom Aquarium calculator): keeps #drawingCard stuck under the step nav while
+  //    options are changed. On by default; the toggle's choice is remembered per browser.
+  var pinCard = document.querySelector('.drawing-pinned');
+  var pinBtn = document.getElementById('drawingPinToggle');
+  if (pinCard && pinBtn) {
+    var PIN_KEY = 'rsCalcDrawingPinned';
+    var nav = document.querySelector('.step-nav');
+    var root = document.documentElement;
+    var measure = function () {
+      if (nav) root.style.setProperty('--step-nav-h', nav.offsetHeight + 'px');
+      var pinnedNow = pinCard.classList.contains('is-pinned');
+      root.style.setProperty('--pinned-drawing-h', pinnedNow ? pinCard.offsetHeight + 'px' : '0px');
+    };
+    var setPinned = function (on, save) {
+      pinCard.classList.toggle('is-pinned', on);
+      document.body.classList.toggle('drawing-is-pinned', on);
+      pinBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      pinBtn.innerHTML = on ? '&#128204; Pinned' : '&#128204; Pin drawing';
+      pinBtn.title = on ? 'Unpin - let the drawing scroll with the page' : 'Keep the drawing visible while scrolling';
+      if (save) {
+        try { localStorage.setItem(PIN_KEY, on ? '1' : '0'); } catch (e) { /* storage blocked */ }
+      }
+      measure();
+    };
+    var saved = null;
+    try { saved = localStorage.getItem(PIN_KEY); } catch (e) { /* storage blocked */ }
+    setPinned(saved !== '0', false);
+    pinBtn.addEventListener('click', function () {
+      setPinned(!pinCard.classList.contains('is-pinned'), true);
+    });
+    window.addEventListener('resize', measure);
+    if (window.ResizeObserver) new ResizeObserver(measure).observe(pinCard);
+
+    // .is-stuck = the card is currently floating over the form (page scrolled past its natural
+    // spot) - drives the elevated shadow in calculator-ui.css.
+    var updateStuck = function () {
+      var stuck = pinCard.classList.contains('is-pinned') &&
+        pinCard.parentElement.getBoundingClientRect().top < pinCard.getBoundingClientRect().top - 1;
+      pinCard.classList.toggle('is-stuck', stuck);
+    };
+    window.addEventListener('scroll', updateStuck, { passive: true });
+    window.addEventListener('resize', updateStuck);
+    pinBtn.addEventListener('click', updateStuck);
+    updateStuck();
+  }
 })();

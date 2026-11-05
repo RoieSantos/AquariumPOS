@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Custom Aquarium Calculator - RS Pet Stop</title>
-  <link rel="stylesheet" href="./calculator-ui.css?v=3">
+  <link rel="stylesheet" href="./calculator-ui.css?v=5">
   <style>
     .panel-glass { margin-top: 10px; }
     .panel-glass summary { cursor: pointer; font-weight: 600; }
@@ -427,16 +427,29 @@
 
     <div id="buildView">
     <nav class="step-nav" aria-label="Calculator steps">
+      <a href="#drawingCard"><span class="dot">&#9633;</span>Drawing</a>
       <a href="#stepSize"><span class="dot">1</span>Size &amp; glass</a>
       <a href="#stepStand" class="aquarium-only-step"><span class="dot">2</span>Stand</a>
       <a href="#stepOptions" class="aquarium-only-step"><span class="dot">3</span>Options</a>
       <a href="#sumpExtrasCard"><span class="dot">4</span>Sump &amp; extras</a>
       <a href="#stepStickers" class="aquarium-only-step"><span class="dot">5</span>Stickers &amp; notes</a>
-      <a href="#drawingCard"><span class="dot">&#9633;</span>Drawing</a>
     </nav>
 
     <div class="calc-layout">
       <main class="calc-main">
+        <!-- Pinned (sticky) at the top of the form by default so the drawing stays in view while the
+             options below are changed - the toggle unpins it; the choice is remembered per browser
+             (see calculator-ui.js). -->
+        <section id="drawingCard" class="drawing-card drawing-pinned">
+          <div class="drawing-head">
+            <h2>Aquarium drawing</h2>
+            <button id="drawingPinToggle" class="drawing-pin-btn" type="button" aria-pressed="true" title="Keep the drawing visible while scrolling">&#128204; Pinned</button>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="aquariumCanvas" width="1060" height="260"></canvas>
+          </div>
+        </section>
+
         <section id="stepSize" class="card">
           <div class="step-head">
             <span class="step-num">1</span>
@@ -854,13 +867,6 @@
           </div>
         </section>
 
-        <section id="drawingCard" class="drawing-card">
-          <h2>Aquarium drawing</h2>
-          <div class="canvas-wrap">
-            <canvas id="aquariumCanvas" width="1060" height="260"></canvas>
-          </div>
-        </section>
-
         <!-- Stand Drawing - a fully dimensioned preview (Gap per layer, tubular thickness pointer,
              Built Length incl. end posts) of the stand attached to this aquarium, same detail level as
              the dedicated Stand calculator (WebAquariumCalculator/stand.html) - shown only once a
@@ -966,7 +972,7 @@
   <script src="../js/supabaseClient.js"></script>
   <script src="./custom-aquarium-calculator.js?v=sumpsticker3"></script>
   <script src="../js/glassCutList.js"></script>
-  <script src="../js/calcEmbedLines.js?v=calcorder1"></script>
+  <script src="../js/calcEmbedLines.js?v=caparts1"></script>
   <script>
     var calculateButton = document.getElementById('calculate');
     var addToSaleButton = document.getElementById('addToSale');
@@ -1841,6 +1847,149 @@
       context.stroke();
     }
 
+    // Open tubular stand under the tank, in the same 3D style as the Custom Stand calculator
+    // (stand.html): four posts, one frame per layer (equal gaps above the footing), cross braces
+    // front-to-back and small feet. Same oblique projection as the tank (depth right, x0.48 up), so
+    // its footprint lines up with the tank's bottom. finish = 'Stainless' | 'Black' | 'White' | ''.
+    function drawTankStand(left, top, width, height, depth, layers, footPx, tubePx, finish, bracesPerFrame, gapIn) {
+      var PALETTES = {
+        Stainless: { front: '#a3aeba', back: '#cbd3dc', shine: 'rgba(255,255,255,0.75)', foot: '#7b8794' },
+        White: { front: '#eef1f4', back: '#dfe4ea', shine: null, foot: '#8a94a3', outline: '#9aa6b4' },
+        Black: { front: '#22272e', back: '#5f6874', shine: 'rgba(255,255,255,0.18)', foot: '#1b1f25' },
+        '': { front: '#3d4652', back: '#8a94a3', shine: 'rgba(255,255,255,0.16)', foot: '#2f3742' }
+      };
+      var p = PALETTES[finish] || PALETTES[''];
+      var dx = depth;
+      var dy = depth * 0.48;
+      var bottom = top + height;
+      var shelfBase = bottom - footPx;
+      var span = Math.max(0, shelfBase - top);
+      var layerYs = [];
+      for (var i = 0; i < layers; i++) {
+        layerYs.push(shelfBase - (layers === 1 ? 0 : i / (layers - 1)) * span);
+      }
+
+      // Tube = a thick stroke, with an outline for White (would vanish on the white background)
+      // and a thin highlight along it so it reads as square tubing, not a line.
+      function tube(x1, y1, x2, y2, color, w) {
+        context.lineCap = 'square';
+        if (p.outline) {
+          context.strokeStyle = p.outline;
+          context.lineWidth = w + 1.6;
+          context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+        }
+        context.strokeStyle = color;
+        context.lineWidth = w;
+        context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+        if (p.shine && w >= 3) {
+          var vertical = Math.abs(x2 - x1) < Math.abs(y2 - y1);
+          context.strokeStyle = p.shine;
+          context.lineWidth = 1;
+          context.beginPath();
+          context.moveTo(x1 - (vertical ? w * 0.25 : 0), y1 - (vertical ? 0 : w * 0.25));
+          context.lineTo(x2 - (vertical ? w * 0.25 : 0), y2 - (vertical ? 0 : w * 0.25));
+          context.stroke();
+        }
+      }
+
+      context.save();
+      context.lineJoin = 'miter';
+      var backW = Math.max(1.6, tubePx * 0.7);
+
+      // Shelf planes - a faint fill per layer frame so the stand has some body.
+      layerYs.forEach(function (y) {
+        context.fillStyle = 'rgba(69, 86, 110, 0.07)';
+        context.beginPath();
+        context.moveTo(left, y);
+        context.lineTo(left + width, y);
+        context.lineTo(left + width + dx, y - dy);
+        context.lineTo(left + dx, y - dy);
+        context.closePath();
+        context.fill();
+      });
+
+      // Back: rear posts + rear rails + left-side rails (furthest from the viewer, lighter/thinner).
+      tube(left + dx, top - dy, left + dx, bottom - dy, p.back, backW);
+      layerYs.forEach(function (y) {
+        tube(left + dx, y - dy, left + width + dx, y - dy, p.back, backW);
+        tube(left, y, left + dx, y - dy, p.back, backW);
+      });
+
+      // Cross braces front-to-back on each frame (one per ~36in of length, as on stand.html).
+      layerYs.forEach(function (y) {
+        for (var b = 1; b <= bracesPerFrame; b++) {
+          var bx = left + width * b / (bracesPerFrame + 1);
+          tube(bx, y, bx + dx, y - dy, p.back, Math.max(1.4, backW * 0.8));
+        }
+      });
+
+      // Right side (visible): back-right post + side rails.
+      tube(left + width + dx, top - dy, left + width + dx, bottom - dy, p.front, tubePx * 0.85);
+      layerYs.forEach(function (y) {
+        tube(left + width, y, left + width + dx, y - dy, p.front, tubePx * 0.85);
+      });
+
+      // Front: rails, then the two front posts on top.
+      layerYs.forEach(function (y) {
+        tube(left, y, left + width, y, p.front, tubePx);
+      });
+      tube(left, top, left, bottom, p.front, tubePx);
+      tube(left + width, top, left + width, bottom, p.front, tubePx);
+
+      // Leveling feet under the three visible posts.
+      context.fillStyle = p.foot;
+      [[left, bottom], [left + width, bottom], [left + width + dx, bottom - dy]].forEach(function (f) {
+        context.beginPath();
+        context.ellipse(f[0], f[1] + 1, Math.max(3.5, tubePx * 0.9), 2.2, 0, 0, Math.PI * 2);
+        context.fill();
+      });
+
+      // Gap between layers (stand.html style): red dashed double arrow inside each gap - toward the
+      // right so it clears an undersump on the bottom shelf - with its "Gap: x" label outside the
+      // stand's right side, where a narrow stand still has room for the text.
+      if (gapIn !== null && gapIn !== undefined && layers > 1) {
+        var gapX = left + width * 0.84;
+        var labelX = left + width + dx + 10;
+        for (var g = 0; g < layers - 1; g++) {
+          var yLower = layerYs[g] - tubePx / 2 - 1;
+          var yUpper = layerYs[g + 1] + tubePx / 2 + 1;
+          if (yLower - yUpper < 14) continue;
+          context.strokeStyle = '#e2483f';
+          context.fillStyle = '#e2483f';
+          context.lineWidth = 1.6;
+          context.setLineDash([4, 3]);
+          context.beginPath();
+          context.moveTo(gapX, yUpper + 4);
+          context.lineTo(gapX, yLower - 4);
+          context.stroke();
+          context.setLineDash([]);
+          [[yUpper, 1], [yLower, -1]].forEach(function (pair) {
+            context.beginPath();
+            context.moveTo(gapX, pair[0]);
+            context.lineTo(gapX - 3.3, pair[0] + 6 * pair[1]);
+            context.lineTo(gapX + 3.3, pair[0] + 6 * pair[1]);
+            context.closePath();
+            context.fill();
+          });
+          // Thin leader from the arrow's middle out to the label.
+          var midY = (yLower + yUpper) / 2;
+          context.strokeStyle = 'rgba(226, 72, 63, 0.45)';
+          context.lineWidth = 1;
+          context.beginPath();
+          context.moveTo(gapX + 4, midY);
+          context.lineTo(labelX - 3, midY);
+          context.stroke();
+          context.font = 'bold 12px Segoe UI';
+          context.textAlign = 'left';
+          context.textBaseline = 'middle';
+          context.fillStyle = '#c23b31';
+          context.fillText('Gap: ' + formatInCm(gapIn), labelX, midY);
+          context.textBaseline = 'alphabetic';
+        }
+      }
+      context.restore();
+    }
+
     function drawAquarium(result) {
       context.clearRect(0, 0, CANVAS_W, CANVAS_H);
       var bg = context.createLinearGradient(0, 0, 0, CANVAS_H);
@@ -1890,20 +2039,31 @@
       var sumpOnlyInfo = result.sumpOnly ? dims.sumpOnly : null;
       var sumpOnlyTopPart = sumpOnlyInfo && (sumpOnlyInfo.topDrawer || sumpOnlyInfo.raisedChamber);
       var aboveIn = showCanopy ? canopyIn : (sumpOnlyTopPart ? sumpOnlyTopPart.overallHeightInches - heightIn : 0);
-      // A canopy, top drawer or raised chamber sits on top - shrink the drawing until it, the tank and the top face fit.
-      for (var fit = 0; aboveIn > 0 && fit < 30; fit++) {
+      // The stand is drawn to scale (its real floor-to-top height from the calculation), so the tank
+      // sits at a believable height on it - the canvas is re-fit to hold tank + stand + chips.
+      var standIn = showStand ? Math.max(6, Number(standInfo.heightInches) || 30) : 0;
+      var standFootIn = showStand ? Math.min(standIn * 0.5, Math.max(0, Number(standInfo.footingInches) || 0)) : 0;
+      var STAND_BOTTOM_ROOM = 34; // under the stand, for the L dimension chip
+      // A canopy, top drawer, raised chamber or stand adds height - shrink the drawing until it, the tank and the top face fit.
+      for (var fit = 0; (aboveIn > 0 || showStand) && fit < 40; fit++) {
         var fitDepth = Math.max(28, widthIn * scale * 0.38);
-        if ((heightIn + aboveIn) * scale + fitDepth * 0.48 <= baseY - 10) break;
+        var overheadRoom = showSump && byId('sumpType').value === 'Overhead Sump' ? 30 : 0;
+        var fitRoom = showStand ? CANVAS_H - STAND_BOTTOM_ROOM - 12 - overheadRoom : baseY - 10;
+        if ((heightIn + aboveIn + standIn) * scale + fitDepth * 0.48 <= fitRoom) break;
         scale *= 0.92;
       }
+      var standHeight = standIn * scale;
+      if (showStand) baseY = CANVAS_H - STAND_BOTTOM_ROOM - standHeight - 2;
       var frontWidth = lengthIn * scale;
       var frontHeight = heightIn * scale;
       var depth = Math.max(28, widthIn * scale * 0.38);
-      var frontLeft = baseX;
+      // Centered in the canvas (was pinned to the left, leaving most of it empty); shifted left when
+      // the cabinet/canopy size notes need room on the right.
+      var sizeNoteRoom = (showCabinet && standInfo.cabinetOuter) || (showCanopy && standInfo.canopyOuter) ? 260 : 0;
+      var frontLeft = Math.max(baseX, (CANVAS_W - sizeNoteRoom - frontWidth - depth) / 2);
       var frontTop = baseY - frontHeight;
       var backTop = frontTop - depth * 0.48;
-      var standHeight = 46;
-      var standTop = baseY + 10;
+      var standTop = baseY + 2;
 
       // Soft contact shadow grounds the tank/stand on the "floor" instead of it floating.
       context.save();
@@ -1917,6 +2077,19 @@
       context.ellipse(shadowCenterX, shadowY, frontWidth * 0.62, 10, 0, 0, Math.PI * 2);
       context.fill();
       context.restore();
+
+      // Open tubular stand - drawn BEFORE the tank so its top frame's back edge sits behind the glass.
+      if (showStand && !showCabinet) {
+        var tubularValue = byId('standTubular').value;
+        var tubeIn = { '1x1': 1, '1.5x1.5': 1.5, '2x2': 2 }[tubularValue] || 1.5;
+        // Same "Gap" (clear space between layers) as the Stand drawing / stand.html.
+        var standGapIn = typeof window.rsComputeStandGapInches === 'function'
+          ? window.rsComputeStandGapInches(standIn, standFootIn, standLayers, tubularValue) : null;
+        drawTankStand(frontLeft, standTop, frontWidth, standHeight, depth, standLayers,
+          standFootIn * scale, Math.max(2.2, Math.min(6, tubeIn * scale)),
+          showStainless ? 'Stainless' : byId('standPaint').value, Math.max(1, Math.ceil(lengthIn / 36)),
+          standGapIn);
+      }
 
       // Front panel: water/glass gradient (paler at the surface, deeper teal toward the
       // substrate) plus a soft diagonal highlight streak to read as glass, not a flat color chip.
@@ -2039,48 +2212,13 @@
         context.fillRect(frontLeft - 1, frontTop - 3, frontWidth + 2, 5);
       }
 
-      if (showStand) {
-        var standLeft = frontLeft + 8;
-        var standWidth = Math.max(58, frontWidth - 16);
-        var standGrad = context.createLinearGradient(0, standTop, 0, standTop + standHeight);
-        if (showStainless) {
-          standGrad.addColorStop(0, '#e8edf2');
-          standGrad.addColorStop(0.5, '#c3ccd6');
-          standGrad.addColorStop(1, '#9aa5b1');
-        } else {
-          standGrad.addColorStop(0, '#5c6470');
-          standGrad.addColorStop(1, '#333a44');
-        }
-
-        if (showCabinet) {
-          // Drawn at its approx. OUTER length (frame end posts + 18mm boards), so it overhangs the tank a bit.
-          var cabOverhang = standInfo.cabinetOuter ? Math.max(0, (standInfo.cabinetOuter.lengthInches - lengthIn) / 2) * scale : 0;
-          cabLeft = frontLeft - cabOverhang;
-          cabWidth = frontWidth + cabOverhang * 2;
-          drawPlywoodBox(cabLeft, baseY + 2, cabWidth, standTop + standHeight - (baseY + 2), depth, false);
-          drawCabinetDoors(cabLeft, baseY + 2, cabWidth, standTop + standHeight - (baseY + 2), cabinetDoors);
-        } else {
-          // Open tubular frame: outer rectangle plus a shelf line per extra layer.
-          context.strokeStyle = showStainless ? '#8b96a3' : '#2f3742';
-          context.lineWidth = 4;
-          context.strokeRect(standLeft, standTop, standWidth, standHeight);
-          context.beginPath();
-          context.moveTo(standLeft + 16, standTop);
-          context.lineTo(standLeft + 16, standTop + standHeight);
-          context.moveTo(standLeft + standWidth - 16, standTop);
-          context.lineTo(standLeft + standWidth - 16, standTop + standHeight);
-          context.stroke();
-
-          context.strokeStyle = 'rgba(47, 55, 66, 0.55)';
-          context.lineWidth = 2;
-          for (var layer = 1; layer < standLayers; layer++) {
-            var shelfY = standTop + (standHeight / standLayers) * layer;
-            context.beginPath();
-            context.moveTo(standLeft + 4, shelfY);
-            context.lineTo(standLeft + standWidth - 4, shelfY);
-            context.stroke();
-          }
-        }
+      if (showCabinet) {
+        // Drawn at its approx. OUTER length (frame end posts + 18mm boards), so it overhangs the tank a bit.
+        var cabOverhang = standInfo.cabinetOuter ? Math.max(0, (standInfo.cabinetOuter.lengthInches - lengthIn) / 2) * scale : 0;
+        cabLeft = frontLeft - cabOverhang;
+        cabWidth = frontWidth + cabOverhang * 2;
+        drawPlywoodBox(cabLeft, standTop, cabWidth, standHeight, depth, false);
+        drawCabinetDoors(cabLeft, standTop, cabWidth, standHeight, cabinetDoors);
       }
 
       var canopyPx = showCanopy ? Math.max(10, canopyIn * scale) : 0;
@@ -2130,8 +2268,20 @@
 
       if (showSump) {
         var overhead = byId('sumpType').value === 'Overhead Sump';
-        var sumpTop = overhead ? backTop - 26 : (showStand ? standTop + standHeight + 14 : baseY + 24);
+        // Undersump with a stand: sits on the stand's bottom shelf (the stand is drawn to scale now,
+        // so there's no room below it), shrunk to fit the lowest shelf gap.
         var sumpHeight = 22;
+        var sumpTop;
+        if (overhead) {
+          sumpTop = backTop - 26;
+        } else if (showStand) {
+          var bottomShelfY = standTop + standHeight - standFootIn * scale;
+          var shelfGap = (standHeight - standFootIn * scale) / Math.max(1, standLayers - 1);
+          sumpHeight = Math.max(10, Math.min(22, shelfGap * 0.62));
+          sumpTop = bottomShelfY - sumpHeight - 1;
+        } else {
+          sumpTop = baseY + 24;
+        }
         var sumpWidth = Math.max(56, frontWidth * 0.55);
         var sumpLeft = frontLeft + ((frontWidth - sumpWidth) / 2);
 
@@ -2197,7 +2347,7 @@
       // Dimension lines (drawn last so their chips float above the whole scene).
       // With a cabinet the L line goes under it (over the doors it would hide the handles); with a
       // canopy the W line moves up to the canopy's top edge.
-      var lengthLineY = showCabinet ? standTop + standHeight + 14 : baseY + 24;
+      var lengthLineY = showStand ? standTop + standHeight + 16 : baseY + 24;
       var heightLineX = frontLeft - 26;
       var widthLineX2 = frontLeft + frontWidth + depth + 4;
       var widthLineY = backTop - canopyPx;
@@ -3769,6 +3919,8 @@
         var gapReductionIn = (layers * thicknessIn) / (layers - 1);
         return Math.max(0, spacingIn - gapReductionIn);
       }
+      // Shared with the main Aquarium drawing (drawAquarium's stand Gap label) so the figure can't drift.
+      window.rsComputeStandGapInches = computeStandGapInches;
 
       function drawPlaceholder(message) {
         standContext.clearRect(0, 0, STAND_CANVAS_W, STAND_CANVAS_H);
@@ -4573,7 +4725,7 @@
     })();
   </script>
 
-  <script src="./calculator-ui.js?v=1"></script>
-  <script src="./calc-embed-bridge.js?v=8"></script>
+  <script src="./calculator-ui.js?v=3"></script>
+  <script src="./calc-embed-bridge.js?v=caparts1"></script>
 </body>
 </html>

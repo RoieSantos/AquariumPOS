@@ -2,6 +2,16 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-05
+
+- **📦 Purchase Orders: Distribute to Stores.** A PO that has received stock (open or posted) can now be split into one Requested Transfer Order per store. The split covers each store's shelf-level need first (the same cap the TO trigger enforces), then gives the rest to stores with no level by their share of sales (default last 30 days). Every cell can be edited before creating. TOs carry `Source PO No.`, so running it again only offers what's left. After a full Post, the PO page offers to distribute right away ([supabase_purchase_order_distribution.sql](sql/supabase_purchase_order_distribution.sql), [poDistribution.js](docs/js/poDistribution.js), [po-distribution.css](docs/css/po-distribution.css), [purchaseOrders.js](docs/js/purchaseOrders.js), [postedPurchaseOrders.js](docs/js/postedPurchaseOrders.js); `?v=podist1`).
+
+- **Conversations > Create Order > Custom Aquarium: light and pump as their own lines (SET style).** Add to Order now adds the calculator's submersible light / pump as ₱0 lines with their real item codes (stock comes off) under the Custom Aquarium line (or Custom Sump when the sump is separate), which keeps the full price. The lines share a bundle key + revenue weight, and Top Selling Items, Category Sales and the Daily Sales categories split the build's revenue across them ([supabase_custom_aquarium_part_revenue.sql](sql/supabase_custom_aquarium_part_revenue.sql), [calcEmbedLines.js](docs/js/calcEmbedLines.js), [gmaConversations.js](docs/js/gmaConversations.js), [calc-embed-bridge.js](docs/WebAquariumCalculator/calc-embed-bridge.js); JS `?v=caparts1`). Removing the aquarium line removes its parts; wholesale / search-add never touch them. Put in reply and Add COD Items are unchanged.
+- Custom Aquarium calculator: the aquarium drawing now sits at the top of the form, pinned (sticky) under the step nav so it stays in view while options change; a "Pinned" toggle unpins it, remembered per browser (`index.html`, `calculator-ui.css` v4, `calculator-ui.js` v2).
+- Aquarium drawing's stand redrawn as a to-scale 3D tubular frame in the Custom Stand style (posts, per-layer frames, braces, feet; black/white/raw/stainless finish), undersump now sits on its bottom shelf, and the drawing is centered in the canvas (`index.html` `drawTankStand`).
+- Aquarium drawing's stand now shows the red "Gap: x" between each pair of layers, using the same `computeStandGapInches` as the Stand drawing (exposed as `window.rsComputeStandGapInches`).
+- Pinned drawing now lifts off the page with a deeper shadow and accent border once it's floating over the form (`.is-stuck`; CSS v5, JS v3).
+
 ## 2026-11-04
 
 - POS Tender Declaration: a count cut off at the Short/Over reason prompt (POS closed/crashed) can no longer be skipped by recounting. Opening Tender Declaration now finishes that saved count first, asking for the reason if Short/Over, instead of starting a new count under the same EODID ([TenderDeclarationForm.cs](TenderDeclarationForm.cs) `ResumeUnfinishedDeclaration` / `FinishDeclaration`).
