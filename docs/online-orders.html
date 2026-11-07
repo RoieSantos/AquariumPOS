@@ -85,7 +85,9 @@
            opens the Online Order document with its lines. -->
       <div class="bc-cmdbar" role="toolbar" aria-label="Actions" id="orderCmdbar">
         <!-- New tab only (js/onlineNewOrders.js) - orders waiting to be confirmed. Hidden on every other tab. -->
-        <button class="bc-cmd bc-cmd-accent new-cmd hidden" id="newOpenBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
+        <button class="bc-cmd bc-cmd-accent new-cmd hidden" id="newCreateBtn" type="button" title="Create an order with no Facebook customer - e.g. a phone / walk-in order to make">+ New Order</button>
+        <span class="bc-cmd-sep new-cmd hidden"></span>
+        <button class="bc-cmd new-cmd hidden" id="newOpenBtn" type="button" disabled><svg class="bc-ico"><use href="#ico-open"/></svg>Open</button>
         <span class="bc-cmd-sep new-cmd hidden"></span>
         <button class="bc-cmd new-cmd hidden" id="newConfirmBtn" type="button" disabled title="Confirm the selected order - it moves to Confirmed"><svg class="bc-ico"><use href="#ico-done"/></svg>Confirm Order</button>
         <button class="bc-cmd bc-cmd-danger new-cmd hidden" id="newCancelBtn" type="button" disabled title="Cancel the selected order - it won't be confirmed">Cancel Order</button>
@@ -264,7 +266,7 @@
 
       <!-- New tab (js/onlineNewOrders.js): orders waiting to be confirmed. Click a row to select it, the
            Order No / double-click / Open shows its items; Confirm Order moves it to Confirmed. -->
-      <div class="bc-body no-filterpane no-factbox hidden" id="newOrdersView">
+      <div class="bc-body no-filterpane hidden" id="newOrdersView">
         <section class="bc-main">
           <!-- Phone view (js/onlineNewOrders.js newOrderPhoneCardsHtml) - css/bc-list.css swaps it in below 760px. -->
           <div class="oo-phone-cards" id="newOrderPhoneCards"></div>
@@ -292,6 +294,24 @@
           </div>
           <div id="newOrdersPaginationBar"></div>
         </section>
+
+        <!-- FactBox for the selected New order (js/onlineNewOrders.js showNewOrderFactbox) - same right panel
+             as the Online list's: Order Info + Payment read off the row, the payments themselves
+             (admin_list_automated_order_payments) and each line's stock. Hidden below 1280px like every FactBox. -->
+        <aside class="bc-factbox" id="newOrderListFactbox" aria-label="Order Info, Payment and Stock">
+          <div class="bc-fact">
+            <div class="bc-fact-title">Order Info <span class="muted" id="newOrderFactNo"></span></div>
+            <div class="bc-fact-body" id="newOrderFactInfo"><p class="bc-fact-empty">Select an order to see its details.</p></div>
+          </div>
+          <div class="bc-fact">
+            <div class="bc-fact-title">Payment <span class="muted" id="newOrderFactPayStatus"></span></div>
+            <div class="bc-fact-body" id="newOrderFactPayment"><p class="bc-fact-empty">Select an order to see its balance.</p></div>
+          </div>
+          <div class="bc-fact" id="newOrderFactStock">
+            <div class="bc-fact-title">Stock <span class="muted" data-isf-count></span></div>
+            <div class="bc-fact-body" data-isf-body><p class="bc-fact-empty">Select an order to see its stock.</p></div>
+          </div>
+        </aside>
       </div>
 
       <!-- Advance Orders tab (?scope=advance, Super Users / Production Managers - js/onlineOrders.js
@@ -1661,7 +1681,7 @@
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
   <script src="js/calcEmbedLines.js?v=caparts1"></script>
   <script src="js/onlineOrders.js?v=pdslip2"></script>
-  <script src="js/onlineNewOrders.js?v=xreceipt1"></script>
+  <script src="js/onlineNewOrders.js?v=newnocust1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

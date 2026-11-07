@@ -667,9 +667,84 @@ async function savePurchaseOrderLineQuantity(input) {
     return;
   }
 
-  // The base quantity, what is left to receive and the line cost all moved - reloaded rather than
-  // patched, same as a cost or unit change.
-  await openReceiveModal(currentReceivePoNo);
+  // The base quantity, what is left to receive and the line cost all moved. Re-read from the server
+  // (so the numbers are still derived one way only) but patch just this row + the total instead of
+  // reopening the whole card - a full reload rebuilt the table, losing scroll and focus on every
+  // quantity typed down a long order.
+  await refreshReceiveLineInPlace(Number(input.dataset.entryNo));
+}
+
+// Re-reads the PO's lines and redraws only one row's Qty Ordered / Qty Received / Line Cost cells,
+// plus the total. Falls back to a full reload if the row or the lines can't be found.
+async function refreshReceiveLineInPlace(entryNo) {
+  const poNo = currentReceivePoNo;
+  const { data: lines, error } = await supabaseClient.rpc('staff_list_purchase_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_po_no: poNo
+  });
+  if (poNo !== currentReceivePoNo) return; // the user opened another PO meanwhile
+  const row = document.querySelector(`#receiveLinesBody tr[data-entry-no="${entryNo}"]`);
+  const line = (lines || []).find((l) => Number(l.entry_no) === entryNo);
+  if (error || !row || !line) {
+    await openReceiveModal(poNo);
+    return;
+  }
+  row.querySelector('td[data-cell="qty-ordered"]').innerHTML = qtyOrderedCell(line);
+  row.querySelector('td[data-cell="qty-receive"]').innerHTML = receiveQtyCellHtml(line);
+  row.querySelector('td[data-cell="line-cost"]').innerHTML = lineCostCellHtml(line);
+  updateReceiveTotals(lines);
+}
+
+// Qty Received cell - see the comment in renderReceiveLines for what it means.
+function receiveQtyCellHtml(l) {
+  const remaining = receiveLineRemaining(l);
+  const alreadyReceived = Number(l.qty_received || 0);
+  // What arrived is counted in BASE units - that is what goes into the ledger as stock, and what a
+  // receiver counts on the pallet - while Qty Ordered beside it reads in the ordering unit. On
+  // a line where those differ, the column says so rather than leaving it to be inferred.
+  const receiveUnitNote = Number(l.qty_per_uom || 1) !== 1
+    ? '<div class="muted" style="font-size:11px;">in base units</div>'
+    : '';
+  const receivedNote = (alreadyReceived > 0
+    ? `<div class="muted" style="font-size:11px;">${alreadyReceived.toLocaleString()} received so far</div>`
+    : '') + receiveUnitNote;
+  return remaining > 0
+    ? `<input type="number" class="receive-qty-input" min="0" max="${remaining}" step="0.01" value="${remaining}" style="width:90px; text-align:right;" title="How many arrived - this is what gets added to inventory" />${receivedNote}`
+    : `<span class="muted" title="Fully received">&mdash;</span>${receivedNote}`;
+}
+
+function lineCostCellHtml(l) {
+  return l.unit_cost === null || l.unit_cost === undefined
+    ? '<span class="muted">-</span>'
+    : Number(l.line_cost || 0).toFixed(2);
+}
+
+// line_cost comes from staff_list_purchase_order_lines rather than being recomputed here, so
+// the total is derived one way only (see supabase_item_cost_and_po_line_cost.sql).
+//
+// An uncosted line's line_cost comes back as 0 from the server (coalesce("UnitCost", 0) *
+// Quantity), not null - it silently contributes nothing to the total rather than being
+// excluded from it, which reads as "the total is wrong" rather than "the total is incomplete"
+// (per direct feedback: "double check the calculation of total cost.. i think its somehow
+// wrong"). The note spells that out next to the total.
+function updateReceiveTotals(lines) {
+  const totalEl = document.getElementById('receiveTotalCost');
+  const totalNoteEl = document.getElementById('receiveTotalCostNote');
+  if (totalEl) {
+    totalEl.textContent = (lines || [])
+      .reduce((sum, l) => sum + (Number(l.line_cost) || 0), 0)
+      .toFixed(2);
+  }
+  if (totalNoteEl) {
+    const uncostedCount = (lines || []).filter((l) => l.unit_cost === null || l.unit_cost === undefined).length;
+    if (uncostedCount > 0) {
+      totalNoteEl.textContent = `Excludes ${uncostedCount} item${uncostedCount === 1 ? '' : 's'} with no Unit Cost yet - total is understated`;
+      totalNoteEl.classList.remove('hidden');
+    } else {
+      totalNoteEl.classList.add('hidden');
+    }
+  }
 }
 
 // Stock FactBox (js/itemStockFactbox.js) - each line's on-hand per warehouse, the badge at the line's
@@ -726,29 +801,7 @@ async function renderReceiveLines(lines) {
     return;
   }
 
-  // line_cost comes from staff_list_purchase_order_lines rather than being recomputed here, so
-  // the total is derived one way only (see supabase_item_cost_and_po_line_cost.sql).
-  if (totalEl) {
-    totalEl.textContent = lines
-      .reduce((sum, l) => sum + (Number(l.line_cost) || 0), 0)
-      .toFixed(2);
-  }
-
-  // An uncosted line's line_cost comes back as 0 from the server (coalesce("UnitCost", 0) *
-  // Quantity), not null - it silently contributes nothing to the total above rather than being
-  // excluded from it, which reads as "the total is wrong" rather than "the total is incomplete"
-  // (per direct feedback: "double check the calculation of total cost.. i think its somehow
-  // wrong"). This spells that out next to the total instead of leaving the per-line dash as the
-  // only hint.
-  if (totalNoteEl) {
-    const uncostedCount = lines.filter((l) => l.unit_cost === null || l.unit_cost === undefined).length;
-    if (uncostedCount > 0) {
-      totalNoteEl.textContent = `Excludes ${uncostedCount} item${uncostedCount === 1 ? '' : 's'} with no Unit Cost yet - total is understated`;
-      totalNoteEl.classList.remove('hidden');
-    } else {
-      totalNoteEl.classList.add('hidden');
-    }
-  }
+  updateReceiveTotals(lines);
 
   body.innerHTML = lines
     .map((l) => {
@@ -763,20 +816,7 @@ async function renderReceiveLines(lines) {
       // Kept as .receive-qty-input so it still flows through staff_receive_purchase_order_lines
       // and the Item Ledger - see the class comment above. Nothing here writes QtyReceived
       // directly; the running total only moves together with a ledger entry.
-      const remaining = receiveLineRemaining(l);
       const alreadyReceived = Number(l.qty_received || 0);
-      // What arrived is counted in BASE units - that is what goes into the ledger as stock, and what a
-      // receiver counts on the pallet - while Qty Ordered beside it reads in the ordering unit. On
-      // a line where those differ, the column says so rather than leaving it to be inferred.
-      const receiveUnitNote = Number(l.qty_per_uom || 1) !== 1
-        ? '<div class="muted" style="font-size:11px;">in base units</div>'
-        : '';
-      const receivedNote = (alreadyReceived > 0
-        ? `<div class="muted" style="font-size:11px;">${alreadyReceived.toLocaleString()} received so far</div>`
-        : '') + receiveUnitNote;
-      const receiveInput = remaining > 0
-        ? `<input type="number" class="receive-qty-input" min="0" max="${remaining}" step="0.01" value="${remaining}" style="width:90px; text-align:right;" title="How many arrived - this is what gets added to inventory" />${receivedNote}`
-        : `<span class="muted" title="Fully received">&mdash;</span>${receivedNote}`;
       // A line with anything already received can't be removed (see
       // staff_remove_purchase_order_line's own server-side check) - shown disabled rather than
       // simply hidden, so it's clear removal was considered and blocked, not just unavailable.
@@ -792,12 +832,12 @@ async function renderReceiveLines(lines) {
           <td>${variantCell(l)}</td>
           <td>${descriptionCell(l)}</td>
           <td>${l.warehouse_name || ''}</td>
-          <td class="doc-num">${qtyOrderedCell(l)}</td>
+          <td class="doc-num" data-cell="qty-ordered">${qtyOrderedCell(l)}</td>
           <td>${uomCell(l)}</td>
-          <td class="doc-num">${receiveInput}</td>
+          <td class="doc-num" data-cell="qty-receive">${receiveQtyCellHtml(l)}</td>
           <td class="doc-num">${unitCostCell(l)}</td>
           <td class="doc-num">${sellingPriceHtml(l.item_code, l.variant_code, l.qty_per_uom)}</td>
-          <td class="doc-num">${l.unit_cost === null || l.unit_cost === undefined ? '<span class="muted">-</span>' : Number(l.line_cost || 0).toFixed(2)}</td>
+          <td class="doc-num" data-cell="line-cost">${lineCostCellHtml(l)}</td>
           ${removeCell}
         </tr>
       `;

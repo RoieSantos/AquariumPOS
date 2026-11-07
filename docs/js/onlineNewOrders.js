@@ -22,6 +22,9 @@ let newOrderEditLines = null;
 let newOrderSearchResults = [];
 let newOrderVariantProduct = null;
 let newOrderVariantResults = [];
+// True while the dialog is the "+ New Order" form (no order yet, no Facebook customer) -
+// admin_create_portal_order, sql/supabase_online_orders_new_order_no_customer.sql.
+let newOrderCreating = false;
 // Action-bar buttons hidden while the New tab is showing, restored when leaving it.
 let newOrdersHiddenCmds = [];
 
@@ -85,6 +88,7 @@ function initNewOrdersTab(eligible) {
     openPhoneCard(card);
   });
 
+  document.getElementById('newCreateBtn').addEventListener('click', openCreateNewOrder);
   document.getElementById('newOpenBtn').addEventListener('click', () => selectedNewOrderNo && openNewOrderDialog(selectedNewOrderNo));
   document.getElementById('newConfirmBtn').addEventListener('click', () => selectedNewOrderNo && confirmNewOrder(selectedNewOrderNo));
   document.getElementById('newCancelBtn').addEventListener('click', () => selectedNewOrderNo && cancelNewOrder(selectedNewOrderNo));
@@ -272,12 +276,148 @@ function selectNewOrderRow(orderNo) {
 function updateNewOrderActions() {
   const has = Boolean(selectedNewOrderNo && newOrdersByNo.has(selectedNewOrderNo));
   ['newOpenBtn', 'newConfirmBtn', 'newCancelBtn'].forEach((id) => { document.getElementById(id).disabled = !has; });
+  showNewOrderFactbox(has ? selectedNewOrderNo : null);
+}
+
+// ---------------------------------------------------------------------------
+// Right-hand FactBox on the New tab (#newOrderListFactbox) - per "in the new orders can you add the right
+// panel for info and payments etc", same as the Online list's. Order Info + Payment totals come straight
+// off the list row; the payments themselves (admin_list_automated_order_payments) and the lines' stock
+// (admin_list_automated_order_lines -> ItemStockFactbox.load) are fetched after the selection settles for
+// 250ms, and only when the row's total / paid changed (a list refresh doesn't refetch). Skipped while the
+// FactBox is hidden (below 1280px).
+let newFactPayKey = null;
+let newFactStockKey = null;
+let newFactTimer = null;
+
+function newFactRow(label, value, cls) {
+  return `<dt>${label}</dt><dd${cls ? ` class="${cls}"` : ''}>${value}</dd>`;
+}
+
+function showNewOrderFactbox(orderNo) {
+  const box = document.getElementById('newOrderListFactbox');
+  if (!box) return;
+  const o = orderNo ? newOrdersByNo.get(orderNo) : null;
+  const info = document.getElementById('newOrderFactInfo');
+  const pay = document.getElementById('newOrderFactPayment');
+  const payStatus = document.getElementById('newOrderFactPayStatus');
+  const stockBox = document.getElementById('newOrderFactStock');
+  document.getElementById('newOrderFactNo').textContent = o ? `· ${o.order_no}` : '';
+  clearTimeout(newFactTimer);
+
+  if (!o) {
+    newFactPayKey = null;
+    newFactStockKey = null;
+    info.innerHTML = '<p class="bc-fact-empty">Select an order to see its details.</p>';
+    pay.innerHTML = '<p class="bc-fact-empty">Select an order to see its balance.</p>';
+    payStatus.textContent = '';
+    payStatus.className = 'muted';
+    ItemStockFactbox.clear(stockBox, 'Select an order to see its stock.');
+    return;
+  }
+
+  // Order Info
+  const delivery = o.fulfillment_type === 'Delivery';
+  const phone = (o.customer_phone || '').trim();
+  const dash = '<span class="muted">-</span>';
+  let convLink = '';
+  if (o.gma_psid && !o.gma_psid.startsWith('web:') && typeof canOpenConversations === 'function' && canOpenConversations()) {
+    const params = new URLSearchParams({ psid: o.gma_psid });
+    if (o.customer_name) params.set('name', o.customer_name);
+    convLink = `<a href="gma-conversations.html?${params}" target="_blank" rel="noopener">Open conversation &rsaquo;</a>`;
+  }
+  info.innerHTML = `<dl class="bc-facts">${[
+    newFactRow('Customer', escapeHtml(o.customer_name || '') || dash),
+    newFactRow('Phone', phone ? `<a href="tel:${escapeHtml(phone.replace(/[^\d+]/g, ''))}">${escapeHtml(phone)}</a>` : dash),
+    o.customer_email ? newFactRow('Email', escapeHtml(o.customer_email)) : '',
+    newFactRow('Branch', escapeHtml(o.location || '') || dash),
+    newFactRow('Fulfillment', delivery ? 'Delivery' : 'Pickup'),
+    delivery ? newFactRow('Address', escapeHtml(o.delivery_address || '') || '<span class="muted">(no address)</span>') : '',
+    newFactRow('Created', escapeHtml(newOrderDate(o.created_at_utc))),
+    newFactRow('Created By', escapeHtml(o.created_by || '') || dash),
+    o.items_summary ? newFactRow('Items', escapeHtml(o.items_summary)) : '',
+    o.notes ? newFactRow('Notes', escapeHtml(o.notes)) : '',
+    convLink ? newFactRow('Chat', convLink) : ''
+  ].join('')}</dl>`;
+
+  // Payment totals
+  const total = Number(o.estimated_total || 0);
+  const fee = delivery ? Number(o.delivery_fee || 0) : 0;
+  const paid = Number(o.amount_paid || 0);
+  const balance = Math.round((total - paid) * 100) / 100;
+  payStatus.textContent = balance > 0 ? '· With Balance' : paid > 0 ? '· Paid in full' : '';
+  payStatus.className = balance > 0 ? 'oc-fact-balance-due' : 'muted';
+  const peso = (v) => `₱${newOrderMoney(v)}`;
+  const payKey = `${o.order_no}|${paid}`;
+  const keepPaidVia = payKey === newFactPayKey ? document.getElementById('newOrderFactPaidVia')?.innerHTML : null;
+  pay.innerHTML = `<dl class="bc-facts">${[
+    fee > 0 ? newFactRow('Items', peso(total - fee)) : '',
+    fee > 0 ? newFactRow('Delivery Fee', peso(fee)) : '',
+    newFactRow('Total', peso(total)),
+    newFactRow('Amount Paid', peso(paid)),
+    newFactRow('Balance', balance > 0 ? peso(balance) : balance < 0 ? `${peso(balance)} <span class="muted">(over)</span>` : peso(0), balance > 0 ? 'oc-fact-balance-due' : '')
+  ].join('')}</dl>
+  <dl class="bc-facts" id="newOrderFactPaidVia" style="margin-top:8px;">${keepPaidVia || (paid > 0 ? newFactRow('Paid Via', '<span class="muted">...</span>') : '')}</dl>`;
+
+  // Fetched parts - only when the selection / its numbers changed, and the FactBox is on screen.
+  if (!box.offsetParent) { newFactPayKey = null; newFactStockKey = null; return; }
+  const stockKey = `${o.order_no}|${total}`;
+  const needPay = payKey !== newFactPayKey;
+  const needStock = stockKey !== newFactStockKey;
+  if (!needPay && !needStock) return;
+  newFactPayKey = payKey;
+  newFactStockKey = stockKey;
+  if (needStock) ItemStockFactbox.clear(stockBox, 'Loading stock...');
+  newFactTimer = setTimeout(() => {
+    if (needPay && paid > 0) loadNewOrderFactPayments(o.order_no, payKey);
+    else if (needPay) document.getElementById('newOrderFactPaidVia').innerHTML = '';
+    if (needStock) loadNewOrderFactStock(o, stockKey);
+  }, 250);
+}
+
+async function loadNewOrderFactPayments(orderNo, key) {
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_order_payments', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo
+  });
+  const el = document.getElementById('newOrderFactPaidVia');
+  if (!el || newFactPayKey !== key) return;
+  const rows = data || [];
+  if (error || !rows.length) {
+    el.innerHTML = newFactRow('Paid Via', `<span class="muted">${error ? 'Could not load' : 'Not recorded'}</span>`);
+    return;
+  }
+  el.innerHTML = rows.map((p, i) => {
+    const when = p.recorded_at_utc ? new Date(p.recorded_at_utc).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+    const sub = [p.reference, when, p.recorded_by ? `by ${p.recorded_by}` : ''].filter(Boolean).map(escapeHtml).join(' · ');
+    return newFactRow(i === 0 ? 'Paid Via' : '',
+      `${escapeHtml(p.method || '')} ₱${newOrderMoney(p.amount)}${sub ? `<div class="muted" style="font-size:11.5px;">${sub}</div>` : ''}`);
+  }).join('');
+}
+
+async function loadNewOrderFactStock(o, key) {
+  const stockBox = document.getElementById('newOrderFactStock');
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_order_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: o.order_no
+  });
+  if (newFactStockKey !== key) return;
+  if (error) { ItemStockFactbox.clear(stockBox, `Could not load the items: ${error.message}`); return; }
+  ItemStockFactbox.load(stockBox, (data || []).map((l) => ({
+    item_code: l.item_code || l.category_code,
+    label: l.item_name,
+    warehouse: o.location,
+    warehouseName: o.location
+  })), o.order_no);
 }
 
 async function openNewOrderDialog(orderNo) {
   const order = newOrdersByNo.get(orderNo);
   if (!order) return;
   openNewOrderNo = orderNo;
+  newOrderCreating = false;
   const dialog = document.getElementById('newOrderDialog');
   document.getElementById('newOrderError').classList.add('hidden');
   document.getElementById('newOrderTitle').textContent = `${order.order_no} · ${order.customer_name || ''}`;
@@ -397,10 +537,35 @@ async function loadNewOrderConversation(order) {
 }
 
 function closeNewOrderDialog() {
-  if (newOrderEditLines && !confirm('Discard your changes to this order?')) return;
+  if (newOrderEditLines && !confirm(newOrderCreating ? 'Discard this new order?' : 'Discard your changes to this order?')) return;
+  hideNewOrderDialog();
+}
+
+function hideNewOrderDialog() {
   setNewOrderEditMode(false);
   document.getElementById('newOrderDialog').classList.add('hidden');
   openNewOrderNo = null;
+  newOrderCreating = false;
+}
+
+// "+ New Order" - per "can we build an new order on the online order even though there is no facebook
+// customer tagged on it". The dialog opens straight in the edit form with nothing filled in; Save creates
+// the AO- order (admin_create_portal_order) as 'Not Pushed', so it lands on this tab for Confirm Order like
+// any other. No Psid, so no Messenger messages ever go out for it. Phone is optional.
+function openCreateNewOrder() {
+  if (newOrderEditLines && !document.getElementById('newOrderDialog').classList.contains('hidden')) return;
+  openNewOrderNo = null;
+  newOrderCreating = true;
+  const dialog = document.getElementById('newOrderDialog');
+  document.getElementById('newOrderError').classList.add('hidden');
+  document.getElementById('newOrderTitle').textContent = 'New order - no Facebook customer';
+  document.getElementById('newOrderConversationPart').classList.add('hidden');
+  dialog.querySelector('.no-dialog').classList.remove('has-conv');
+  openNewOrderLines = [];
+  renderNewOrderEditForm({});
+  document.getElementById('newOrderSaveBtn').textContent = 'Create Order';
+  dialog.classList.remove('hidden');
+  document.getElementById('noeName').focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +583,7 @@ function setNewOrderEditMode(on) {
   ['newOrderEditBtn', 'newOrderConfirmBtn', 'newOrderCancelOrderBtn'].forEach((id) => document.getElementById(id).classList.toggle('hidden', on));
   ['newOrderSaveBtn', 'newOrderDiscardBtn'].forEach((id) => document.getElementById(id).classList.toggle('hidden', !on));
   document.getElementById('newOrderSaveBtn').disabled = false;
+  document.getElementById('newOrderSaveBtn').textContent = 'Save Changes';
   document.getElementById('newOrderProductSearch').value = '';
   document.getElementById('newOrderProductResults').classList.add('hidden');
 }
@@ -426,6 +592,11 @@ function startNewOrderEdit() {
   const order = newOrdersByNo.get(openNewOrderNo);
   if (!order) return;
   document.getElementById('newOrderError').classList.add('hidden');
+  renderNewOrderEditForm(order);
+}
+
+// The edit form (Edit, and "+ New Order" with an empty order). Lines come from openNewOrderLines.
+function renderNewOrderEditForm(order) {
   setNewOrderEditMode(true);
   newOrderEditLines = openNewOrderLines.map((l) => ({
     category_code: l.category_code || null,
@@ -442,7 +613,7 @@ function startNewOrderEdit() {
     <div class="no-section-title">Customer &amp; delivery</div>
     <div class="no-edit-grid">
       ${field('Customer Name', '<input type="text" id="noeName">')}
-      ${field('Phone', '<input type="text" id="noePhone" placeholder="09171234567">')}
+      ${field(order.gma_psid ? 'Phone' : 'Phone (optional)', '<input type="text" id="noePhone" placeholder="09171234567">')}
       ${field('Email (optional)', '<input type="text" id="noeEmail">')}
       ${field('Branch', '<select id="noeLocation"><option value="Amaya">Amaya</option><option value="GMA">GMA</option></select>')}
       ${field('Fulfillment', '<select id="noeFulfillment"><option value="Pickup">Pickup</option><option value="Delivery">Delivery</option></select>')}
@@ -588,7 +759,57 @@ function addNewOrderEditProduct(item, variant) {
   renderNewOrderEditLines();
 }
 
+async function createNewOrder() {
+  document.getElementById('newOrderError').classList.add('hidden');
+  if (!document.getElementById('noeName').value.trim()) {
+    newOrderActionError('Customer name is required.');
+    return;
+  }
+  if (newOrderEditLines.length === 0) {
+    newOrderActionError('At least one item is required.');
+    return;
+  }
+  const fulfillment = document.getElementById('noeFulfillment').value;
+  const saveBtn = document.getElementById('newOrderSaveBtn');
+  saveBtn.disabled = true;
+
+  const { data, error } = await supabaseClient.rpc('admin_create_portal_order', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_customer_name: document.getElementById('noeName').value.trim(),
+    p_customer_phone: document.getElementById('noePhone').value.trim() || null,
+    p_customer_email: document.getElementById('noeEmail').value.trim() || null,
+    p_fulfillment_type: fulfillment,
+    p_delivery_address: fulfillment === 'Delivery' ? document.getElementById('noeAddress').value.trim() : null,
+    p_notes: document.getElementById('noeNotes').value.trim() || null,
+    p_location: document.getElementById('noeLocation').value,
+    p_lines: newOrderEditLines.map((l) => ({ ...l, note: (l.note || '').trim() || null })),
+    p_delivery_fee: newOrderEditFee()
+  });
+  if (!newOrderCreating) return;
+  if (error) {
+    saveBtn.disabled = false;
+    const msg = /could not find the function/i.test(error.message || '')
+      ? 'New Order isn\'t set up in the database yet - run sql/supabase_online_orders_new_order_no_customer.sql.'
+      : error.message;
+    newOrderActionError(`Could not create the order: ${msg}`);
+    return;
+  }
+
+  const orderNo = data?.[0]?.order_no;
+  hideNewOrderDialog();
+  await loadNewOrders();
+  if (orderNo && newOrdersByNo.has(orderNo)) {
+    selectNewOrderRow(orderNo);
+    openNewOrderDialog(orderNo);
+  }
+}
+
 async function saveNewOrderEdit() {
+  if (newOrderCreating) {
+    if (newOrderEditLines) createNewOrder();
+    return;
+  }
   const orderNo = openNewOrderNo;
   if (!orderNo || !newOrderEditLines) return;
   document.getElementById('newOrderError').classList.add('hidden');
@@ -631,7 +852,8 @@ function initNewOrderEdit() {
   document.getElementById('newOrderEditBtn').addEventListener('click', startNewOrderEdit);
   document.getElementById('newOrderSaveBtn').addEventListener('click', saveNewOrderEdit);
   document.getElementById('newOrderDiscardBtn').addEventListener('click', () => {
-    if (openNewOrderNo) openNewOrderDialog(openNewOrderNo);
+    if (newOrderCreating) hideNewOrderDialog();
+    else if (openNewOrderNo) openNewOrderDialog(openNewOrderNo);
   });
   const lines = document.getElementById('newOrderLines');
   lines.addEventListener('input', onNewOrderEditLineInput);
@@ -672,7 +894,7 @@ function initNewOrderEdit() {
 }
 
 function newOrderActionError(message) {
-  if (openNewOrderNo) {
+  if (openNewOrderNo || newOrderCreating) {
     const el = document.getElementById('newOrderError');
     el.textContent = message;
     el.classList.remove('hidden');

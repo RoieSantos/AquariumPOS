@@ -2,7 +2,20 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-07
+
+- Online Orders -> New: **+ New Order** button creates an order with no Facebook customer (name required, phone optional) - lands on New as 'Not Pushed' for Confirm Order, no Pancake, no Messenger messages. New `admin_create_portal_order`; `admin_update_automated_order` patched so Edit allows a blank phone on orders with no Psid (`sql/supabase_online_orders_new_order_no_customer.sql`, `js/onlineNewOrders.js ?v=newnocust1`).
+
+- **Order Now was pushing to Pancake again.** The check found the live `submit_automated_order`, `public_sync_automated_order_to_pancake` and `cron_process_pending_automated_orders` back on their old Pancake-push versions, so AO-00211 went to Pancake (118462) instead of the New tab. The fix is to re-run [supabase_order_now_portal_only.sql](sql/supabase_order_now_portal_only.sql) and then [supabase_order_now_line_notes.sql](sql/supabase_order_now_line_notes.sql). New one-off [supabase_ao00211_back_to_new_tab.sql](sql/supabase_ao00211_back_to_new_tab.sql) unlinks AO-00211 from Pancake so it shows on the New tab.
+- Online Orders: new read-only check [supabase_check_ao00211_missing.sql](sql/supabase_check_ao00211_missing.sql) checks why Order Now order AO-00211 was pushed to Pancake (and missing from the New tab), even though Order Now is portal-only. It shows the order's sync status, whether the live submit / sync / cron functions still have their portal-only versions, the related cron jobs, and recent AO orders.
+- New vendor **3693 Petshop** (`3693PETSHOP`, fish supplier) with their 55-item price list: [supabase_vendor_3693_petshop_preview.sql](sql/supabase_vendor_3693_petshop_preview.sql) (read-only match preview) and [supabase_vendor_3693_petshop_import.sql](sql/supabase_vendor_3693_petshop_import.sql). The import matches existing items by name and only adds the vendor to them (their price is unchanged). Products with no match are created under FISH at the higher of cost × 4 (300% markup) and the most common price of your existing fish in the same family (e.g. `%barb%`, `%glo%tetra%`). The cost is recorded in the item vendor catalog.
+- Purchase Orders: saving a Qty Ordered on an open PO no longer reloads the whole card (it lost your scroll position and focus on every line). Now only that row and the total update, so you can tab down the list (`purchaseOrders.js refreshReceiveLineInPlace`, `?v=poqtyinplace1`).
+- [supabase_po_3693_petshop_set_qty_10.sql](sql/supabase_po_3693_petshop_set_qty_10.sql): sets every line on the open 3693 Petshop PO to 10 pcs.
+- [supabase_po_3693_petshop_all_items.sql](sql/supabase_po_3693_petshop_all_items.sql): one open PO to 3693 Petshop with every item they supply, at qty 0 and their cost, for quantities to be typed in on the PO page. Refuses to create a second one.
+
 ## 2026-11-05
+
+- Online Orders **New** tab: added the right-hand FactBox (like the Online list's) - Order Info (customer, phone, branch, fulfillment, address, created by, notes, conversation link), Payment (total / paid / balance + each payment's method, reference, who and when) and per-line Stock for the selected order (`onlineNewOrders.js showNewOrderFactbox`, `online-orders.html`). No SQL.
 
 - **📦 Purchase Orders: Distribute to Stores.** A PO that has received stock (open or posted) can now be split into one Requested Transfer Order per store. The split covers each store's shelf-level need first (the same cap the TO trigger enforces), then gives the rest to stores with no level by their share of sales (default last 30 days). Every cell can be edited before creating. TOs carry `Source PO No.`, so running it again only offers what's left. After a full Post, the PO page offers to distribute right away ([supabase_purchase_order_distribution.sql](sql/supabase_purchase_order_distribution.sql), [poDistribution.js](docs/js/poDistribution.js), [po-distribution.css](docs/css/po-distribution.css), [purchaseOrders.js](docs/js/purchaseOrders.js), [postedPurchaseOrders.js](docs/js/postedPurchaseOrders.js); `?v=podist1`).
 
