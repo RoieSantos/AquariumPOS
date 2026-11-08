@@ -6,6 +6,7 @@
 //   { version: 1, accent: '#3fe0d0', brand: { name, logo }, safeZones, scenes: [scene...] }
 //   look: 'cinematic' (default - light rays, gold serif sub-text under a glowing divider, the logo rising
 //   out of the water with its reflection) | 'classic' (the original look).
+//   backdrop: 'ocean' (default - blue water, air-stone bubbles) | 'reef' | 'planted' | 'neon' - see drawWater.
 //   safeZones: true = keep content out of the areas Facebook/Instagram cover with the caption and
 //   buttons (the bottom ~25%); otherwise (default) the content uses the full screen.
 //   scene: { style, duration, headline, sub, bullets[], dims[L,W,H], options, layers, paint, media, mediaType, button, footer }
@@ -51,9 +52,23 @@ window.VideoAdRenderer = (function () {
 
   // Payment methods a 'payments' scene can show (scene.methods = keys; none set = all of them).
   const PAY_METHODS = [
-    ['visa', 'Visa'], ['mastercard', 'Mastercard'], ['gcash', 'GCash'], ['maya', 'Maya'],
-    ['qrph', 'QR Ph'], ['bank', 'Bank transfer'], ['cash', 'Cash']
+    ['visa', 'Visa'], ['mastercard', 'Mastercard'], ['bancnet', 'BancNet'], ['jcb', 'JCB'],
+    ['qrph', 'QR Ph & e-wallets'], ['gcash', 'GCash'], ['shopeepay', 'ShopeePay'], ['alipayplus', 'Alipay+'],
+    ['cash', 'Cash'], ['maya', 'Maya'], ['bank', 'Bank transfer']
   ];
+  // Shown when a payments scene hasn't picked its own methods (the channels the shop accepts).
+  const DEFAULT_PAY = ['visa', 'mastercard', 'bancnet', 'jcb', 'qrph', 'gcash', 'shopeepay', 'alipayplus', 'cash'];
+  // Official logos (docs/icons/pay/), drawn on a white card. Missing file = the drawn fallback card.
+  // ShopeePay / Alipay+: drop the official logo in as shopeepay.png / alipayplus.png and it is used.
+  const PAY_LOGOS = {
+    visa: 'icons/pay/visa.svg', mastercard: 'icons/pay/mastercard.svg', bancnet: 'icons/pay/bancnet.svg',
+    jcb: 'icons/pay/jcb.svg', qrph: 'icons/pay/qrph.svg', gcash: 'icons/pay/gcash.svg',
+    shopeepay: 'icons/pay/shopeepay.png', alipayplus: 'icons/pay/alipayplus.png'
+  };
+  const payKeys = (s) => {
+    const picked = Array.isArray(s.methods) && s.methods.length ? s.methods : DEFAULT_PAY;
+    return PAY_METHODS.map(([k]) => k).filter((k) => picked.includes(k));
+  };
 
   // Tank options (scene.options): these flags plus holes / dividers (counts) and extras (other
   // accessories, comma separated). Each one shows on the tank drawing and as a tag under it.
@@ -110,7 +125,9 @@ window.VideoAdRenderer = (function () {
         : s.style === 'reviews' && Array.isArray(s.reviews) ? s.reviews.map((r) => r && r.photo).filter(Boolean) : []));
       return Promise.all(ad.scenes.map((s) => loadMedia(s.media, s.mediaType))
         .concat(photos.map((src) => loadMedia(src, 'image')), loadMedia(ad.brand && ad.brand.logo),
-          loadMedia(ad.cover && ad.cover.media, ad.cover && ad.cover.mediaType)));
+          loadMedia(ad.cover && ad.cover.media, ad.cover && ad.cover.mediaType),
+          ...ad.scenes.filter((s) => s.style === 'payments').flatMap(payKeys).filter((k) => PAY_LOGOS[k])
+            .map((k) => loadMedia(PAY_LOGOS[k], 'image'))));
     }
 
     // ---------- timeline ----------
@@ -229,7 +246,7 @@ window.VideoAdRenderer = (function () {
       ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
     }
 
-    function drawWater(t) {
+    function drawOcean(t) {
       const g = ctx.createLinearGradient(0, 0, 0, H);
       if (cinematic()) {
         // Deep royal/navy blue, brighter behind the middle of the screen.
@@ -281,6 +298,213 @@ window.VideoAdRenderer = (function () {
           ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fill();
         }
       }
+    }
+
+    // ---------- backdrops (ad.backdrop): 'ocean' (default - blue water + air-stone bubbles) | 'reef' (coral
+    // reef along the bottom, schools of fish crossing) | 'planted' (green aquascape, swaying plants, neon
+    // tetras) | 'neon' (bold moving colour glow + bokeh, no tank glass - the most scroll-stopping) ----------
+    const backdrop = () => (ad && ['reef', 'planted', 'neon'].includes(ad.backdrop) ? ad.backdrop : 'ocean');
+    const accentHex = () => (ad && /^#?[0-9a-f]{6}$/i.test(ad.accent || '') ? ad.accent : '#3fe0d0');
+
+    function drawWater(t) {
+      const b = backdrop();
+      if (b === 'reef') drawReef(t);
+      else if (b === 'planted') drawPlanted(t);
+      else if (b === 'neon') drawNeon(t);
+      else drawOcean(t);
+    }
+
+    // The rippling surface seen from below, shared by the underwater backdrops.
+    function drawSurface(t) {
+      ctx.beginPath(); ctx.moveTo(0, 0);
+      for (let x = 0; x <= W; x += 24) ctx.lineTo(x, surfaceAt(x, t));
+      ctx.lineTo(W, 0); ctx.closePath();
+      const air = ctx.createLinearGradient(0, 0, 0, SURFACE_Y + 12);
+      air.addColorStop(0, 'rgba(190,240,255,0.30)'); air.addColorStop(1, 'rgba(190,240,255,0.10)');
+      ctx.fillStyle = air; ctx.fill();
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 24) ctx[x ? 'lineTo' : 'moveTo'](x, surfaceAt(x, t));
+      ctx.strokeStyle = 'rgba(235,252,255,0.5)'; ctx.lineWidth = 4; ctx.stroke();
+    }
+
+    // Small schooling fish, nose-right around (0,0) before the flip.
+    function tinyFish(x, y, len, dir, body, stripe, belly, t, ph) {
+      const h = len * 0.36, wag = Math.sin(t * 14 + ph) * 0.3;
+      ctx.save(); ctx.translate(x, y); ctx.scale(dir, 1);
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.moveTo(-len * 0.4, 0);
+      ctx.lineTo(-len * 0.72, -h * 0.55 + wag * h); ctx.lineTo(-len * 0.72, h * 0.55 + wag * h); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, 0, len / 2, h / 2, 0, 0, TAU); ctx.fill();
+      if (belly) { ctx.fillStyle = belly; ctx.beginPath(); ctx.ellipse(-len * 0.12, h * 0.14, len * 0.3, h * 0.2, 0, 0, TAU); ctx.fill(); }
+      if (stripe) { ctx.fillStyle = stripe; ctx.beginPath(); ctx.ellipse(len * 0.02, -h * 0.06, len * 0.38, h * 0.1, 0, 0, TAU); ctx.fill(); }
+      ctx.fillStyle = '#081018'; ctx.beginPath(); ctx.arc(len * 0.3, -h * 0.08, Math.max(1.5, len * 0.05), 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    // A school crossing the screen; it loops off-screen so the jump is never seen.
+    function drawSchool(t, o) {
+      const span = W + 900, travel = (t * o.speed + o.seed * 977) % span;
+      const cx = o.dir > 0 ? -450 + travel : W + 450 - travel;
+      const cy = o.y + Math.sin(t * 0.4 + o.seed) * 60;
+      ctx.save(); ctx.globalAlpha *= o.alpha;
+      for (let i = 0; i < o.count; i++) {
+        const ox = (rand(o.seed + i) - 0.5) * o.w + Math.sin(t * 0.9 + i * 1.7) * 18;
+        const oy = (rand(o.seed + i + 60) - 0.5) * o.h + Math.sin(t * 1.3 + i) * 12;
+        const len = o.len * (0.8 + rand(o.seed + i + 120) * 0.4);
+        tinyFish(cx + ox, cy + oy, len, o.dir, o.body, o.stripe, o.belly, t, i * 1.3);
+      }
+      ctx.restore();
+    }
+    // One swaying blade / ribbon of a plant, rooted at (x, baseY).
+    function blade(x, baseY, h, w, lean, t, color, swayAmt) {
+      const sway = Math.sin(t * 1.1 + x * 0.013) * h * (swayAmt || 0.08);
+      const tx = x + lean + sway, ty = baseY - h, mx = x + (lean + sway) * 0.35;
+      ctx.beginPath(); ctx.moveTo(x - w / 2, baseY);
+      ctx.quadraticCurveTo(mx - w / 2, baseY - h * 0.55, tx, ty);
+      ctx.quadraticCurveTo(mx + w / 2, baseY - h * 0.55, x + w / 2, baseY);
+      ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+    }
+    function vignette(alpha) {
+      const v = ctx.createRadialGradient(W / 2, H * 0.45, H * 0.28, W / 2, H * 0.5, H * 0.78);
+      v.addColorStop(0, 'rgba(0,6,14,0)'); v.addColorStop(1, `rgba(0,6,14,${alpha})`);
+      ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+    }
+
+    function drawReef(t) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#13a3c9'); g.addColorStop(0.35, '#0a6aa0'); g.addColorStop(0.75, '#063a6a'); g.addColorStop(1, '#03203f');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      drawCaustics(t, 0, 0, W, H, 0.35);
+      if (cinematic()) drawCinematicLight(t);
+      drawSurface(t);
+      // Far school, faint and slow (depth), then a nearer one the other way.
+      drawSchool(t, { y: H * 0.36, speed: 55, dir: -1, seed: 11, count: 22, w: 420, h: 200, len: 26, alpha: 0.35, body: '#bfe6ff', stripe: null, belly: null });
+      // Distant reef silhouettes.
+      for (const [base, amp, col, sd] of [[H - 330, 70, 'rgba(10,55,95,0.85)', 1], [H - 230, 60, 'rgba(6,36,68,0.95)', 2]]) {
+        ctx.beginPath(); ctx.moveTo(0, H);
+        for (let x = 0; x <= W; x += 20) ctx.lineTo(x, base - Math.abs(Math.sin(x * 0.006 + sd * 2)) * amp - Math.sin(x * 0.021 + sd) * amp * 0.35);
+        ctx.lineTo(W, H); ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+      }
+      drawSchool(t, { y: H * 0.6, speed: 95, dir: 1, seed: 37, count: 16, w: 380, h: 170, len: 40, alpha: 0.85, body: '#ffd23f', stripe: '#1b6fe0', belly: null });
+      // Sand.
+      const sand = ctx.createLinearGradient(0, H - 120, 0, H);
+      sand.addColorStop(0, '#5f8fa3'); sand.addColorStop(1, '#2b5466');
+      ctx.beginPath(); ctx.moveTo(0, H);
+      for (let x = 0; x <= W; x += 30) ctx.lineTo(x, H - 95 - Math.sin(x * 0.008) * 18);
+      ctx.lineTo(W, H); ctx.closePath(); ctx.fillStyle = sand; ctx.fill();
+      // Corals: branching ones, swaying anemones and round brain corals.
+      const COR = ['#ff5f8f', '#ff9a3c', '#b56bff', '#ff7a6b', '#ffd04a', '#4fe3c1'];
+      const branch = (x, y, len, ang, depth, w, col) => {
+        const a = ang + Math.sin(t * 0.9 + x * 0.01 + depth) * 0.035 * (5 - depth);
+        const x2 = x + Math.sin(a) * len, y2 = y - Math.cos(a) * len;
+        ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x2, y2); ctx.stroke();
+        if (depth > 0) { branch(x2, y2, len * 0.74, a - 0.42, depth - 1, w * 0.72, col); branch(x2, y2, len * 0.74, a + 0.38, depth - 1, w * 0.72, col); }
+        else { ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.beginPath(); ctx.arc(x2, y2, w * 0.45, 0, TAU); ctx.fill(); }
+      };
+      for (let i = 0; i < 9; i++) {
+        const x = 40 + i * 125 + rand(i + 700) * 50, y = H - 70 - rand(i + 710) * 40, col = COR[i % COR.length];
+        const kind = i % 3;
+        if (kind === 0) branch(x, y, 70 + rand(i + 720) * 30, (rand(i + 730) - 0.5) * 0.3, 4, 16, col);
+        else if (kind === 1) {
+          for (let k = 0; k < 14; k++) {
+            const a = -1.2 + k * (2.4 / 13), len = 70 + rand(i * 20 + k) * 30;
+            const sw = Math.sin(t * 1.4 + k * 0.5 + i) * 0.18;
+            const tx = x + Math.sin(a + sw) * len, ty = y - Math.cos(a + sw) * len;
+            ctx.strokeStyle = col; ctx.lineWidth = 9; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + Math.sin(a) * len * 0.5, y - len * 0.6, tx, ty); ctx.stroke();
+            ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.arc(tx, ty, 5, 0, TAU); ctx.fill();
+          }
+        } else {
+          const r = 55 + rand(i + 740) * 25, bg = ctx.createRadialGradient(x - r * 0.3, y - r * 0.5, 4, x, y, r);
+          bg.addColorStop(0, '#ffffff'); bg.addColorStop(0.15, col); bg.addColorStop(1, 'rgba(20,20,40,0.9)');
+          ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.75, 0, Math.PI, TAU); ctx.closePath(); ctx.fillStyle = bg; ctx.fill();
+        }
+      }
+      // A clownfish pair darting around the anemones.
+      for (const [k, ph] of [[0, 0], [1, 2.4]]) {
+        const px = W * (0.3 + 0.4 * k) + Math.sin(t * 0.5 + ph) * 160, py = H - 270 + Math.sin(t * 0.9 + ph) * 40;
+        drawFish('clown', px, py, 0.55, Math.cos(t * 0.5 + ph) >= 0 ? 1 : -1, t, ph);
+      }
+      // Bubbles: a single, lighter stream so the reef is the star.
+      const span = H - SURFACE_Y + 60;
+      for (let i = 0; i < 12; i++) {
+        const rise = (t * (260 + rand(i + 900) * 120) + rand(i + 910) * span) % span, y = H - 60 - rise;
+        if (y < surfaceAt(W * 0.85, t) + 6) continue;
+        const x = W * 0.85 + Math.sin(rise * 0.02 + i) * (5 + rise * 0.02), r = 2 + (rise / span) * 7;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.strokeStyle = 'rgba(215,248,255,0.45)'; ctx.lineWidth = 2; ctx.stroke();
+      }
+      vignette(0.45);
+    }
+
+    function drawPlanted(t) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#2fa58a'); g.addColorStop(0.35, '#106b5b'); g.addColorStop(0.75, '#063d36'); g.addColorStop(1, '#021a17');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const glow = ctx.createRadialGradient(W / 2, H * 0.45, 40, W / 2, H * 0.45, H * 0.5);
+      glow.addColorStop(0, 'rgba(170,255,200,0.18)'); glow.addColorStop(1, 'rgba(170,255,200,0)');
+      ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+      drawCaustics(t, 0, 0, W, H, 0.28);
+      if (cinematic()) drawCinematicLight(t);
+      drawSurface(t);
+      // Tall ribbon plants up both sides (back layer, darker).
+      for (let i = 0; i < 26; i++) {
+        const side = i % 2 ? 1 : 0, x = side ? W - 20 - rand(i + 400) * 230 : 20 + rand(i + 400) * 230;
+        const h = H * (0.35 + rand(i + 410) * 0.3);
+        blade(x, H, h, 22, (side ? -1 : 1) * rand(i + 420) * 80, t, `rgba(${30 + rand(i + 430) * 40 | 0},${110 + rand(i + 440) * 60 | 0},${60 + rand(i + 450) * 30 | 0},0.85)`, 0.12);
+      }
+      // Neon tetra school, then a second smaller one further back.
+      drawSchool(t, { y: H * 0.34, speed: 50, dir: -1, seed: 71, count: 14, w: 360, h: 160, len: 24, alpha: 0.4, body: '#c9d6e0', stripe: '#38f0ff', belly: '#ff3b4e' });
+      drawSchool(t, { y: H * 0.55, speed: 80, dir: 1, seed: 23, count: 26, w: 480, h: 220, len: 38, alpha: 0.95, body: '#d6e0ea', stripe: '#38f0ff', belly: '#ff3b4e' });
+      // Rocks and substrate.
+      for (const [x, r, col] of [[W * 0.22, 120, '#2c3a3f'], [W * 0.68, 150, '#26343a'], [W * 0.47, 80, '#34454b']]) {
+        const rg = ctx.createRadialGradient(x - r * 0.3, H - 110 - r * 0.4, 6, x, H - 90, r * 1.1);
+        rg.addColorStop(0, '#6f8a90'); rg.addColorStop(1, col);
+        ctx.beginPath(); ctx.ellipse(x, H - 80, r, r * 0.7, 0, Math.PI, TAU); ctx.closePath(); ctx.fillStyle = rg; ctx.fill();
+      }
+      ctx.fillStyle = '#1c1a14'; ctx.fillRect(0, H - 80, W, 80);
+      // Carpet grass along the front (bright, in front of everything).
+      for (let i = 0; i < 90; i++) {
+        const x = rand(i + 600) * W, h = 40 + rand(i + 610) * 70;
+        blade(x, H - 60, h, 9, (rand(i + 620) - 0.5) * 30, t, i % 3 ? '#5fd35a' : '#8ff07a', 0.1);
+      }
+      vignette(0.5);
+    }
+
+    function drawNeon(t) {
+      ctx.fillStyle = '#070a22'; ctx.fillRect(0, 0, W, H);
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      // Big colour glows drifting around - the accent leads.
+      const cols = [accentHex(), '#ff3d9a', '#6a4bff', '#00b7ff', '#ffb02e'];
+      cols.forEach((c, i) => {
+        const cx = W * (0.5 + 0.42 * Math.sin(t * 0.21 * (1 + i * 0.17) + i * 1.9));
+        const cy = H * (0.5 + 0.4 * Math.cos(t * 0.17 * (1 + i * 0.13) + i * 2.7));
+        const r = 560 + 140 * Math.sin(t * 0.5 + i);
+        const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        rg.addColorStop(0, withAlpha(c, i === 0 ? 0.75 : 0.55)); rg.addColorStop(1, withAlpha(c, 0));
+        ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+      });
+      // Two light streaks sweeping diagonally.
+      for (let k = 0; k < 2; k++) {
+        const p = ((t * 0.18 + k * 0.5) % 1), x = -400 + p * (W + 800);
+        ctx.save(); ctx.translate(x, H * (0.35 + k * 0.3)); ctx.rotate(-0.5);
+        const s = ctx.createLinearGradient(-160, 0, 160, 0);
+        s.addColorStop(0, 'rgba(255,255,255,0)'); s.addColorStop(0.5, 'rgba(255,255,255,0.16)'); s.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = s; ctx.fillRect(-160, -H, 320, H * 2);
+        ctx.restore();
+      }
+      // Bokeh drifting up.
+      for (let i = 0; i < 26; i++) {
+        const r = 14 + rand(i + 800) * 60, sp = 25 + rand(i + 810) * 45;
+        const y = H + r - ((t * sp + rand(i + 820) * (H + 2 * r)) % (H + 2 * r));
+        const x = rand(i + 830) * W + Math.sin(t * 0.5 + i) * 30;
+        const a = 0.06 + rand(i + 840) * 0.12;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+        ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.fill();
+        ctx.strokeStyle = `rgba(255,255,255,${a * 1.6})`; ctx.lineWidth = 2; ctx.stroke();
+      }
+      ctx.restore();
+      vignette(0.55);
     }
 
     // Over everything: the tank's front glass - black silicone seams on both sides and a faint glare
@@ -1351,10 +1575,34 @@ window.VideoAdRenderer = (function () {
     }
 
     // ---------- payments: each method is a card that drops into the water, splashes and bobs ----------
+    // The official logo centred on a white card; the QR Ph card adds "& e-wallets" under it.
+    function drawLogoCard(key, logo, w, h) {
+      const x = -w / 2, y = -h / 2, r = h * 0.1;
+      const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+      bg.addColorStop(0, '#ffffff'); bg.addColorStop(1, '#eaf0f6');
+      roundRect(x, y, w, h, r); ctx.fillStyle = bg; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2; ctx.stroke();
+      const img = logo.el, iw = img.naturalWidth || img.width || 1, ih = img.naturalHeight || img.height || 1;
+      const sub = key === 'qrph' ? '& e-wallets' : '';
+      const boxW = w * 0.74, boxH = h * (sub ? 0.46 : 0.58);
+      const sc = Math.min(boxW / iw, boxH / ih), dw = iw * sc, dh = ih * sc;
+      const cy = sub ? y + h * 0.4 : 0;
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, -dw / 2, cy - dh / 2, dw, dh);
+      if (sub) {
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = `800 ${h * 0.14}px ${FONT}`; ctx.fillStyle = '#0b2a52';
+        ctx.fillText(sub, 0, y + h * 0.8);
+      }
+    }
+
     function drawPayCard(key, w, h) {
+      const logo = PAY_LOGOS[key] && getMedia(PAY_LOGOS[key]);
+      if (logo) { drawLogoCard(key, logo, w, h); return; }
       const x = -w / 2, y = -h / 2, r = h * 0.1;
       const fills = { visa: ['#1a1f71', '#2a3a9e'], mastercard: ['#16181d', '#2c3038'], gcash: ['#0062e0', '#1f8bff'],
-        maya: ['#0b0b0b', '#1d1d1d'], qrph: ['#ffffff', '#e9eef3'], bank: ['#0d3b66', '#1a5a91'], cash: ['#1f7a3a', '#2fa152'] };
+        maya: ['#0b0b0b', '#1d1d1d'], qrph: ['#ffffff', '#e9eef3'], bank: ['#0d3b66', '#1a5a91'], cash: ['#1f7a3a', '#2fa152'],
+        bancnet: ['#ffffff', '#e9eef3'], jcb: ['#ffffff', '#e9eef3'], shopeepay: ['#ee4d2d', '#ff7337'], alipayplus: ['#1677ff', '#3b8cff'] };
       const [c1, c2] = fills[key] || fills.bank;
       const bg = ctx.createLinearGradient(x, y, x + w, y + h);
       bg.addColorStop(0, c1); bg.addColorStop(1, c2);
@@ -1399,12 +1647,25 @@ window.VideoAdRenderer = (function () {
         ctx.beginPath(); ctx.arc(x + w * 0.25, y + h * 0.5, h * 0.26, 0, TAU); ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 4; ctx.stroke();
         ctx.font = `900 ${h * 0.3}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('₱', x + w * 0.25, y + h * 0.52);
         ctx.font = `800 ${h * 0.24}px ${FONT}`; ctx.fillText('Cash', x + w * 0.66, y + h * 0.52);
+      } else if (key === 'shopeepay') {
+        // Shopping-bag mark + wordmark (until the official logo file is added).
+        const bx = x + w * 0.2, by = y + h * 0.54, s = h * 0.34;
+        roundRect(bx - s / 2, by - s * 0.4, s, s * 0.9, 6); ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.beginPath(); ctx.arc(bx, by - s * 0.4, s * 0.24, Math.PI, TAU); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5; ctx.stroke();
+        ctx.font = `900 ${h * 0.3}px ${FONT}`; ctx.fillStyle = '#ee4d2d'; ctx.fillText('S', bx, by + s * 0.06);
+        ctx.font = `800 ${h * 0.2}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('ShopeePay', x + w * 0.64, y + h * 0.53);
+      } else if (key === 'alipayplus') {
+        ctx.font = `900 ${h * 0.3}px ${FONT}`; ctx.fillStyle = '#ffffff'; ctx.fillText('Alipay+', x + w / 2, y + h * 0.52);
+      } else {
+        // bancnet / jcb without their logo file: plain name.
+        ctx.font = `900 ${h * 0.28}px ${FONT}`; ctx.fillStyle = key === 'jcb' ? '#0b4ea2' : '#0b2a52';
+        ctx.fillText(key === 'jcb' ? 'JCB' : 'BancNet', x + w / 2, y + h * 0.52);
       }
       ctx.restore();
     }
 
     function drawPayments(s, lt, top, maxH) {
-      const keys = PAY_METHODS.map(([k]) => k).filter((k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k));
+      const keys = payKeys(s);
       if (!keys.length) return;
       const cols = keys.length <= 4 ? 2 : 3, rows = Math.ceil(keys.length / cols), gap = 26;
       const ch = Math.min(ad.safeZones ? 200 : 250, (maxH - gap * (rows - 1)) / rows, ((W - 120 - gap * (cols - 1)) / cols) / 1.58);
@@ -1770,7 +2031,7 @@ window.VideoAdRenderer = (function () {
           drawTideEdge(q, t);
         }
       }
-      drawGlassFrame(t);
+      if (backdrop() !== 'neon') drawGlassFrame(t);
       ctx.restore();
     }
 
@@ -2563,5 +2824,5 @@ window.VideoAdRenderer = (function () {
     };
   }
 
-  return { create, W, H, FPS, isVideo, TANK_OPTIONS, PAY_METHODS };
+  return { create, W, H, FPS, isVideo, TANK_OPTIONS, PAY_METHODS, DEFAULT_PAY };
 })();

@@ -3216,18 +3216,33 @@ function addProductToOrder(item) {
 // separate Product List panel, for the same reason it exists there: VariantName alone is frequently
 // IDENTICAL across a product's variants (e.g. two sealant colors), only the SKU actually
 // distinguishes them.
-function addOrderLineFromProduct(item, variant) {
+async function addOrderLineFromProduct(item, variant) {
   const variantLabel = variant ? (variant.sku ? `${variant.variant_name} - ${variant.sku}` : variant.variant_name) : null;
-  const itemName = variant ? `${item.name} (${variantLabel})` : item.name;
-  const price = variant ? Number(variant.price || 0) : Number(item.price || 0);
+  let itemName = variant ? `${item.name} (${variantLabel})` : item.name;
+  let price = variant ? Number(variant.price || 0) : Number(item.price || 0);
   const variationId = variant ? variant.variation_id : null;
+
+  // Size-priced product (e.g. fish - sql/supabase_item_size_pricing.sql): staff pick the size and the
+  // price comes from the size scale's formula. Same product / stock - only the price and name change.
+  let sizeLabel = null;
+  if (window.pickSizePrice) {
+    const size = await window.pickSizePrice({ itemCode: item.code, itemName, basePrice: price });
+    if (size === false) return;
+    if (size) {
+      sizeLabel = size.label;
+      price = size.price;
+      itemName = window.sizeLineName(itemName, sizeLabel);
+    }
+  }
 
   // Dedupe by the specific variant when one was chosen (two different variants of the same product
   // must stay separate lines) - falls back to item_code for a plain product add, same as before.
+  // Two sizes of the same fish stay separate lines too.
   const dedupeKey = variationId || item.code;
   // A custom aquarium build's P0 light / pump (bundle_key) stays its own line - adding the same pump from
   // search is a separate, priced sale.
-  const existing = newOrderLines.find((line) => !line.bundle_key && (line.variation_id || line.item_code) === dedupeKey);
+  const existing = newOrderLines.find((line) => !line.bundle_key && (line.variation_id || line.item_code) === dedupeKey
+    && (line.size_label || null) === sizeLabel);
   if (existing) {
     existing.quantity += 1;
   } else {
@@ -3238,7 +3253,8 @@ function addOrderLineFromProduct(item, variant) {
       price,
       quantity: 1,
       note: '',
-      variation_id: variationId
+      variation_id: variationId,
+      size_label: sizeLabel
     });
   }
 
@@ -3280,7 +3296,8 @@ async function applyWholesalePrices() {
   newOrderLines.forEach((line) => {
     const info = wholesaleInfoByCode.get(line.item_code);
     // A build's P0 light / pump is paid for in the aquarium line's price - never re-price it.
-    if (!info || line.wholesale_applied || line.bundle_key) return;
+    // A size-priced line keeps its size price.
+    if (!info || line.wholesale_applied || line.bundle_key || line.size_label) return;
     line.retail_price = line.price;
     line.price = info.wholesale_price;
     line.wholesale_applied = true;
@@ -3373,8 +3390,9 @@ function closeVariantPickerModal() {
 
 function selectVariantForOrder(variant) {
   if (!variantPickerProduct) return;
-  addOrderLineFromProduct(variantPickerProduct, variant);
-  closeVariantPickerModal();
+  const product = variantPickerProduct;
+  closeVariantPickerModal(); // first, so the size picker (if any) isn't hidden behind it
+  addOrderLineFromProduct(product, variant);
 }
 
 function removeNewOrderLine(index) {
@@ -3423,7 +3441,7 @@ function renderNewOrderLines() {
           <button type="button" class="qty-step-btn" data-index="${index}" data-dir="1" title="Increase">&plus;</button>
         </div>
         <span class="order-line-x">&times;</span>
-        <input type="number" class="line-price-input" data-index="${index}" value="${line.price}" min="0" step="0.01" title="Unit price">
+        <input type="number" class="line-price-input" data-index="${index}" value="${line.price}" min="0" step="0.01" ${line.size_label ? 'readonly title="Size price - remove the line and pick another size to change it"' : 'title="Unit price"'}>
         <div class="order-line-total">&#8369; <span class="line-total-cell">${(line.price * line.quantity).toFixed(2)}</span></div>
       </div>
     </div>
@@ -4007,7 +4025,7 @@ async function submitNewOrder() {
     p_delivery_address: fulfillment === 'Delivery' ? document.getElementById('newOrderDeliveryAddress').value.trim() : null,
     p_notes: document.getElementById('newOrderNotes').value.trim() || null,
     p_location: document.getElementById('newOrderLocation').value,
-    p_lines: newOrderLines.map(({ retail_price, wholesale_applied, ...line }) => line),
+    p_lines: newOrderLines.map(({ retail_price, wholesale_applied, size_label, ...line }) => line),
     p_delivery_fee: newOrderDeliveryFee()
   };
 

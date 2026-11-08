@@ -6155,6 +6155,7 @@ function wireChangeItemDialog() {
 let addLineOrderNo = null;
 let addLineSearchGeneration = 0;
 let addLineOptions = [];
+let addLineSizeLabel = null; // size picked for a size-priced product (null = none / Standard)
 
 function canAddOnlineOrderLine(o) {
   return !isMakerFocus() && canChangeOnlineOrderLineItem(o);
@@ -6173,6 +6174,8 @@ function openAddLineDialog() {
   document.getElementById('addLineSearch').value = '';
   document.getElementById('addLineQty').value = '1';
   document.getElementById('addLinePrice').value = '';
+  document.getElementById('addLinePrice').readOnly = false;
+  addLineSizeLabel = null;
   document.getElementById('addLinePriceField').classList.toggle('hidden', hidePrices());
   document.getElementById('addLineNote').value = '';
   document.getElementById('addLineError').classList.add('hidden');
@@ -6225,7 +6228,10 @@ async function saveAddLine() {
   const qty = Number(document.getElementById('addLineQty').value);
   if (!Number.isInteger(qty) || qty < 1) return showError('Quantity must be a whole number, 1 or more.');
   const priceText = document.getElementById('addLinePrice').value.trim();
-  const price = hidePrices() || priceText === '' ? null : Number(priceText);
+  // A size price is always sent, even for staff who can't see prices.
+  const price = addLineSizeLabel ? Number(priceText) : (hidePrices() || priceText === '' ? null : Number(priceText));
+  const typedNote = document.getElementById('addLineNote').value.trim();
+  const note = [addLineSizeLabel ? `Size ${addLineSizeLabel}` : '', typedNote].filter(Boolean).join(' - ') || null;
   if (price !== null && (!Number.isFinite(price) || price < 0)) return showError('Unit Price can\'t be negative.');
 
   const btn = document.getElementById('saveAddLineBtn');
@@ -6238,7 +6244,7 @@ async function saveAddLine() {
     p_variation_id: picked.value,
     p_quantity: qty,
     p_price: price,
-    p_note: document.getElementById('addLineNote').value.trim() || null
+    p_note: note
   });
   btn.disabled = false;
   if (error) {
@@ -6257,10 +6263,28 @@ function wireAddLineDialog() {
     clearTimeout(debounce);
     debounce = setTimeout(loadAddLineOptions, 300);
   });
-  // Picking a product fills in its list price (still editable).
-  document.getElementById('addLineOptions').addEventListener('change', (e) => {
+  // Picking a product fills in its list price (still editable). A size-priced product
+  // (sql/supabase_item_size_pricing.sql, js/sizePricePicker.js) asks for the size instead - the
+  // size sets the price (locked) and goes on the line note.
+  document.getElementById('addLineOptions').addEventListener('change', async (e) => {
     const v = addLineOptions.find((x) => x.variation_id === e.target.value);
-    if (v) document.getElementById('addLinePrice').value = linePriceText(v.price);
+    const priceEl = document.getElementById('addLinePrice');
+    addLineSizeLabel = null;
+    priceEl.readOnly = false;
+    if (!v) return;
+    priceEl.value = linePriceText(v.price);
+    if (!window.pickSizePrice) return;
+    const size = await window.pickSizePrice({ itemCode: v.item_code, itemName: v.label || v.name, basePrice: v.price });
+    if (e.target.value !== document.querySelector('#addLineOptions input[name="addLinePick"]:checked')?.value) return;
+    if (size === false) {
+      e.target.checked = false;
+      return;
+    }
+    if (size) {
+      priceEl.value = linePriceText(size.price);
+      priceEl.readOnly = true;
+      addLineSizeLabel = size.label;
+    }
   });
   document.getElementById('saveAddLineBtn').addEventListener('click', saveAddLine);
   document.getElementById('cancelAddLineBtn').addEventListener('click', closeAddLineDialog);

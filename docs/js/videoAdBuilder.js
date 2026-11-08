@@ -72,7 +72,7 @@ function templateCustomAquarium() {
         bullets: ['Rimless or with rim', '3mm-12mm or tempered glass', 'Black or clear sealant'] },
       { style: 'stand', duration: 3, headline: 'Matching stands', sub: "Built to your tank's size", bullets: [], dims: [48, 18, 30], layers: 2, paint: 'black' },
       { style: 'sump', duration: 3, headline: 'Sump filtration too', sub: 'Filter, bio media & return pump', bullets: [], dims: [36, 14, 16] },
-      { style: 'payments', duration: 3.2, headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash', bullets: [] },
+      { style: 'payments', duration: 3.2, headline: 'Pay your way', sub: 'Cards, QR Ph, e-wallets or cash', bullets: [] },
       { style: 'delivery', duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home', bullets: [] },
       { style: 'cta', duration: 3.2, headline: 'Get your quote today', button: 'rspetstop.com',
         bullets: ['Message us on Facebook', 'or chat with Alice on our website'], footer: 'Amaya & GMA branches' }
@@ -122,7 +122,7 @@ function newScene(style) {
   if (style === 'reviews') Object.assign(base, { duration: 4, headline: 'Our customers say', reviews: [] });
   if (style === 'montage') Object.assign(base, { duration: 5, headline: 'Setups we built', photos: [] });
   if (style === 'stickman') Object.assign(base, STICKMAN_DEFAULTS, { duration: 4, headline: 'Still looking for the right tank?' });
-  if (style === 'payments') Object.assign(base, { headline: 'Pay your way', sub: 'Cards, e-wallets, bank transfer or cash' });
+  if (style === 'payments') Object.assign(base, { headline: 'Pay your way', sub: 'Cards, QR Ph, e-wallets or cash' });
   if (style === 'delivery') Object.assign(base, { duration: 3.8, headline: 'We deliver it safely', sub: 'Our own team - we handle the rest at your home' });
   return base;
 }
@@ -303,6 +303,7 @@ function renderAdFields() {
   $('showLogo').checked = c.brand.showLogo !== false;
   $('safeZones').checked = !!c.safeZones;
   $('adLook').value = c.look === 'classic' ? 'classic' : 'cinematic';
+  $('adBackdrop').value = ['reef', 'planted', 'neon'].includes(c.backdrop) ? c.backdrop : 'ocean';
   const row = $('accentRow');
   row.querySelectorAll('.va-swatch').forEach((el) => el.remove());
   ACCENTS.forEach((hex) => {
@@ -527,7 +528,7 @@ function sceneCardHtml(s, i, count) {
       <p class="muted" style="margin:0; font-size:12.5px;">Use real reviews only: you may shorten one with "…" but don't reword it. Only show a customer's name if they're OK with it (first name + initial is safest). The count shows as "120+ recommendations on Facebook" - only enter a number your Pages really have. Move this scene to the top (↑) - reviews make a strong opening.${wall ? ' Give the wall about 6 seconds so people catch a few.' : ' 📷 Their setup puts a photo beside the quote - only use a photo of the setup that customer really got from us.'}</p>`;
   }
   if (s.style === 'payments') {
-    const on = (k) => !Array.isArray(s.methods) || !s.methods.length || s.methods.includes(k);
+    const on = (k) => (Array.isArray(s.methods) && s.methods.length ? s.methods : VideoAdRenderer.DEFAULT_PAY).includes(k);
     const checks = VideoAdRenderer.PAY_METHODS.map(([k, label]) =>
       `<label class="va-opt"><input type="checkbox" data-method="${k}"${on(k) ? ' checked' : ''} /> ${label}</label>`).join('');
     fields += `
@@ -1796,6 +1797,7 @@ function tick() {
   $('showLogo').addEventListener('change', (e) => { current.config.brand.showLogo = e.target.checked; setDirty(true); });
   $('safeZones').addEventListener('change', (e) => { current.config.safeZones = e.target.checked; setDirty(true); });
   $('adLook').addEventListener('change', (e) => { current.config.look = e.target.value; setDirty(true); });
+  $('adBackdrop').addEventListener('change', (e) => { current.config.backdrop = e.target.value; setDirty(true); });
   $('logoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';

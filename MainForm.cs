@@ -1263,6 +1263,9 @@ INSERT INTO CardProcessingFeeLog (
                 // Items" button (RunManualProductSyncAsync) runs the same pull on demand.
                 try { await OnlinefunctionsEvents.SyncItemWholesalePricesFromSupabaseAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
 
+                // Size-based prices (e.g. fish) from the portal's Size Pricing page -> dbo.ItemSizeTier.
+                try { await OnlinefunctionsEvents.SyncItemSizeTiersFromPortalAsync().ConfigureAwait(false); } catch { /* best-effort, next tick will retry */ }
+
                 // Also Supabase -> desktop - aquarium SET packages are maintained on the Web Portal's
                 // Customer Aquarium page now; this mirrors them into the local tables the POS reads when a
                 // set is punched (Settings > Aquarium Set is read-only, with its own "Sync from Portal").
@@ -4497,6 +4500,16 @@ ORDER BY i.[Description], i.[Name], i.Code";
                 catch (Exception wholesaleEx)
                 {
                     wholesaleNote = $"Wholesale prices NOT updated: {wholesaleEx.Message}";
+                }
+
+                try
+                {
+                    int sizeTiers = await OnlinefunctionsEvents.SyncItemSizeTiersFromPortalAsync(TimeSpan.FromSeconds(60));
+                    wholesaleNote += $"\nSize prices: {sizeTiers}";
+                }
+                catch (Exception sizeEx)
+                {
+                    wholesaleNote += $"\nSize prices NOT updated: {sizeEx.Message}";
                 }
 
                 onSuccess?.Invoke();
@@ -16105,6 +16118,25 @@ ORDER BY SKU, VariantName, ItemCode", connection);
             if (string.IsNullOrWhiteSpace(variationId) && !shouldResolveCustomCatalogVariation)
             {
                 variationId = ResolveSaleLineVariationFallback(itemCode, itemName, itemDescription);
+            }
+
+            // Size-priced item (e.g. fish - MainForm.SizePricing.cs): ask for the size, the price comes
+            // from the portal's size formula. Only for normal catalog adds - calculator / set lines pass
+            // preserveProvidedPrice and keep their own price.
+            if (!preserveProvidedPrice)
+            {
+                var sizeChoice = PromptForSaleSize(itemCode, string.IsNullOrWhiteSpace(itemDescription) ? itemName : itemDescription, price);
+                if (sizeChoice != null)
+                {
+                    if (sizeChoice.IsCancelled)
+                        return;
+                    price = sizeChoice.Price;
+                    if (!string.IsNullOrWhiteSpace(sizeChoice.Label))
+                    {
+                        itemName = AppendSizeToName(itemName, sizeChoice.Label);
+                        itemDescription = AppendSizeToName(itemDescription, sizeChoice.Label);
+                    }
+                }
             }
 
             // Compute total now that price may have been updated from DB (PromoPrice)

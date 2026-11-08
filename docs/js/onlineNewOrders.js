@@ -659,7 +659,7 @@ function renderNewOrderEditLines() {
           <textarea class="no-edit-note" rows="1" data-idx="${i}" data-field="note" placeholder="Line note (optional)">${escapeHtml(l.note || '')}</textarea>
           <button type="button" class="no-edit-remove" data-remove="${i}">Remove item</button></td>
         <td class="num"><input type="number" class="no-edit-qty" min="1" step="1" data-idx="${i}" data-field="quantity" value="${l.quantity}"></td>
-        <td class="num"><input type="number" class="no-edit-price" min="0" step="0.01" data-idx="${i}" data-field="price" value="${l.price}"></td>
+        <td class="num"><input type="number" class="no-edit-price" min="0" step="0.01" data-idx="${i}" data-field="price" value="${l.price}"${/ - Size /.test(l.item_name || '') ? ' readonly title="Size price - remove the line and pick another size to change it"' : ''}></td>
         <td class="num" data-amount="${i}">${newOrderMoney(l.quantity * l.price)}</td>
       </tr>`).join('');
   updateNewOrderEditTotals();
@@ -735,20 +735,37 @@ async function showNewOrderVariants(item) {
       </div>`).join(''));
 }
 
-// Same line naming / dedupe as gmaConversations.js addOrderLineFromProduct.
-function addNewOrderEditProduct(item, variant) {
+// Same line naming / dedupe / size picker as gmaConversations.js addOrderLineFromProduct.
+async function addNewOrderEditProduct(item, variant) {
   const variantLabel = variant ? (variant.sku ? `${variant.variant_name} - ${variant.sku}` : variant.variant_name) : null;
   const variationId = variant ? variant.variation_id : null;
+  let itemName = variant ? `${item.name} (${variantLabel})` : item.name;
+  let price = Number((variant || item).price || 0);
+
+  // Size-priced product (sql/supabase_item_size_pricing.sql) - the size sets the price, no typing.
+  let sizeLabel = null;
+  if (window.pickSizePrice) {
+    const size = await window.pickSizePrice({ itemCode: item.code, itemName, basePrice: price });
+    if (size === false) return;
+    if (size) {
+      sizeLabel = size.label;
+      price = size.price;
+      itemName = window.sizeLineName(itemName, sizeLabel);
+    }
+  }
+
   const dedupeKey = variationId || item.code;
-  const existing = newOrderEditLines.find((l) => (l.variation_id || l.item_code) === dedupeKey);
+  // Two sizes of the same fish stay separate lines.
+  const existing = newOrderEditLines.find((l) => (l.variation_id || l.item_code) === dedupeKey
+    && (sizeLabel ? l.item_name === itemName : !/ - Size /.test(l.item_name || '')));
   if (existing) {
     existing.quantity += 1;
   } else {
     newOrderEditLines.push({
       category_code: item.category_code,
       item_code: item.code,
-      item_name: variant ? `${item.name} (${variantLabel})` : item.name,
-      price: Number((variant || item).price || 0),
+      item_name: itemName,
+      price,
       quantity: 1,
       note: '',
       variation_id: variationId

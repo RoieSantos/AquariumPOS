@@ -314,6 +314,8 @@ function renderTopNavLinks(activeLabel) {
     // Reels video ads (scenes -> MP4 in the browser) - sql/supabase_video_ads.sql.
     admin.push({ href: 'video-ad-builder.html', label: 'Video Ad Builder' });
     admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
+    // Size-based prices, e.g. fish (sql/supabase_item_size_pricing.sql).
+    admin.push({ href: 'size-pricing.html', label: 'Size Pricing' });
     // Planned % price increases (draft -> apply -> undo) - sql/supabase_price_change_batches.sql.
     admin.push({ href: 'price-increase.html', label: 'Price Increase' });
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
@@ -494,6 +496,7 @@ const TELL_ME_KEYWORDS = {
   'quick-post.html': 'facebook fb photo social',
   'video-ad-builder.html': 'video ad reels marketing facebook instagram mp4 promo',
   'pricing-setup.html': 'prices rates',
+  'size-pricing.html': 'fish size inch bigger price tier scale',
   'price-increase.html': 'price change raise markup wholesale percent',
   'payment-methods.html': 'gcash cash bank tender',
   'xendit-payments.html': 'online payment gateway gcash card pay link',

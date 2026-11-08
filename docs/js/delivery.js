@@ -294,21 +294,34 @@ async function loadMonthStops(year, month) {
   const startDate = new Date(year, month, 1);
   const endDate = new Date(year, month + 1, 1);
 
-  const { data, error } = await supabaseClient.rpc('admin_list_delivery_stops', {
-    p_admin_username: currentSession.username,
-    p_admin_password: currentSession.password,
-    p_start_date: toDateKey(startDate),
-    p_end_date: toDateKey(endDate)
-  });
+  // Back-job flags (supabase_delivery_stop_back_job.sql) come from their own RPC, loaded in parallel.
+  // If that file isn't run yet, every stop just reads as not a back job.
+  const [{ data, error }, backJobs] = await Promise.all([
+    supabaseClient.rpc('admin_list_delivery_stops', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_start_date: toDateKey(startDate),
+      p_end_date: toDateKey(endDate)
+    }),
+    supabaseClient.rpc('staff_list_delivery_back_job_stops', {
+      p_username: currentSession.username,
+      p_password: currentSession.password,
+      p_start_date: toDateKey(startDate),
+      p_end_date: toDateKey(endDate)
+    })
+  ]);
 
   if (error) {
     console.error('admin_list_delivery_stops failed:', error);
     stopsByDate = {};
     return;
   }
+  if (backJobs.error) console.warn('staff_list_delivery_back_job_stops failed:', backJobs.error);
+  const backJobIds = new Set((backJobs.data || []).map((r) => r.stop_id));
 
   stopsByDate = {};
   (data || []).forEach((stop) => {
+    stop.is_back_job = backJobIds.has(stop.stop_id);
     const key = stop.delivery_date;
     if (!stopsByDate[key]) stopsByDate[key] = [];
     stopsByDate[key].push(stop);
@@ -1420,7 +1433,38 @@ async function removeDateVendor(dateKey, vendorCode) {
 // Client-side only, like the other print gating on this page.
 function stopHasDeliveryFee(s) {
   // An order riding on another order's fee in a combined drop (fee_combined_with) has 0 on purpose.
-  return Number(s?.delivery_fee) > 0 || !!s?.fee_combined_with;
+  // A Back job (return trip, sql/supabase_delivery_stop_back_job.sql) is never charged a fee.
+  return Number(s?.delivery_fee) > 0 || !!s?.fee_combined_with || !!s?.is_back_job;
+}
+
+// Per "can we put a boolean there 'Back job' if its a back job it allows no delivery fee" - the
+// checkbox in a stop's Status cell. Per "only a super user can do a back job" - Super User only
+// (re-checked server side).
+function stopBackJobToggleHtml(s) {
+  const canEdit = !!currentSession?.isSuperUser;
+  return `<br><label class="muted" style="white-space:nowrap;" title="Back job - return trip, no delivery fee needed to print">`
+    + `<input type="checkbox" data-back-job-stop-id="${s.stop_id}"${s.is_back_job ? ' checked' : ''}${canEdit ? '' : ' disabled'}> Back job</label>`;
+}
+
+async function setStopBackJob(checkbox) {
+  const wanted = checkbox.checked;
+  checkbox.disabled = true;
+  const { error } = await supabaseClient.rpc('staff_set_delivery_stop_back_job', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_stop_id: checkbox.dataset.backJobStopId,
+    p_is_back_job: wanted
+  });
+  if (error) {
+    checkbox.checked = !wanted;
+    checkbox.disabled = false;
+    window.alert(/could not find the function|schema cache/i.test(error.message)
+      ? 'Back job isn\'t set up yet - run sql/supabase_delivery_stop_back_job.sql.'
+      : `Not changed: ${error.message}`);
+    return;
+  }
+  await renderMonth(currentYear, currentMonth);
+  showDayDetail(selectedDateKey);
 }
 
 // --- Combined drops ----------------------------------------------------------------------------
@@ -1519,7 +1563,7 @@ async function setDropFeeMode(select) {
 function guardStopPrint(stops, stopId) {
   const stop = stops.find((x) => x.stop_id === stopId);
   if (stopHasDeliveryFee(stop)) return true;
-  window.alert(`Order ${stop?.order_id || ''} has no delivery fee yet, so it can't be printed. Open Edit Details, click Calculate fee, then Continue - then print.`);
+  window.alert(`Order ${stop?.order_id || ''} has no delivery fee yet, so it can't be printed. Open Edit Details, click Calculate fee, then Continue - then print. (If it's a Back job, a Super User can tick "Back job" instead.)`);
   return false;
 }
 
@@ -1587,7 +1631,7 @@ function showDayDetail(dateKey) {
           <td>${inDrop ? '<span class="muted">&#8627;</span> ' : ''}${s.order_id || ''}</td>
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
-          <td>${s.status || ''}${s.is_manual_delivery_fee && !s.fee_combined_with ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}${stopDropFeeNoteHtml(s, group)}${stopHasDeliveryFee(s) ? '' : '<br><span class="error-text">No delivery fee - can\'t print yet</span>'}</td>
+          <td>${s.status || ''}${s.is_manual_delivery_fee && !s.fee_combined_with ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}${stopDropFeeNoteHtml(s, group)}${stopHasDeliveryFee(s) ? '' : '<br><span class="error-text">No delivery fee - can\'t print yet</span>'}${stopBackJobToggleHtml(s)}</td>
           <td>${displayAddress}${isManuallyEnteredAddress ? ' <span class="muted">(manually entered)</span>' : ''}</td>
           <td>${s.created_by || ''}</td>
           <td>${s.notes || ''}</td>
@@ -1606,6 +1650,10 @@ function showDayDetail(dateKey) {
 
   tbody.querySelectorAll('select[data-drop-fee-mode-key]').forEach((select) => {
     select.addEventListener('change', () => setDropFeeMode(select));
+  });
+
+  tbody.querySelectorAll('input[data-back-job-stop-id]').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => setStopBackJob(checkbox));
   });
 
   tbody.querySelectorAll('button[data-stop-id]').forEach((btn) => {

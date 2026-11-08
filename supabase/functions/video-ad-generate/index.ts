@@ -30,7 +30,7 @@ const MAX_TOOL_ROUNDS = 4;
 const ACCENTS = ['#3fe0d0', '#ffd166', '#ff7a59', '#7cc8ff', '#a3e635'];
 const STYLES = ['logo', 'tank', 'stand', 'sump', 'payments', 'delivery', 'reviews', 'photo', 'water', 'cta'] as const;
 // Payment method cards - same keys as PAY_METHODS in docs/js/videoAdRenderer.js.
-const PAY_METHODS = ['visa', 'mastercard', 'gcash', 'maya', 'qrph', 'bank', 'cash'];
+const PAY_METHODS = ['visa', 'mastercard', 'bancnet', 'jcb', 'qrph', 'gcash', 'shopeepay', 'alipayplus', 'cash', 'maya', 'bank'];
 // Tank option flags - same keys as TANK_OPTIONS in docs/js/videoAdRenderer.js.
 const TANK_FLAGS = ['aio', 'rimless', 'highStrip', 'lowIron', 'tempered', 'backSticker', 'aquascape', 'light', 'cabinet', 'canopy'];
 const BUILD_DIMS: Record<string, [number, number, number]> = { tank: [48, 18, 20], stand: [48, 18, 30], sump: [30, 14, 16] };
@@ -54,7 +54,7 @@ Staff describe the ad they want. You return the finished ad plan; the portal ani
 - stand: a square-tube metal aquarium stand builds itself, with its size counting up. For stand messages. Set stand_layers (1-4, usually 2) and stand_paint ("black" or "white").
 - sump: a sump (filtration tank under the aquarium) draws itself: glass box with baffles, a filter sock, bio media and a return pump, with water flowing through it and its size counting up. For sump / filtration messages.
   For tank, stand and sump put the size in size_inches as [length, width, height]; it is drawn to that shape. Use the size the staff gave; otherwise a typical one (tank 48x18x20, stand 48x18x30, sump 30x14x16) - a stand for a tank shares the tank's length and width. Leave size_inches [] for other styles.
-- payments: the payment methods drop in as cards (Visa, Mastercard, GCash, Maya, QR Ph, bank transfer, cash). Put the ones to show in payment_methods (keys: ${PAY_METHODS.join(", ")}); [] shows them all. Only list methods the business facts say we accept, when they say. Good near the end, before the end card.
+- payments: the payment methods drop in as cards with their official logos (Visa, Mastercard, BancNet, JCB, QR Ph & e-wallets, GCash, ShopeePay, Alipay+, cash; also Maya, bank transfer). Put the ones to show in payment_methods (keys: ${PAY_METHODS.join(", ")}); [] shows the standard set (visa, mastercard, bancnet, jcb, qrph, gcash, shopeepay, alipayplus, cash). Only list methods the business facts say we accept, when they say. Good near the end, before the end card.
 - delivery: our own delivery truck (with the shop logo) drives up to a house and the wrapped aquarium is carried to the door, ending with a tick. For "we deliver it safely to your home" messages. Give it 3.5-4 seconds.
 - reviews: real customer reviews from our Facebook page (stars + quote bubbles). Staff pick the reviews themselves - you never see or write review text. Never add a reviews scene; if the current ad has one, keep it (usually first) and only change its headline/sub/seconds/voiceover.
 - photo: one of the photos/clips you are given (or a catalog product photo), full screen with a slow zoom. The strongest style when there is something real to show.

@@ -8292,6 +8292,100 @@ WHEN NOT MATCHED THEN
         }
 
         /// <summary>
+        /// Supabase -> desktop: size-based prices (e.g. fish) from the Web Portal's Size Pricing page
+        /// (sql/supabase_item_size_pricing.sql) into local dbo.ItemSizeTier - one row per (item, size)
+        /// with the formula inputs; MainForm.ComputeSizeTierPrice works the price out from the line's own
+        /// price at sale time, so it works offline once pulled. The table is created on first run.
+        /// The portal is the only place these are edited, so the local table is replaced in full - but
+        /// only after a successful answer (a failed call leaves the last copy in place).
+        /// Returns the number of tier rows now stored locally.
+        /// </summary>
+        public static async Task<int> SyncItemSizeTiersFromPortalAsync(TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(60);
+
+            string endpointUrl = GlobalSettings.ItemsSupabaseEndpoint?.Trim() ?? string.Empty;
+            int restIndex = endpointUrl.IndexOf("/rest/v1/", StringComparison.OrdinalIgnoreCase);
+            if (restIndex < 0)
+                throw new InvalidOperationException("ItemsSupabaseEndpoint is not a Supabase REST URL.");
+            string rpcUrl = endpointUrl.Substring(0, restIndex) + "/rest/v1/rpc/pos_list_item_size_tiers";
+
+            using var http = new HttpClient { Timeout = timeout.Value };
+            using var req = new HttpRequestMessage(HttpMethod.Post, rpcUrl);
+            req.Headers.TryAddWithoutValidation("apikey", GlobalSettings.TransferHeaderSupabaseApiKey);
+            req.Headers.TryAddWithoutValidation("Authorization", GlobalSettings.TransferHeaderSupabaseAuthorization);
+            req.Content = new StringContent(
+                JsonSerializer.Serialize(new { p_pos_key = GlobalSettings.PosApiKey }),
+                Encoding.UTF8, "application/json");
+
+            using var resp = await http.SendAsync(req).ConfigureAwait(false);
+            string respText = string.Empty;
+            try { respText = await resp.Content.ReadAsStringAsync().ConfigureAwait(false); } catch { respText = string.Empty; }
+            if (!resp.IsSuccessStatusCode)
+                throw new HttpRequestException($"Item size tiers RPC failed: {(int)resp.StatusCode} {resp.ReasonPhrase}. Response: {respText}");
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return 0;
+
+            static decimal Num(JsonElement row, string name) =>
+                row.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetDecimal() : 0m;
+            static string Str(JsonElement row, string name) =>
+                row.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() ?? string.Empty : string.Empty;
+
+            using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+            conn.Open();
+            using (var createCmd = new SqlCommand(@"
+IF OBJECT_ID('dbo.ItemSizeTier', 'U') IS NULL
+CREATE TABLE dbo.ItemSizeTier (
+    ItemCode nvarchar(200) NOT NULL,
+    SortOrder int NOT NULL,
+    SizeLabel nvarchar(60) NOT NULL,
+    MarkupPercent decimal(9, 2) NOT NULL,
+    MarkupAmount decimal(18, 2) NOT NULL,
+    RoundTo decimal(18, 2) NOT NULL
+);", conn))
+            {
+                createCmd.ExecuteNonQuery();
+            }
+
+            using var tx = conn.BeginTransaction();
+            using (var delCmd = new SqlCommand("DELETE FROM dbo.ItemSizeTier", conn, tx))
+                delCmd.ExecuteNonQuery();
+
+            int count = 0;
+            using (var insCmd = new SqlCommand(
+                "INSERT INTO dbo.ItemSizeTier (ItemCode, SortOrder, SizeLabel, MarkupPercent, MarkupAmount, RoundTo) VALUES (@c, @s, @l, @p, @a, @r)",
+                conn, tx))
+            {
+                insCmd.Parameters.Add("@c", System.Data.SqlDbType.NVarChar, 200);
+                insCmd.Parameters.Add("@s", System.Data.SqlDbType.Int);
+                insCmd.Parameters.Add("@l", System.Data.SqlDbType.NVarChar, 60);
+                var p = insCmd.Parameters.Add("@p", System.Data.SqlDbType.Decimal); p.Precision = 9; p.Scale = 2;
+                var a = insCmd.Parameters.Add("@a", System.Data.SqlDbType.Decimal); a.Precision = 18; a.Scale = 2;
+                var r = insCmd.Parameters.Add("@r", System.Data.SqlDbType.Decimal); r.Precision = 18; r.Scale = 2;
+
+                foreach (var row in doc.RootElement.EnumerateArray())
+                {
+                    if (row.ValueKind != JsonValueKind.Object) continue;
+                    string code = Str(row, "item_code");
+                    string label = Str(row, "size_label");
+                    if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(label)) continue;
+                    insCmd.Parameters["@c"].Value = code;
+                    insCmd.Parameters["@s"].Value = (int)Num(row, "sort_order");
+                    insCmd.Parameters["@l"].Value = label;
+                    insCmd.Parameters["@p"].Value = Num(row, "markup_percent");
+                    insCmd.Parameters["@a"].Value = Num(row, "markup_amount");
+                    insCmd.Parameters["@r"].Value = Num(row, "round_to");
+                    count += insCmd.ExecuteNonQuery();
+                }
+            }
+
+            tx.Commit();
+            return count;
+        }
+
+        /// <summary>
         /// Supabase -> desktop: products (dbo.Items + dbo.[Variant]) from the Web Portal, replacing the
         /// Pancake /products/variations pull (SyncProductVariationsAsync). The Portal is the product master
         /// (supabase_item_master_portal_owned.sql); until its cutover the Portal's own copy is refreshed from

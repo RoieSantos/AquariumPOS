@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Size Pricing - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .sp-scale { border: 1px solid var(--border, #d8dee8); border-radius: 10px; padding: 16px; margin: 16px 0; }
+    .sp-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    .sp-head label { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
+    .sp-head input { min-width: 0; }
+    .sp-tiers input { width: 100%; max-width: 140px; }
+    .sp-items { margin-top: 12px; }
+    .sp-search-wrap { position: relative; max-width: 420px; }
+    .sp-search-results { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; background: var(--surface, #fff);
+      border: 1px solid var(--border, #d8dee8); border-radius: 8px; max-height: 260px; overflow: auto; }
+    .sp-search-results div { padding: 8px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
+    .sp-search-results div:hover { background: rgba(29, 79, 145, 0.08); }
+    .sp-prices { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Size Pricing</h1>
+    <p class="muted">For products whose price depends on size, like fish. A size scale adds a % and/or a fixed &#8369; amount to the product's normal price for each size, then rounds it, e.g. SHBRTG &#8369;8,500 &rarr; 10-11" (+18%, round to 100) = &#8369;10,000. When staff sell a product on a scale, the POS, Conversations and Online Orders ask for the size and fill in that price. Stock isn't split by size. Order Now isn't affected. Alice tells customers fish are priced by size. Super users only.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <h2 style="margin:0;">Size Scales</h2>
+        <button class="btn btn-primary btn-sm" id="newScaleBtn" type="button" style="margin-left:auto;">+ New Size Scale</button>
+        <button class="btn btn-secondary btn-sm" id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div id="scalesBox"><p class="muted">Loading...</p></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=tenderdeposit1"></script>
+  <script src="js/nav.js?v=size1"></script>
+  <script src="js/sizePricing.js?v=size1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
