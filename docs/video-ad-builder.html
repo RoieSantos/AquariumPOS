@@ -205,6 +205,10 @@
             <span class="va-clock" id="clock">0.0 / 0.0s</span>
           </div>
           <div class="va-controls">
+            <select id="exportFormat" aria-label="Video size" title="Video size" style="flex:0 0 auto;">
+              <option value="reels">Reels / Stories 9:16</option>
+              <option value="feed">Feed post 4:5</option>
+            </select>
             <button class="btn btn-success" id="exportBtn" type="button" style="flex:1;">Export MP4</button>
           </div>
           <div class="va-controls">
@@ -266,6 +270,8 @@
           <div class="va-box" id="coverBox">
             <h3>🖼 Cover</h3>
             <p class="muted" style="margin:0 0 10px; font-size:12.5px;">The still picture people see before they tap play. Click <b>Download cover</b> and pick it as the thumbnail when you post the Reel or ad.</p>
+            <div class="va-media" id="coverImageRow" style="margin-bottom:10px;"></div>
+            <div id="coverDesigned">
             <div class="va-grid">
               <label class="va-label">Headline
                 <input type="text" data-cover="headline" maxlength="80" placeholder="e.g. Still worrying what setup to buy?" />
@@ -289,6 +295,7 @@
               </div>
             </div>
             <div class="va-media" id="coverMediaRow" style="margin-top:10px;"></div>
+            </div>
           </div>
 
           <div class="va-box">
@@ -425,9 +432,9 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=vad1"></script>
-  <script src="js/videoAdRenderer.js?v=vadpay1"></script>
+  <script src="js/videoAdRenderer.js?v=vadfeed1"></script>
   <script src="js/videoAdMusic.js?v=vadmusic3"></script>
-  <script src="js/videoAdBuilder.js?v=vadpay1"></script>
+  <script src="js/videoAdBuilder.js?v=vadfeed1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

@@ -1122,6 +1122,7 @@ export const TOOLS: Anthropic.Tool[] = [
         stand_layers: { type: 'integer', description: 'Number of stand shelves/layers, minimum 2. Only used when add_stand is true.' },
         stand_tubular: { type: 'string', enum: ['1x1', '1.5x1.5', '2x2'], description: 'Stand frame tubular size. Only used when add_stand is true.' },
         stand_stainless: { type: 'boolean', description: 'Stainless steel stand frame instead of regular. Only used when add_stand is true.' },
+        stand_paint: { type: 'string', enum: ['Black', 'White'], description: 'Stand paint color, if the customer said (not for a stainless stand). Doesn\'t change the price - it\'s shown on the drawing link. Only used when add_stand is true.' },
         stand_cabinet: { type: 'boolean', description: 'Enclose the stand as a cabinet (18mm laminated plywood front doors, sides and closed back). Only used when add_stand is true.' },
         cabinet_type: { type: 'string', enum: ['Laminated Plywood', 'Aluminum'], description: 'Material for the cabinet AND canopy: "Laminated Plywood" (18mm, default) or "Aluminum" (4mm ACP aluminum composite panels, pricier). Only used when stand_cabinet or canopy is true.' },
         stand_cabinet_doors: { type: 'integer', description: 'Number of cabinet doors. Leave out to use the default (2 doors per 3ft of length, e.g. 3ft = 2 doors, 6ft = 4 doors). Only used when stand_cabinet is true.' },
@@ -1136,7 +1137,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'compute_sump_quote',
     description:
-      'Compute a real price quote for a custom SUMP / filtration bought ON ITS OWN - no aquarium (e.g. "magkano sump 36x18x18", "sump lang", a sump for a tank they already have). Never use compute_aquarium_quote for this: that prices a glass TANK, and a tank with a sump add-on still charges for the tank. Same official formula as the staff calculator\'s "Sump only" build and Order Now\'s Customize > Filtration. Show the result\'s priceLines and totalPrice; order it as item_code "CUSTOM-SUMP" with custom_price = totalPrice.',
+      'Compute a real price quote for a custom SUMP / filtration bought ON ITS OWN - no aquarium (e.g. "magkano sump 36x18x18", "sump lang", a sump for a tank they already have). Never use compute_aquarium_quote for this: that prices a glass TANK, and a tank with a sump add-on still charges for the tank. The reverse also holds: if the SAME quote also has a custom tank you are pricing with compute_aquarium_quote, do NOT use this tool - set add_sump (and the sump_* options) on that compute_aquarium_quote call instead, so the sump is in its totalPrice and on its aquariumDrawingUrl (a separate sump quote leaves it off the drawing). Same official formula as the staff calculator\'s "Sump only" build and Order Now\'s Customize > Filtration. Show the result\'s priceLines and totalPrice; order it as item_code "CUSTOM-SUMP" with custom_price = totalPrice.',
     input_schema: {
       type: 'object',
       properties: {
@@ -2095,6 +2096,7 @@ export async function computeAquariumQuote(supabase: SupabaseClient, input: Reco
       aquariumParams.set('standLayers', String(stand.layers));
       aquariumParams.set('standTubular', String(stand.tubular));
       if (stand.stainless) aquariumParams.set('standStainless', '1');
+      else if (input.stand_paint === 'Black' || input.stand_paint === 'White') aquariumParams.set('standPaint', String(input.stand_paint));
       // Cabinet/Canopy too, so the customer's preview shows the same cabinet (doors) and canopy.
       if (stand.cabinet) {
         aquariumParams.set('standCabinet', '1');

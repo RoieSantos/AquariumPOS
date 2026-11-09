@@ -18,7 +18,10 @@
     'sumpHolder', 'sumpWidth',
     'sumpEnabled', 'sumpLength', 'sumpHeight', 'sumpDividerCount', 'sumpDividerHeight', 'sumpDrainValves', 'sumpRaisedChamber', 'sumpTopDrawer',
     'standEnabled', 'standSumpHolder', 'standSumpWidth', 'standPaint', 'standStainless', 'sealant',
-    'lowIron', 'highStrip', 'aio', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount'
+    'lowIron', 'highStrip', 'aio', 'enclosure', 'turtleTank', 'aquascape', 'holeCount', 'dividerCount',
+    // For the full drawing link (js/calcEmbedLines.js buildAquariumDrawingUrlFrom).
+    'filterMedias', 'piping', 'pipingDrain', 'overflowBox', 'allumTopCover',
+    'stickerBackground', 'stickerBackgroundType', 'allSides', 'stickerBottom', 'stickerBottomType', 'specialNote'
   ];
   var started = false;
   var lastSent = '';

@@ -946,6 +946,17 @@
       byId('unit').value = params.get('unit') || 'Inches';
       if (params.has('layers')) byId('layers').value = params.get('layers');
       if (params.get('stainless') === '1') byId('stainless').checked = true;
+      // Paint / cabinet / canopy / sump holder from the Conversations quote link (js/calcEmbedLines.js).
+      if (params.get('paint') === 'Black' || params.get('paint') === 'White') selectPaint(params.get('paint'));
+      if (params.get('cabinet') === '1') byId('cabinet').checked = true;
+      if (params.has('cabinetDoors')) byId('cabinetDoors').value = params.get('cabinetDoors');
+      if (params.get('canopy') === '1') byId('canopy').checked = true;
+      if (params.has('canopyHeight')) byId('canopyHeight').value = params.get('canopyHeight');
+      if (params.has('cabinetType')) byId('cabinetType').value = params.get('cabinetType');
+      if (params.get('sumpHolder') === '1') {
+        byId('sumpHolder').checked = true;
+        if (params.has('sumpWidth')) byId('sumpWidth').value = params.get('sumpWidth');
+      }
 
       selectTubular(params.get('tubular') || '1x1');
       attachHandlers();
@@ -954,6 +965,6 @@
     })();
   </script>
   <script src="./calculator-ui.js?v=1"></script>
-  <script src="./calc-embed-bridge.js?v=caparts1"></script>
+  <script src="./calc-embed-bridge.js?v=drawlink1"></script>
 </body>
 </html>

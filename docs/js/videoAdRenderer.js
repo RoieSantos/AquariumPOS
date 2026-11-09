@@ -126,6 +126,7 @@ window.VideoAdRenderer = (function () {
       return Promise.all(ad.scenes.map((s) => loadMedia(s.media, s.mediaType))
         .concat(photos.map((src) => loadMedia(src, 'image')), loadMedia(ad.brand && ad.brand.logo),
           loadMedia(ad.cover && ad.cover.media, ad.cover && ad.cover.mediaType),
+          loadMedia(ad.cover && ad.cover.image, 'image'),
           ...ad.scenes.filter((s) => s.style === 'payments').flatMap(payKeys).filter((k) => PAY_LOGOS[k])
             .map((k) => loadMedia(PAY_LOGOS[k], 'image'))));
     }
@@ -2038,7 +2039,9 @@ window.VideoAdRenderer = (function () {
     // ---------- cover (the still thumbnail people see before they tap play) ----------
     // ad.cover = { headline, highlight (words of the headline that go big on a yellow brush stroke), tag
     // (handwritten note pointing at the play button), topics[] (up to 4 labels in a row), button (call to
-    // action on a yellow stroke), media/mediaType (shown in the phone; none = the ad's first photo/clip) }.
+    // action on a yellow stroke), media/mediaType (shown in the phone; none = the ad's first photo/clip),
+    // image (a separate, ready-made cover picture: when set it IS the cover - filled edge to edge, nothing
+    // drawn on top, the designed cover above is skipped) }.
     const COVER_T = 2.6; // the water frozen at a moment where the bubbles and rays are spread out nicely
     const YELLOW = '#ffd93b', BRUSH = '#f5b800', INK = '#06142c';
 
@@ -2290,6 +2293,16 @@ window.VideoAdRenderer = (function () {
     function drawCover() {
       if (!ad) return;
       const c = ad.cover || {};
+      const own = getMedia(c.image);
+      if (own && own.el.naturalWidth) {
+        // A separate cover picture: fill the 9:16 frame (center crop), nothing on top.
+        const iw = own.el.naturalWidth, ih = own.el.naturalHeight, sc = Math.max(W / iw, H / ih);
+        ctx.save();
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        ctx.drawImage(own.el, (W - iw * sc) / 2, (H - ih * sc) / 2, iw * sc, ih * sc);
+        ctx.restore();
+        return;
+      }
       ctx.save();
       drawWater(COVER_T);
 
@@ -2735,8 +2748,34 @@ window.VideoAdRenderer = (function () {
       return Promise.all(waits);
     }
 
-    async function pickCodec() {
-      const base = { width: W, height: H, bitrate: 10000000, framerate: FPS };
+    // Feed 4:5 (1080x1350): every scene is laid out for the tall 9:16 frame, so instead of cropping
+    // (which would cut headlines/buttons) the whole frame is fitted in the middle and the sides are
+    // filled with a blurred, darkened, zoomed copy of it. The blur is a tiny downscale + upscale, so it
+    // works on browsers without canvas ctx.filter (Safari).
+    const FEED_W = 1080, FEED_H = 1350;
+    let feedCanvas = null, feedCtx = null, blurCanvas = null, blurCtx = null;
+    function feedFrame() {
+      if (!feedCanvas) {
+        feedCanvas = document.createElement('canvas'); feedCanvas.width = FEED_W; feedCanvas.height = FEED_H;
+        feedCtx = feedCanvas.getContext('2d');
+        blurCanvas = document.createElement('canvas'); blurCanvas.width = 27; blurCanvas.height = 48;
+        blurCtx = blurCanvas.getContext('2d');
+      }
+      blurCtx.drawImage(canvas, 0, 0, blurCanvas.width, blurCanvas.height);
+      feedCtx.save();
+      feedCtx.imageSmoothingEnabled = true; feedCtx.imageSmoothingQuality = 'high';
+      const bh = FEED_W * (H / W); // fill the width: 1080 x 1920, centered vertically
+      feedCtx.drawImage(blurCanvas, 0, (FEED_H - bh) / 2, FEED_W, bh);
+      feedCtx.fillStyle = 'rgba(0,0,0,0.35)'; feedCtx.fillRect(0, 0, FEED_W, FEED_H);
+      const fw = FEED_H * (W / H), fx = (FEED_W - fw) / 2;
+      feedCtx.shadowColor = 'rgba(0,0,0,0.6)'; feedCtx.shadowBlur = 40;
+      feedCtx.drawImage(canvas, fx, 0, fw, FEED_H);
+      feedCtx.restore();
+      return feedCanvas;
+    }
+
+    async function pickCodec(w = W, h = H) {
+      const base = { width: w, height: h, bitrate: 10000000, framerate: FPS };
       for (const codec of ['avc1.640033', 'avc1.640032', 'avc1.4d0033', 'avc1.42e033']) {
         for (const hardwareAcceleration of ['no-preference', 'prefer-software']) {
           const cfg = { ...base, codec, hardwareAcceleration, avc: { format: 'avc' } };
@@ -2779,11 +2818,14 @@ window.VideoAdRenderer = (function () {
       enc.close();
     }
 
-    async function exportMp4(onProgress, audio) {
+    // format: 'reels' (default, 1080x1920 9:16) | 'feed' (1080x1350 4:5 - see feedFrame).
+    async function exportMp4(onProgress, audio, format) {
       if (!('VideoEncoder' in window) || !window.Mp4Muxer) {
         throw new Error('This browser cannot make videos. Use Chrome or Edge on a computer or Android, or Safari 16.4+ on iPhone.');
       }
-      const cfg = await pickCodec();
+      const feed = format === 'feed';
+      const outW = feed ? FEED_W : W, outH = feed ? FEED_H : H;
+      const cfg = await pickCodec(outW, outH);
       if (!cfg) throw new Error('This browser has no H.264 video encoder. Try Chrome or Edge.');
       const audioCfg = audio ? await pickAudioCodec(audio.sampleRate) : null;
       if (audio && !audioCfg) throw new Error('This browser cannot add music to videos. Set Music to "None", or use Chrome or Edge.');
@@ -2791,7 +2833,7 @@ window.VideoAdRenderer = (function () {
       await loadAll();
       const muxer = new Mp4Muxer.Muxer({
         target: new Mp4Muxer.ArrayBufferTarget(),
-        video: { codec: 'avc', width: W, height: H, frameRate: FPS },
+        video: { codec: 'avc', width: outW, height: outH, frameRate: FPS },
         audio: audioCfg ? { codec: 'aac', numberOfChannels: 2, sampleRate: audio.sampleRate } : undefined,
         fastStart: 'in-memory'
       });
@@ -2805,7 +2847,7 @@ window.VideoAdRenderer = (function () {
         const t = i / FPS;
         await seekVideosExact(t);
         drawFrame(t);
-        const frame = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+        const frame = new VideoFrame(feed ? feedFrame() : canvas, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
         enc.encode(frame, { keyFrame: i % (FPS * 2) === 0 });
         frame.close();
         while (enc.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 5));
@@ -2819,7 +2861,7 @@ window.VideoAdRenderer = (function () {
 
     return {
       setAd(next) { ad = next; return loadAll(); },
-      loadMedia, loadAll, totalDuration, timeline, drawFrame, drawCover, prepareCover, syncVideos, pauseVideos, exportMp4,
+      loadMedia, loadAll, totalDuration, timeline, drawFrame, drawCover, prepareCover, syncVideos, pauseVideos, exportMp4, feedFrame,
       isMediaFailed: (src) => !!(src && media[src] && media[src].failed)
     };
   }

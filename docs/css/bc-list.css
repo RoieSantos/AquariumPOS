@@ -2995,6 +2995,25 @@ a.bc-cue:hover {
 /* Transfer / Purchase Order cards get the same split as the Online Order card - a bit wider windowed. */
 #viewLinesModal .to-manage-panel:not(.modal-maximized),
 #poCardModal .po-doc-panel:not(.modal-maximized) { max-width: 1380px; }
+/* Maximized Purchase Order card: the Lines grid takes the full width too, instead of stopping at
+   the Stock FactBox. .oc-main dissolves into the split grid so General + Stock share the top row
+   and whichever Lines part is showing spans both columns underneath. Wide screens only - below
+   900px the split is already one column. */
+@media (min-width: 901px) {
+  /* Rows hug their content - without this the grid's two rows split the maximized window's
+     height and leave a big empty gap between General and Lines. */
+  #poCardModal .po-doc-panel.modal-maximized .bc-doc-body.oc-split { align-content: start; }
+  #poCardModal .po-doc-panel.modal-maximized .oc-main { display: contents; }
+  /* The lines box grows with its rows (the document body scrolls, not the box), and the item /
+     variant suggestion list can open over the space below instead of being clipped inside a
+     two-row scroll box. */
+  #poCardModal .po-doc-panel.modal-maximized .doc-lines-wrap { flex: none; overflow: visible; }
+  #poCardModal .po-doc-panel.modal-maximized #poCardNewLines { padding-bottom: 280px; }
+  #poCardModal .po-doc-panel.modal-maximized #poCardGeneralTab { grid-column: 1; grid-row: 1; min-width: 0; }
+  #poCardModal .po-doc-panel.modal-maximized .oc-factbox-col { grid-column: 2; grid-row: 1; position: static; }
+  #poCardModal .po-doc-panel.modal-maximized #poCardNewLines,
+  #poCardModal .po-doc-panel.modal-maximized #poCardExistingLines { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+}
 #orderCardModal.maker-focus .bc-doc-body.oc-split,
 #prodCardModal.maker-view .bc-doc-body.oc-split { display: block; }
 #prodCardModal.maker-view .oc-factbox { display: none; }

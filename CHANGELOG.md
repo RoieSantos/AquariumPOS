@@ -2,7 +2,18 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-09
+
+- **Conversations manual quote: drawing link now shows the whole build.** The Custom Aquarium link from Put in reply / Create Order only had size, glass and the stand frame, so it dropped the sump, stand paint, cabinet/canopy, sealant, stickers, holes, dividers and notes. It now sends the same params as Alice's link. The Custom Stand link now carries paint, cabinet, canopy and sump holder, and stand.html reads them ([calcEmbedLines.js](docs/js/calcEmbedLines.js), [calc-embed-bridge.js](docs/WebAquariumCalculator/calc-embed-bridge.js), [stand.html](docs/WebAquariumCalculator/stand.html), `?v=drawlink1`).
+- **Alice: drawing link now matches the quote (sump + stand paint).** Added a `stand_paint` (Black/White) input to `compute_aquarium_quote` that is passed to the drawing link as `standPaint`. `compute_sump_quote` now says not to use it when the same quote has a custom tank, so the sump goes on the aquarium quote (`add_sump`) and shows on its drawing ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+- **Purchase Order card: Lines go full width when maximized.** The Lines grid (new and existing orders) now spans under the Stock FactBox instead of stopping beside it; General + Stock stay side by side on top. Windowed/narrow layout unchanged ([bc-list.css](docs/css/bc-list.css), `?v=polinesmax1`).
+- Follow-up: removed the empty gap between General and Lines, and the lines box now grows with its rows (no more 2-row scroll box), with the item drop-down opening over free space below instead of being clipped (`?v=polinesmax2`).
+
 ## 2026-11-08
+
+- **Video Ad Builder: Feed 4:5 export.** New size picker by Export MP4 - "Feed post 4:5" exports 1080x1350 (the 9:16 frame fitted in the middle, blurred copy filling the sides, nothing cropped); Download cover follows it too ([videoAdRenderer.js](docs/js/videoAdRenderer.js), [videoAdBuilder.js](docs/js/videoAdBuilder.js), [video-ad-builder.html](docs/video-ad-builder.html), `?v=vadfeed1`).
+
+- **Video Ad Builder: separate cover picture.** Cover box has "Upload cover picture" - a ready-made image (best 1080x1920) that becomes the whole cover, full screen with nothing drawn on top; the designed cover fields hide until it's removed ([videoAdBuilder.js](docs/js/videoAdBuilder.js), [videoAdRenderer.js](docs/js/videoAdRenderer.js), [video-ad-builder.html](docs/video-ad-builder.html), `?v=vadcover1`).
 
 - **Delivery: "Back job" checkbox on each stop.** A back job can be printed (Print / Invoice / Job Order) with no delivery fee; Super User only ([supabase_delivery_stop_back_job.sql](sql/supabase_delivery_stop_back_job.sql), [delivery.js](docs/js/delivery.js), `?v=backjob2`).
 - **New employee: Matt P. Heraldez** (independent contractor, Weekly, Monthly Salary 15,000, Cash, hired 2026-11-01, Employee No. = last + 1), username `matt` with temporary password `123456` ([supabase_add_employee_matt_heraldez.sql](sql/supabase_add_employee_matt_heraldez.sql)).

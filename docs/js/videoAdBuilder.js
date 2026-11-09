@@ -337,7 +337,27 @@ function renderCover() {
   renderCoverMedia();
 }
 
+// A separate, ready-made cover picture (e.g. made in Canva). When set, it IS the cover - the designed
+// cover's fields below are hidden and ignored until it's removed.
+function renderCoverImage() {
+  const c = current.config.cover;
+  const img = c.image || '';
+  const failed = img && renderer.isMediaFailed(img);
+  const busy = img && img.startsWith('blob:');
+  $('coverImageRow').innerHTML = `
+    ${img ? `<img class="va-media-thumb" src="${escapeHtml(img)}" alt="" crossorigin="anonymous" />` : '<div class="va-media-thumb"></div>'}
+    <div class="va-media-info">
+      <b>${!img ? 'Use my own cover picture' : busy ? 'Uploading...' : failed ? 'Could not load this file' : 'Your cover picture'}</b>
+      ${!img ? 'Upload a finished cover (best 1080 x 1920, tall 9:16). It replaces the designed cover below.' : 'Shown full screen as the cover, nothing added on top. Remove it to go back to the designed cover.'}
+    </div>
+    <label class="btn btn-secondary btn-sm" for="coverImageFile">${img ? 'Change' : 'Upload cover picture'}</label>
+    <input type="file" id="coverImageFile" accept="image/*" />
+    ${img ? '<button class="btn btn-secondary btn-sm" id="coverImageClear" type="button">Remove</button>' : ''}`;
+  $('coverDesigned').classList.toggle('hidden', !!img);
+}
+
 function renderCoverMedia() {
+  renderCoverImage();
   const c = current.config.cover;
   const isVid = c.media && VideoAdRenderer.isVideo(c.media, c.mediaType);
   const failed = c.media && renderer.isMediaFailed(c.media);
@@ -378,6 +398,11 @@ function onCoverClick(e) {
       room: () => 1, used: () => new Set(),
       apply: ([p]) => { c.media = p.url; c.mediaType = p.kind; setCoverView(true); }
     });
+  } else if (e.target.id === 'coverImageClear') {
+    c.image = '';
+    setDirty(true);
+    renderCoverMedia();
+    setCoverView(true);
   } else if (e.target.id === 'coverMediaClear') {
     c.media = ''; c.mediaType = '';
     setDirty(true);
@@ -386,6 +411,15 @@ function onCoverClick(e) {
 }
 
 function onCoverFileChange(e) {
+  if (e.target.id === 'coverImageFile') {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (file && !file.type.startsWith('image/')) { toast('The cover has to be a picture (JPG or PNG).', true); return; }
+    const c = current.config.cover;
+    setCoverView(true);
+    pickMedia(file, { get: () => c.image || null, getType: () => 'image', set: (url) => { c.image = url || ''; } });
+    return;
+  }
   if (e.target.id !== 'coverFile') return;
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
@@ -405,17 +439,38 @@ async function setCoverView(on) {
   }
 }
 
+// Video size for Export MP4 / Download cover: 'reels' (1080x1920) or 'feed' (1080x1350). Remembered
+// per browser only - it's a convenience, not part of the saved ad.
+function exportFormat() { return $('exportFormat').value === 'feed' ? 'feed' : 'reels'; }
+
+// The 4:5 cover. Your own cover picture is filled straight into 1080x1350 (so a picture made at 4:5
+// isn't cropped to 9:16 first); the designed cover gets the same fit-with-blurred-sides as the video.
+function feedCoverCanvas() {
+  const src = current.config.cover.image;
+  const img = src && [...document.querySelectorAll('#coverImageRow img')].find((el) => el.complete && el.naturalWidth);
+  if (!img) return renderer.feedFrame();
+  const out = document.createElement('canvas');
+  out.width = 1080; out.height = 1350;
+  const g = out.getContext('2d');
+  const sc = Math.max(out.width / img.naturalWidth, out.height / img.naturalHeight);
+  g.fillStyle = '#000'; g.fillRect(0, 0, out.width, out.height);
+  g.drawImage(img, (out.width - img.naturalWidth * sc) / 2, (out.height - img.naturalHeight * sc) / 2, img.naturalWidth * sc, img.naturalHeight * sc);
+  return out;
+}
+
 async function downloadCover() {
   if (!current || exporting) return;
   if (uploading) { toast('Wait for the upload to finish first.', true); return; }
   await setCoverView(true);
   renderer.drawCover();
+  const feed = exportFormat() === 'feed';
   try {
-    $('stage').toBlob((blob) => {
+    const out = feed ? feedCoverCanvas() : $('stage');
+    out.toBlob((blob) => {
       if (!blob) { toast('Could not make the cover picture.', true); return; }
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = slug($('adName').value) + '-cover.jpg';
+      a.download = slug($('adName').value) + (feed ? '-cover-4x5.jpg' : '-cover.jpg');
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 60000);
       toast('Cover downloaded - choose it as the thumbnail when you post.');
@@ -1659,7 +1714,7 @@ async function saveAd() {
   const name = $('adName').value.trim();
   if (!name) { toast('Give the ad a name first.', true); $('adName').focus(); return; }
   const c = current.config;
-  if ([c.brand.logo, c.music && c.music.src, c.cover && c.cover.media, ...c.scenes.map((s) => s.media)].some((u) => u && u.startsWith('blob:'))) {
+  if ([c.brand.logo, c.music && c.music.src, c.cover && c.cover.media, c.cover && c.cover.image, ...c.scenes.map((s) => s.media)].some((u) => u && u.startsWith('blob:'))) {
     toast('A photo/video did not finish uploading. Choose it again, then save.', true);
     return;
   }
@@ -1691,11 +1746,12 @@ async function exportVideo() {
   previewAudioStop();
   try {
     const audio = currentMusicKey() === 'none' ? null : await buildSoundtrack();
-    const blob = await renderer.exportMp4((p) => { bar.style.width = Math.round(p * 100) + '%'; }, audio);
+    const format = exportFormat();
+    const blob = await renderer.exportMp4((p) => { bar.style.width = Math.round(p * 100) + '%'; }, audio, format);
     bar.style.width = '100%';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = slug($('adName').value) + '.mp4';
+    a.download = slug($('adName').value) + (format === 'feed' ? '-4x5' : '') + '.mp4';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
     $('exportStatus').textContent = `Done - ${(blob.size / 1e6).toFixed(1)} MB MP4 downloaded. Upload it as a Reel or ad on Facebook/Instagram.`;
@@ -1773,6 +1829,10 @@ function tick() {
   $('backBtn').addEventListener('click', closeEditor);
   $('saveBtn').addEventListener('click', saveAd);
   $('exportBtn').addEventListener('click', exportVideo);
+  try { if (localStorage.getItem('videoAdExportFormat') === 'feed') $('exportFormat').value = 'feed'; } catch (e) { /* no storage */ }
+  $('exportFormat').addEventListener('change', () => {
+    try { localStorage.setItem('videoAdExportFormat', exportFormat()); } catch (e) { /* no storage */ }
+  });
   $('coverViewBtn').addEventListener('click', () => setCoverView(!coverView));
   $('coverDownloadBtn').addEventListener('click', downloadCover);
   $('coverBox').addEventListener('input', onCoverInput);

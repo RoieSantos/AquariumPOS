@@ -116,7 +116,10 @@ function calcDetailRowsText(rows, filter) {
     .map(([label, value]) => (/^(Hole for Aquarium|Divider)/.test(label) ? label : `${label}: ${value}`));
 }
 
-function buildAquariumDrawingUrlFrom(n, highStrip) {
+// The whole build on the customer's drawing link - same query params as Alice's aquariumDrawingUrl
+// (supabase/functions/_shared/chatbot-engine.ts) and index.html's applyLinkedQuoteParams. Was only
+// size/glass/stand frame, so the link dropped the sump, paint, cabinet, stickers, etc.
+function buildAquariumDrawingUrlFrom(n, checked, val, acc, components) {
   const params = new URLSearchParams({
     length: String(n.lengthInches),
     width: String(n.widthInches),
@@ -125,13 +128,54 @@ function buildAquariumDrawingUrlFrom(n, highStrip) {
     glass: String(n.glassThickness)
   });
   if (n.temperedGlass) params.set('tempered', '1');
+  if (checked('lowIron')) params.set('lowIron', '1');
+  const panelGlass = (Array.isArray(n.panelGlass) ? n.panelGlass : [])
+    .map((p) => `${p.key}:${p.tempered ? 't' : ''}${p.lowIron ? 'l' : ''}`).join(',');
+  if (panelGlass) params.set('panelGlass', panelGlass);
   if (n.rimless) params.set('rimless', '1');
-  if (highStrip) params.set('highStrip', '1');
-  if (n.stand) {
+  if (checked('highStrip')) params.set('highStrip', '1');
+  if (Number(val('holeCount')) > 0) params.set('holeCount', String(val('holeCount')));
+  if (Number(val('dividerCount')) > 0) params.set('dividerCount', String(val('dividerCount')));
+  if (val('sealant') === 'Clear' || val('sealant') === 'Black') params.set('sealant', val('sealant'));
+  const notes = String(val('specialNote') || '').trim();
+  if (notes) params.set('notes', notes.slice(0, 300));
+  if (checked('enclosure')) params.set('enclosure', '1');
+  if (checked('turtleTank')) params.set('turtleTank', '1');
+  const stickerKind = (id) => (/tiles/i.test(val(id)) ? 'tiles' : 'plain');
+  if (checked('stickerBackground') && Number(components.stickerBackground) > 0) {
+    params.set('stickerBackground', stickerKind('stickerBackgroundType'));
+    if (checked('allSides')) params.set('allSides', '1');
+  }
+  if (checked('stickerBottom') && Number(components.stickerBottom) > 0) params.set('stickerBottom', stickerKind('stickerBottomType'));
+  if (n.sump) {
+    params.set('sumpEnabled', '1');
+    params.set('sumpType', String(n.sump.type));
+    params.set('sumpLength', String(n.sump.lengthInches));
+    params.set('sumpWidth', String(n.sump.widthInches));
+    params.set('sumpHeight', String(n.sump.heightInches));
+    params.set('sumpGlass', String(n.sump.glassThickness));
+    if (val('sumpDividerCount')) params.set('sumpDividerCount', String(val('sumpDividerCount')));
+    ['filterMedias', 'piping', 'overflowBox', 'allumTopCover'].forEach((id) => { if (checked(id)) params.set(id, '1'); });
+    if (checked('pipingDrain') && n.sump.type === 'Overhead Sump') params.set('pipingDrain', '1');
+    if (acc && acc.pump) { params.set('pumpItem', acc.pump.code); params.set('pumpQty', String(acc.pump.qty)); }
+    if (acc && acc.light) { params.set('lightItem', acc.light.code); params.set('lightQty', String(acc.light.qty)); }
+  }
+  const s = n.stand;
+  if (s) {
     params.set('standEnabled', '1');
-    params.set('standLayers', String(n.stand.layers));
-    params.set('standTubular', String(n.stand.tubular));
-    if (n.stand.stainless) params.set('standStainless', '1');
+    params.set('standLayers', String(s.layers));
+    params.set('standTubular', String(s.tubular));
+    if (s.stainless) params.set('standStainless', '1');
+    else if (val('standPaint') === 'Black' || val('standPaint') === 'White') params.set('standPaint', val('standPaint'));
+    if (s.cabinet) {
+      params.set('standCabinet', '1');
+      params.set('standCabinetDoors', String(s.cabinetDoors));
+    }
+    if (s.canopy) {
+      params.set('standCanopy', '1');
+      params.set('standCanopyHeight', String(s.canopyHeightInches));
+    }
+    if (s.cabinet || s.canopy) params.set('standCabinetType', String(s.cabinetType));
   }
   return `https://rspetstop.com/WebAquariumCalculator/index.html?${params.toString()}`;
 }
@@ -186,7 +230,7 @@ function buildAquariumCalcLines(win, opts = {}) {
   if (Number(val('dividerCount')) > 0) bits.push(`${val('dividerCount')} Divider(s)`);
   if (n.sump && !sumpSeparate) bits.push(`${n.sump.type} Filtration`);
 
-  const drawingUrl = buildAquariumDrawingUrlFrom(n, checked('highStrip'));
+  const drawingUrl = buildAquariumDrawingUrlFrom(n, checked, val, win.accessories, r.components || {});
   const aquariumNote = ['CUSTOM AQUARIUM']
     .concat(calcDetailRowsText(rows, (label) => !isStandRow(label) && !(sumpSeparate && isSumpRow(label))))
     .concat(standSeparate ? ['Stand: Yes - see Custom Stand line'] : ['Stand: None (aquarium only)'])
@@ -269,6 +313,20 @@ function buildStandCalcLines(win) {
     tubular: String(n.tubular)
   });
   if (n.stainless) params.set('stainless', '1');
+  else if (paint === 'Black' || paint === 'White') params.set('paint', paint);
+  if (n.cabinet) {
+    params.set('cabinet', '1');
+    if (n.cabinetDoors) params.set('cabinetDoors', String(n.cabinetDoors));
+  }
+  if (n.canopy) {
+    params.set('canopy', '1');
+    if (n.canopyHeightInches) params.set('canopyHeight', String(n.canopyHeightInches));
+  }
+  if ((n.cabinet || n.canopy) && n.cabinetType) params.set('cabinetType', String(n.cabinetType));
+  if (n.sumpHolder) {
+    params.set('sumpHolder', '1');
+    params.set('sumpWidth', String(n.sumpWidthInches));
+  }
 
   const note = [
     'CUSTOM STAND (stand only - no aquarium)',
