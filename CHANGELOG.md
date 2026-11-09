@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-09
 
+- **Alice: cards can be paid online.** While online payment is live, her status block now says customers can pay by card (Visa / Mastercard / JCB) through the pay link with no branch visit, using the real card fee % from the Xendit Payments page; installments = straight card payment, then ask their bank ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)). The "CARD payment now accepting at all branch" line in AI Settings Custom Directions is swapped to say online too ([supabase_chatbot_card_online_direction.sql](sql/supabase_chatbot_card_online_direction.sql)).
+
 - **Xendit: more payment channels.** The non-card checkout now asks for every channel activated on the live account: RCBC direct debit and Cebuana / LBC over-the-counter added; UBP (rejected) and BDO (not on the account) dropped, so a checkout no longer fails once before the retry ([xendit-create-invoice](supabase/functions/xendit-create-invoice/index.ts)). Receipts name them BPI / RCBC / Cebuana Lhuillier / LBC ([supabase_xendit_channel_labels.sql](sql/supabase_xendit_channel_labels.sql)). Pay page, Order Now, Conversations Pay link (`?v=channels1`) and Alice list the new ways to pay.
 
 - **POS Xendit QR: "Pay before" countdown + framed QR card.** The QR window now shows "Pay before 3:45 PM • 14:59 left", which turns orange at 3 min and red at 1 min. The QR sits on a rounded card with a "SCAN TO PAY • QR Ph" header, scan-frame corners and a GCash / Maya / bank footer (orange header in test mode) ([XenditPayForm.cs](XenditPayForm.cs)). [xendit-pos-payment](supabase/functions/xendit-pos-payment/index.ts) now returns `expiresInSeconds`; the POS falls back to 15 min without it.

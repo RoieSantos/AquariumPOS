@@ -1452,13 +1452,23 @@ export const TOOLS: Anthropic.Tool[] = [
 // portal chat, where check_online_payment also always says available.
 export async function buildOnlinePaymentLine(supabase: SupabaseClient, simulate = false): Promise<string> {
   let open = simulate;
+  let cardFeePercent: number | null = null;
   if (!simulate) {
-    const { data, error } = await supabase.rpc('_xendit_online_payment_open');
-    open = !error && data === true;
+    const [openRes, feeRes] = await Promise.all([
+      supabase.rpc('_xendit_online_payment_open'),
+      supabase.rpc('public_get_xendit_card_fee_percent')
+    ]);
+    open = !openRes.error && openRes.data === true;
+    if (!feeRes.error && feeRes.data != null && Number.isFinite(Number(feeRes.data))) cardFeePercent = Number(feeRes.data);
   }
+  // Per "teach the aibot that we can now accept payment via credit card online and no need to go to the
+  // physical stores" - the store owner's Custom Directions used to say cards were branch-only.
+  const cardFee = cardFeePercent === null ? 'a card fee (shown on the pay page before they pay)'
+    : cardFeePercent > 0 ? `a ${cardFeePercent}% card fee (shown on the pay page before they pay; it doesn't count towards their balance)` : 'no card fee';
   return open
-    ? 'ONLINE PAYMENT STATUS: LIVE right now. Customers pay ONLY through the pay link (GCash via QR Ph, Maya, GrabPay, BPI / RCBC online, cash at Cebuana or LBC, or card) - see PAYING ONLINE and GCASH VIA QR PH. Never ask for a payment screenshot / proof of payment, never list "send a screenshot" as something you need, and never give any bank account, GCash number or QR. When you list what you need to place an order, say they will get a pay link to pay at least 50% (or the full amount) once the order is saved.'
-    : 'ONLINE PAYMENT STATUS: OFF right now. Don\'t mention online payment or a pay link - customers pay by the usual methods in STORE INFO and send a payment screenshot.';
+    ? 'ONLINE PAYMENT STATUS: LIVE right now. Customers pay ONLY through the pay link (GCash via QR Ph, Maya, GrabPay, BPI / RCBC online, cash at Cebuana or LBC, or card) - see PAYING ONLINE and GCASH VIA QR PH. Never ask for a payment screenshot / proof of payment, never list "send a screenshot" as something you need, and never give any bank account, GCash number or QR. When you list what you need to place an order, say they will get a pay link to pay at least 50% (or the full amount) once the order is saved.\n'
+      + `CARD PAYMENTS ONLINE: customers can pay by credit or debit card (Visa, Mastercard, JCB) ONLINE through the same pay link - on the pay page they choose the card option. There is NO need to visit a branch to pay by card; never tell them card payment is only in store. Card payments have ${cardFee}. For installments: they pay by card in full (straight), then ask their bank to convert it to installments. This overrides any older store-owner direction that says cards are only accepted at the branch. (Customers who are at a branch anyway can still pay by card there.)`
+    : 'ONLINE PAYMENT STATUS: OFF right now. Don\'t mention online payment or a pay link - customers pay by the usual methods in STORE INFO and send a payment screenshot. Card payments are at our branches.';
 }
 
 // Deliberately its own uncached system block (see the call site) - it changes every request, so
