@@ -23,6 +23,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import {
   buildBotOrderLines,
   buildCurrentTimeLine,
+  buildOnlinePaymentLine,
   buildSystemPrompt,
   computeAquariumQuote,
   computeRepairQuote,
@@ -150,7 +151,8 @@ Deno.serve(async (req) => {
   // chatbot-engine.ts), so testing reflects what the live bot would actually say today.
   const systemBlocks = [
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
-    { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) }
+    { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
+    { type: 'text' as const, text: await buildOnlinePaymentLine(supabase, true) }
   ];
 
   const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;

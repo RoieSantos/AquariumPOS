@@ -102,6 +102,7 @@
       dividerCount: Number(input.divider_count) || 0,
       enclosure: Boolean(input.enclosure),
       turtleTank: Boolean(input.turtle_tank),
+      aio: Boolean(input.aio),
       stickerBackground: { enabled: Boolean(bg), allSides: Boolean(input.sticker_background_all_sides), type: bg || 'plain' },
       stickerBottom: { enabled: Boolean(bottom), type: bottom || 'plain' },
       option: 'Aquarium only',
@@ -111,7 +112,7 @@
             type: input.sump_type === 'Overhead Sump' ? 'Overhead Sump' : 'Undersump',
             length: Number(input.sump_length), width: Number(input.sump_width), height: Number(input.sump_height),
             unit: input.unit || 'Inches',
-            glassThickness: input.sump_glass_thickness || undefined,
+            glassThickness: input.sump_glass_thickness || '6mm',
             dividerCount: Number(input.sump_divider_count),
             filterMedias: Boolean(input.sump_filter_media),
             piping: Boolean(input.sump_piping),
@@ -155,7 +156,9 @@
     ['48x18x18 + 2-layer stand', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_stand: true, stand_layers: 2, stand_tubular: '1x1' }],
     ['48x18x18 + stand with plywood cabinet + canopy', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_stand: true, stand_layers: 2, stand_cabinet: true, canopy: true, canopy_height: 12 }],
     ['60x24x24 10mm + aluminum cabinet stand', { length: 60, width: 24, height: 24, glass_thickness: '10mm', add_stand: true, stand_layers: 2, stand_cabinet: true, cabinet_type: 'Aluminum' }],
-    ['48x18x18 + undersump (no pump/light)', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_sump: true, sump_divider_count: 3, sump_length: 30, sump_width: 14, sump_height: 14, sump_filter_media: true, sump_overflow_box: true, sump_piping: true }]
+    ['48x18x18 + undersump (no pump/light)', { length: 48, width: 18, height: 18, glass_thickness: '6mm', add_sump: true, sump_glass_thickness: '6mm', sump_divider_count: 3, sump_length: 30, sump_width: 14, sump_height: 14, sump_filter_media: true, sump_overflow_box: true, sump_piping: true }]
+    ['36x18x18 AIO', { length: 36, width: 18, height: 18, glass_thickness: '6mm', aio: true }],
+    ['48x18x18 10mm + overhead sump (sump glass defaults to 6mm)', { length: 48, width: 18, height: 18, glass_thickness: '10mm', add_sump: true, sump_type: 'Overhead Sump', sump_divider_count: 2, sump_length: 48, sump_width: 6, sump_height: 6 }],
   ];
 
   SystemTests.suite('Website calculator vs Alice (live)', {

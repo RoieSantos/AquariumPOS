@@ -999,6 +999,17 @@ function aoPayFormHtml(p, prefillAmount) {
     </div>`;
 }
 
+// Manual payments are super users only while Xendit is switched on for customers - per "if the xendit is live
+// we can remove the manual payment option". With Xendit off there's no Pay link, so everyone keeps them.
+// Same rule in the database (sql/supabase_manual_payments_super_user_only.sql).
+let aoXenditEnabled = false;
+Promise.resolve(supabaseClient.rpc('public_get_xendit_settings')).then(({ data, error }) => {
+  aoXenditEnabled = !error && !!(data && data[0] && data[0].enabled);
+}).catch(() => {});
+function aoCanRecordManualPayment() {
+  return !!currentSession?.isSuperUser || !aoXenditEnabled;
+}
+
 function aoPayRender(container) {
   const st = container._aoPay;
   if (st.error) {
@@ -1013,7 +1024,7 @@ function aoPayRender(container) {
           <div class="ao-pay-sub">${p.recorded_at_utc ? new Date(p.recorded_at_utc).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}${p.recorded_by ? ` by ${escapeHtml(p.recorded_by)}` : ''}</div>
         </div>
         <div class="ao-pay-amount-label">${newOrderMoney(p.amount)}</div>
-        <div class="ao-pay-actions">
+        <div class="ao-pay-actions"${aoCanRecordManualPayment() ? '' : ' hidden'}>
           <button type="button" class="ao-pay-link" data-pay-edit="${p.payment_id}">Edit</button>
           <button type="button" class="ao-pay-link is-danger" data-pay-delete="${p.payment_id}">Delete</button>
         </div>
@@ -1021,7 +1032,9 @@ function aoPayRender(container) {
   const balance = st.getBalance ? Math.round(st.getBalance() * 100) / 100 : 0;
   container.innerHTML = `
     ${rows || '<div class="ao-pay-msg">No payments recorded yet.</div>'}
-    ${st.editingId === 'new'
+    ${!aoCanRecordManualPayment()
+      ? '<div class="ao-pay-msg">💳 Send the customer a Pay link from Conversations - the payment is recorded automatically. Only a super user can add, edit or delete a payment by hand.</div>'
+      : st.editingId === 'new'
       ? `<div class="ao-pay-row is-editing">${aoPayFormHtml(null, st.prefillAmount)}</div>`
       : `<div class="ao-pay-add-row">
           <button type="button" class="ao-pay-add" data-pay-add>+ Add payment</button>

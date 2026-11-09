@@ -36,7 +36,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
-import { buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import { buildCurrentTimeLine, buildOnlinePaymentLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
@@ -197,6 +197,7 @@ Deno.serve(async (req) => {
       cache_control: { type: 'ephemeral' as const }
     },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
+    { type: 'text' as const, text: await buildOnlinePaymentLine(supabase) },
     {
       type: 'text' as const,
       text: 'INTERNAL STAFF TELEGRAM CHAT: you are talking with RS Pet Stop\'s own sales/staff team inside their internal Telegram chat, not a customer. Multiple staff members may be in this conversation - each user message is prefixed with "Name: " so you know who is asking. Keep answers short and direct like a quick Telegram reply, not a full customer-facing script. This is for internal reference/testing only, so no order, escalation, or CRM save you take here is real - it is simulated.'

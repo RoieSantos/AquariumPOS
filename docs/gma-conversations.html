@@ -1833,6 +1833,7 @@
       cursor: pointer;
     }
     .inbox-quote-chip:hover { background: #d4e8fd; }
+    .inbox-quote-chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .inbox-msg {
       max-width: 100%;
     }
@@ -4389,6 +4390,7 @@
       <div class="calc-embed-footer">
         <div class="calc-embed-lines" id="calcEmbedLines"><div class="calc-embed-hint">Waiting for calculation...</div></div>
         <div class="calc-embed-total" id="calcEmbedTotal">-</div>
+        <button type="button" class="btn btn-secondary hidden" id="calcEmbedCreateOrderBtn" disabled title="The customer wants it - put this build in a new order for this customer">Create Order</button>
         <button type="button" class="btn btn-primary" id="addCalcEmbedToOrderBtn" disabled>Add to Order</button>
       </div>
     </div>
@@ -4573,7 +4575,7 @@ Message: ..."></textarea>
   <script src="js/pullToRefresh.js?v=inner1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/gmaConversations.js?v=size1"></script>
+  <script src="js/gmaConversations.js?v=quoteorder1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

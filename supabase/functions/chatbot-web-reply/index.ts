@@ -29,7 +29,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
-import { buildCurrentTimeLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import { buildCurrentTimeLine, buildOnlinePaymentLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
@@ -185,6 +185,7 @@ Deno.serve(async (req) => {
   const systemBlocks = [
     { type: 'text' as const, text: buildSystemPrompt(storeInfo, companyInfo, aiSettings, followUpSettings), cache_control: { type: 'ephemeral' as const } },
     { type: 'text' as const, text: buildCurrentTimeLine(STORE_TIMEZONE) },
+    { type: 'text' as const, text: await buildOnlinePaymentLine(supabase) },
     { type: 'text' as const, text: buildCustomerNameLine(convState?.CustomerName as string | null | undefined) },
     { type: 'text' as const, text: `WEBSITE CHAT WIDGET OVERRIDE: on this specific channel (the website chat widget, not Facebook Messenger), your name is "${WEB_BOT_NAME}" - if asked your name, or when introducing yourself, always say ${WEB_BOT_NAME}. Ignore any other persona name given elsewhere in these instructions; that name applies only to other channels.` }
   ];

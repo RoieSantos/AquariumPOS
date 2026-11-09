@@ -934,8 +934,14 @@ function quoteChipHtml(text) {
   const d = parseCustomerDimensions(text);
   if (!d) return '';
   const unitLabel = { Inches: 'in', CM: 'cm', MM: 'mm', Ft: 'ft' }[d.unit];
-  return `<button type="button" class="inbox-quote-chip" data-length="${d.length}" data-width="${d.width}" data-height="${d.height}" data-unit="${d.unit}" title="Open the Custom Aquarium calculator with these dimensions">` +
-    `\uD83D\uDCD0 Quote this: ${d.length} x ${d.width} x ${d.height} ${unitLabel}</button>`;
+  const data = `data-length="${d.length}" data-width="${d.width}" data-height="${d.height}" data-unit="${d.unit}"`;
+  // Second chip: the same size as a stand-only quote (L x W = top, H = floor-to-top height) - per "in the
+  // stand calculator.. put a send reply the same way we sending reply for custom aquarium".
+  return '<div class="inbox-quote-chips">' +
+    `<button type="button" class="inbox-quote-chip" data-kind="aquarium" ${data} title="Open the Custom Aquarium calculator with these dimensions">` +
+    `\uD83D\uDCD0 Quote this: ${d.length} x ${d.width} x ${d.height} ${unitLabel}</button>` +
+    `<button type="button" class="inbox-quote-chip" data-kind="stand" ${data} title="Open the Custom Stand calculator with these dimensions (L x W top, H = stand height)">` +
+    'Stand</button></div>';
 }
 
 // Per "if we are sending links.. can you hyperlink it": escapes the text and turns every http(s)://
@@ -1137,7 +1143,7 @@ function renderMessages(serverRows, opts = {}) {
       const mediaHtml = hasMedia ? mediaTileHtml(m) : '';
       const textHtml = showText ? messageTextHtml(m.content) : '';
       const paymentApplied = !!m.detected_payment_applied_at_utc;
-      const paymentHtml = hasDetectedPayment
+      const paymentHtml = hasDetectedPayment && canRecordManualPayment()
         ? '<div class="inbox-payment-detected">' +
           `<div class="inbox-payment-detected-title">Detected Payment (${paymentApplied ? 'confirmed' : 'unconfirmed'})</div>` +
           `<div>Amount: ${Number(m.detected_payment_amount).toFixed(2)}</div>` +
@@ -1145,7 +1151,7 @@ function renderMessages(serverRows, opts = {}) {
           (m.detected_payment_reference ? `<div>Ref: ${escapeHtml(m.detected_payment_reference)}</div>` : '') +
           (m.detected_payment_sender_name ? `<div>From: ${escapeHtml(m.detected_payment_sender_name)}</div>` : '') +
           (m.detected_payment_at_text ? `<div>Paid on screenshot: ${escapeHtml(m.detected_payment_at_text)}</div>` : '') +
-          (paymentApplied
+          (paymentApplied || !canRecordManualPayment()
             ? ''
             : `<button type="button" class="btn btn-secondary btn-sm inbox-use-payment-btn" data-message-id="${m.message_id}" data-amount="${Number(m.detected_payment_amount)}" data-method="${escapeHtml(m.detected_payment_method || '')}" data-reference="${escapeHtml(m.detected_payment_reference || '')}">Use in Add Payment</button>`) +
           '</div>'
@@ -1536,7 +1542,22 @@ let pendingDetectedPayment = null;
 // flagged the moment staff opens the conversation, no click on the message bubble required.
 let latestDetectedPayment = null;
 
+// Manual payments (Add Payment, Create Order's payment, "Use in Add Payment") are super users only - per
+// "if the xendit is live we can remove the manual payment option". Everyone else sends the 💳 Pay link, which
+// records itself. The database enforces the same rule (sql/supabase_manual_payments_super_user_only.sql).
+// Per "can we remove all the payment reference in the conversations if the xendit is live": while Xendit is
+// switched on for customers (xenditEnabled), Conversations is Pay link only - for everyone, super users too
+// (no Add Payment, no Create Order payment, no detected-payment screenshot cards). Exceptions (cash on
+// delivery, money sent outside Xendit) are recorded by a super user on the Online Orders page. With Xendit
+// off there's no Pay link, so everything comes back.
+const MANUAL_PAYMENT_HINT = '💳 Send the customer a Pay link (the button above) - the payment is recorded on the order automatically. Cash on delivery or money sent outside Xendit: a super user records it on the Online Orders page.';
+const CREATE_ORDER_PAYMENT_HINT = '💳 Payment: save the order first, then click 💳 Pay link on its card in the Information tab. The payment is recorded automatically.';
+function canRecordManualPayment() {
+  return !xenditEnabled;
+}
+
 function useDetectedPayment(amount, method, reference, messageId) {
+  if (!canRecordManualPayment()) return;
   const conv = conversations.find((c) => c.psid === selectedPsid);
   if (!conv) return;
   pendingDetectedPayment = { amount, method, reference, messageId: messageId ?? null };
@@ -2311,7 +2332,7 @@ function renderConversationOrderCards() {
         <div class="inbox-order-subsection">
           <div class="inbox-order-detail-label">Payments</div>
           <div class="inbox-order-payments">${orderPaymentsHtml(o.order_no)}</div>
-          ${paymentExpanded ? `
+          ${!canRecordManualPayment() ? `<div class="ao-pay-msg">${MANUAL_PAYMENT_HINT}</div>` : paymentExpanded ? `
           <div class="inbox-payment-row">
             <input type="number" min="0.01" step="0.01" placeholder="Amount" id="payAmount-${escapeHtml(o.order_no)}">
             <select id="payMethod-${escapeHtml(o.order_no)}">
@@ -2688,6 +2709,60 @@ function payLinkPeso(value) {
   return '₱' + Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Per "just remove the bank details from 💰 Payment Methods Available ... and replace it by Xendit details":
+// while Xendit is live, a 💳-flagged quick reply (sql/supabase_quick_reply_payment_details.sql) goes out with
+// its bank / GCash block swapped for the Pay link of this chat's open order (its photos, e.g. a GCash QR, are
+// dropped). The block runs from the "Payment Methods" line to the "proof of payment" line; with no such
+// heading, every line with a bank / GCash name or account number is swapped instead.
+function xenditPaymentBlock() {
+  const o = conversationOrders.find((order) => canSendPayLink(order, Number(order.balance || 0)));
+  const lines = ['💳 Pay Online (secured by Xendit)'];
+  if (o) {
+    const total = Number(o.estimated_total || 0);
+    const paid = Number(o.amount_paid || 0);
+    const balance = Number(o.balance || 0);
+    const downDue = Math.min(Math.max(Math.ceil(total / 2) - paid, 0), balance);
+    lines.push(`🔗 https://rspetstop.com/pay.html?order=${encodeURIComponent(o.order_no)}`);
+    lines.push(downDue > 0 && downDue < balance
+      ? `• Down payment (50%): ${payLinkPeso(downDue)}\n• Full balance: ${payLinkPeso(balance)}`
+      : `• Balance: ${payLinkPeso(balance)}`);
+  } else {
+    lines.push('🔗 We\'ll send your secure payment link once your order is set up.');
+  }
+  lines.push('✅ GCash, Maya, QR Ph, online banking or card (card payments add a card fee, shown before you pay)');
+  lines.push('💡 Your payment is recorded on your order automatically - no need to send a screenshot.');
+  return lines.join('\n');
+}
+
+function replacePaymentDetails(text) {
+  const lines = String(text || '').split('\n');
+  const isDetail = (l) => /g-?cash|maya|bdo|bpi|metrobank|unionbank|landbank|security ?bank|rcbc|china ?bank|eastwest|acct|account|name:|number:|\d[\d \-]{8,}\d/i.test(l);
+  const start = lines.findIndex((l) => /payment methods?/i.test(l));
+  let from = -1;
+  let to = -1;
+  if (start >= 0) {
+    from = start;
+    to = lines.findIndex((l, i) => i > start && /proof of payment|after (the )?transaction/i.test(l));
+    if (to < 0) {
+      to = start;
+      while (to + 1 < lines.length && isDetail(lines[to + 1])) to++;
+    }
+    return [...lines.slice(0, from), xenditPaymentBlock(), ...lines.slice(to + 1)].join('\n');
+  }
+  const kept = [];
+  let inserted = false;
+  lines.forEach((l) => {
+    if (isDetail(l)) {
+      if (!inserted) kept.push(xenditPaymentBlock());
+      inserted = true;
+    } else {
+      kept.push(l);
+    }
+  });
+  if (!inserted) kept.push('', xenditPaymentBlock());
+  return kept.join('\n');
+}
+
 async function sendPayLinkToCustomer(o, btn) {
   if (!o) return;
   const total = Number(o.estimated_total || 0);
@@ -2845,11 +2920,16 @@ function renderCreateOrderTab(conv) {
         </div>
         <div class="form-row hidden" id="newOrderDeliveryAddressRow">
           <label>Delivery Address</label>
-          <input type="text" id="newOrderDeliveryAddress">
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="text" id="newOrderDeliveryAddress" style="flex:1;min-width:0;">
+            <button type="button" class="btn btn-secondary btn-sm" id="newOrderPinMapBtn" title="Open a map to confirm or pin the exact delivery spot">📍 Map</button>
+          </div>
+          <div id="newOrderPinNote" style="font-size:12px;margin-top:4px;"></div>
         </div>
         <div class="form-row hidden" id="newOrderDeliveryFeeRow">
           <label>Delivery Fee</label>
           <input type="number" min="0" step="0.01" id="newOrderDeliveryFee" placeholder="0.00">
+          <div id="newOrderDeliveryFeeNote" style="font-size:12px;margin-top:4px;opacity:.75;"></div>
         </div>
       </div>
       <div class="form-row" style="margin-bottom:0;">
@@ -2900,7 +2980,8 @@ function renderCreateOrderTab(conv) {
       <div class="wholesale-meter hidden" id="newOrderWholesaleMeter"></div>
     </div>
 
-    <div class="form-group og-payment">
+    ${canRecordManualPayment() ? '' : `<div class="form-group og-payment"><div class="ao-pay-msg">${CREATE_ORDER_PAYMENT_HINT}</div></div>`}
+    <div class="form-group og-payment"${canRecordManualPayment() ? '' : ' hidden'}>
       <div class="form-group-title">
         <span class="og-step">3</span>
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="5" width="15" height="10" rx="1.5"/><path d="M2.5 8.5h15" stroke-linecap="round"/></svg>
@@ -2992,9 +3073,17 @@ function renderCreateOrderTab(conv) {
       document.getElementById('newOrderDeliveryAddressRow').classList.toggle('hidden', btn.dataset.value !== 'Delivery');
       document.getElementById('newOrderDeliveryFeeRow').classList.toggle('hidden', btn.dataset.value !== 'Delivery');
       updateOrderTotal();
+      if (btn.dataset.value === 'Delivery' && !(newOrderDeliveryFee() > 0)) scheduleNewOrderDeliveryFee(0);
     });
   });
   document.getElementById('newOrderDeliveryFee').addEventListener('input', updateOrderTotal);
+  // Auto-computed when staff type the address or change the branch (not on the edit prefill, so an
+  // order's saved fee isn't replaced just by opening it).
+  // With a map pin the fee is measured to the pin, so editing the address text doesn't recompute it.
+  document.getElementById('newOrderDeliveryAddress').addEventListener('input', () => { if (!currentNewOrderPin()) scheduleNewOrderDeliveryFee(1000); });
+  document.getElementById('newOrderLocation').addEventListener('change', () => scheduleNewOrderDeliveryFee(0));
+  document.getElementById('newOrderPinMapBtn').addEventListener('click', openOrderPinMap);
+  renderNewOrderPinNote();
 
   const phoneInput = document.getElementById('newOrderCustomerPhone');
   phoneInput.addEventListener('input', () => {
@@ -3532,6 +3621,226 @@ function updateOrderTotal() {
   updateWholesaleMeter();
 }
 
+// 📍 Map beside Delivery Address - per "let the staff open a map to confirm or pin the address and auto
+// compute the fee". Staff click the map or drag the pin to the exact spot; "Use this spot" keeps it for this
+// form, the fee is computed to it, and submitNewOrder saves it on the order (admin_set_automated_order_pin,
+// sql/supabase_gma_order_staff_pin.sql), the same pin columns a customer's "📍 My delivery location" fills.
+// Kept per chat + order, so switching chats or orders never carries a pin across.
+let newOrderPin = null; // { lat, lng, psid, orderNo }
+let pinMap = null;
+let pinMarker = null;
+
+function currentNewOrderPin() {
+  if (!newOrderPin || newOrderPin.psid !== newOrderConv?.psid || newOrderPin.orderNo !== (editingOrder?.order_no || null)) return null;
+  return newOrderPin;
+}
+
+function renderNewOrderPinNote() {
+  const el = document.getElementById('newOrderPinNote');
+  if (!el) return;
+  const pin = currentNewOrderPin();
+  if (!pin) { el.innerHTML = ''; return; }
+  el.innerHTML = `📍 Pinned on the map (${pin.lat.toFixed(5)}, ${pin.lng.toFixed(5)}) - the fee is measured to this spot.
+    <a href="#" id="newOrderPinRemove">Remove pin</a>`;
+  document.getElementById('newOrderPinRemove').addEventListener('click', (e) => {
+    e.preventDefault();
+    newOrderPin = null;
+    renderNewOrderPinNote();
+    scheduleNewOrderDeliveryFee(0); // back to the typed address
+  });
+}
+
+function ensurePinMapModal() {
+  let modal = document.getElementById('orderPinMapModal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.className = 'modal-backdrop hidden';
+  modal.id = 'orderPinMapModal';
+  modal.innerHTML = `
+    <div class="modal-panel" style="max-width:640px;width:100%;">
+      <div class="toolbar">
+        <h2>Pin delivery location</h2>
+        <button class="btn btn-secondary btn-sm" id="pinMapCloseBtn" type="button" style="margin-left:auto;">Close</button>
+      </div>
+      <div style="display:flex;gap:6px;margin:6px 0;">
+        <input type="text" id="pinMapSearch" placeholder="Search an address or landmark" style="flex:1;min-width:0;font-size:16px;">
+        <button class="btn btn-secondary btn-sm" id="pinMapFindBtn" type="button">Find</button>
+      </div>
+      <div id="pinMapCanvas" style="width:100%;height:min(60vh,420px);border-radius:8px;"></div>
+      <div id="pinMapNote" style="font-size:13px;margin:8px 0;">Click the map or drag the pin to the exact delivery spot.</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-primary btn-sm" id="pinMapUseBtn" type="button">Use this spot</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const close = () => modal.classList.add('hidden');
+  modal.querySelector('#pinMapCloseBtn').addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  modal.querySelector('#pinMapFindBtn').addEventListener('click', () => findOnPinMap(modal.querySelector('#pinMapSearch').value));
+  modal.querySelector('#pinMapSearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); findOnPinMap(e.target.value); }
+  });
+  modal.querySelector('#pinMapUseBtn').addEventListener('click', useOrderPinMapSpot);
+  return modal;
+}
+
+function geocodeAddress(address) {
+  return new Promise((resolve) => new google.maps.Geocoder().geocode(
+    { address, region: 'ph', componentRestrictions: { country: 'PH' } },
+    (results, status) => resolve(status === 'OK' && results?.[0] ? results[0] : null)
+  ));
+}
+
+function placePinMarker(pos, zoom) {
+  if (!pinMarker) {
+    pinMarker = new google.maps.Marker({ map: pinMap, position: pos, draggable: true, title: 'Delivery spot' });
+  } else {
+    pinMarker.setMap(pinMap);
+    pinMarker.setPosition(pos);
+  }
+  pinMap.panTo(pos);
+  if (zoom) pinMap.setZoom(zoom);
+}
+
+async function findOnPinMap(query) {
+  const note = document.getElementById('pinMapNote');
+  if (!query || query.trim().length < 3) return;
+  note.textContent = 'Searching...';
+  const result = await geocodeAddress(query.trim());
+  if (!result) { note.textContent = 'Not found - try a nearby landmark, or move the pin by hand.'; return; }
+  const loc = result.geometry.location;
+  placePinMarker({ lat: loc.lat(), lng: loc.lng() }, 17);
+  note.textContent = `Found: ${result.formatted_address}. Drag the pin to the exact spot if needed.`;
+}
+
+async function openOrderPinMap() {
+  const modal = ensurePinMapModal();
+  const note = modal.querySelector('#pinMapNote');
+  const address = document.getElementById('newOrderDeliveryAddress').value.trim();
+  modal.querySelector('#pinMapSearch').value = address;
+  modal.classList.remove('hidden');
+  note.textContent = 'Loading map...';
+  try {
+    await loadGoogleMapsForQuote();
+  } catch (err) {
+    note.textContent = `The map could not load: ${err.message}`;
+    return;
+  }
+  const canvas = modal.querySelector('#pinMapCanvas');
+  if (!pinMap) {
+    pinMap = new google.maps.Map(canvas, { center: { lat: 14.29, lng: 120.95 }, zoom: 11, mapTypeControl: false, streetViewControl: false, fullscreenControl: false });
+    pinMap.addListener('click', (e) => placePinMarker({ lat: e.latLng.lat(), lng: e.latLng.lng() }));
+  }
+  google.maps.event.trigger(pinMap, 'resize');
+
+  // Start from: this form's pin > the customer's latest "📍 My delivery location" in this chat > the typed
+  // address > the order's branch.
+  let start = currentNewOrderPin();
+  let startNote = start ? 'This is the pin you set. Drag it or click the map to move it.' : '';
+  if (!start) {
+    const rows = messageCache.get(newOrderConv?.psid) || [];
+    for (let i = rows.length - 1; i >= 0 && !start; i--) {
+      if (rows[i].role === 'user') start = parsePinnedLocation(rows[i].content);
+    }
+    if (start) startNote = 'This is the spot the customer pinned in the chat. Confirm it or move the pin.';
+  }
+  if (!start && address.length >= 3) {
+    const result = await geocodeAddress(address);
+    if (result) {
+      start = { lat: result.geometry.location.lat(), lng: result.geometry.location.lng() };
+      startNote = `Found: ${result.formatted_address}. Drag the pin to the exact spot.`;
+    }
+  }
+  if (start) {
+    placePinMarker({ lat: Number(start.lat), lng: Number(start.lng) }, 17);
+    note.textContent = startNote;
+  } else {
+    if (pinMarker) pinMarker.setMap(null);
+    const branch = (await getBranchPoints().catch(() => ({})))[document.getElementById('newOrderLocation').value];
+    if (branch) { pinMap.setCenter(branch); pinMap.setZoom(12); }
+    note.textContent = address ? 'That address wasn\'t found - search a landmark or click the map to drop the pin.' : 'Search an address, or click the map to drop the pin.';
+  }
+}
+
+async function useOrderPinMapSpot() {
+  const modal = document.getElementById('orderPinMapModal');
+  const pos = pinMarker?.getMap() ? pinMarker.getPosition() : null;
+  if (!pos) { modal.querySelector('#pinMapNote').textContent = 'Drop the pin first - click the map at the delivery spot.'; return; }
+  newOrderPin = { lat: pos.lat(), lng: pos.lng(), psid: newOrderConv?.psid, orderNo: editingOrder?.order_no || null };
+  modal.classList.add('hidden');
+  // No address typed yet: fill it from the pin, so the order still has a readable address.
+  const addressEl = document.getElementById('newOrderDeliveryAddress');
+  if (addressEl && !addressEl.value.trim()) {
+    const result = await new Promise((resolve) => new google.maps.Geocoder().geocode(
+      { location: { lat: newOrderPin.lat, lng: newOrderPin.lng } },
+      (results, status) => resolve(status === 'OK' && results?.[0] ? results[0] : null)
+    ));
+    if (result && !addressEl.value.trim()) addressEl.value = result.formatted_address;
+  }
+  renderNewOrderPinNote();
+  scheduleNewOrderDeliveryFee(0);
+}
+
+// Delivery Fee auto-compute - per "remove the compute and make it automate.. if delivery address is typed
+// in auto compute.. if the location is changed too". Our own truck's fee from the Location branch to the
+// typed Delivery Address, via delivery-fee-from-pin (the bot's official formula: base fee + rate per km +
+// toll). Fills the box; staff can still change it before saving. A later pin booking replaces it with
+// the fee measured to the exact pin.
+let newOrderFeeTimer = null;
+let newOrderFeeSeq = 0;
+
+function scheduleNewOrderDeliveryFee(delayMs) {
+  clearTimeout(newOrderFeeTimer);
+  newOrderFeeSeq++; // drops any answer still on its way for the old address/branch
+  newOrderFeeTimer = setTimeout(computeNewOrderDeliveryFee, delayMs);
+}
+
+async function computeNewOrderDeliveryFee() {
+  const note = document.getElementById('newOrderDeliveryFeeNote');
+  if (!note || document.getElementById('newOrderFulfillment')?.value !== 'Delivery') return;
+  const address = document.getElementById('newOrderDeliveryAddress').value.trim();
+  const branch = document.getElementById('newOrderLocation').value === 'Amaya' ? 'Amaya' : 'GMA';
+  const pin = currentNewOrderPin();
+  if (!pin && address.length < 5) {
+    note.textContent = address ? 'Keep typing the address (street, barangay, city) to get the fee.' : '';
+    return;
+  }
+  const seq = ++newOrderFeeSeq;
+  note.textContent = 'Calculating delivery fee...';
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/delivery-fee-from-pin`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        admin_username: currentSession.username,
+        admin_password: currentSession.password,
+        address,
+        ...(pin ? { latitude: pin.lat, longitude: pin.lng } : {}),
+        branches: [branch]
+      })
+    });
+    const body = await response.json().catch(() => null);
+    if (seq !== newOrderFeeSeq || !document.body.contains(note)) return; // address/branch changed, or tab closed
+    if (!response.ok || !body?.quotes) throw new Error(body?.error || `Request failed (${response.status}).`);
+    const q = body.quotes[branch];
+    if (!q || q.error || q.estimatedFee == null) throw new Error(q?.error || 'No fee came back for that address.');
+    const fee = Number(q.estimatedFee);
+    document.getElementById('newOrderDeliveryFee').value = fee.toFixed(2);
+    updateOrderTotal();
+    const km = Number(q.distanceKm);
+    note.textContent = pin
+      ? `Auto-computed from ${branch} to the map pin${Number.isFinite(km) ? `, ${km.toFixed(1)} km` : ''}. You can still change the fee.`
+      : `Auto-computed from ${branch}${Number.isFinite(km) ? `, ${km.toFixed(1)} km` : ''} - check the address is right (or pin it with 📍 Map); you can still change the fee.`;
+  } catch (err) {
+    if (seq !== newOrderFeeSeq) return;
+    note.textContent = `Could not compute the fee: ${err.message} Enter it manually.`;
+  }
+}
+
 // Delivery Fee box (Delivery only - Pickup always counts/saves 0, same as the server).
 function newOrderDeliveryFee() {
   if (document.getElementById('newOrderFulfillment')?.value !== 'Delivery') return 0;
@@ -3610,9 +3919,13 @@ function openCalcEmbedModal(kind, mode = 'order', prefill = null) {
   calcEmbedMode = mode;
   document.getElementById('calcEmbedTitle').textContent = mode === 'reply' ? cfg.quoteTitle : cfg.title;
   document.getElementById('calcEmbedSub').textContent = mode === 'reply'
-    ? 'Build it, then Put in reply - the price and drawing link go into the reply box for you to check and send.'
+    ? (kind === 'repair'
+      ? 'Build it, then Put in reply - the price and drawing link go into the reply box for you to check and send.'
+      : 'Build it, then Put in reply - the price and drawing link go into the reply box for you to check and send. Customer wants it? Create Order.')
     : cfg.sub;
   document.getElementById('addCalcEmbedToOrderBtn').textContent = mode === 'reply' ? 'Put in reply' : 'Add to Order';
+  // Quote mode: "Create Order" once the customer wants it (repairs aren't an order line type yet).
+  document.getElementById('calcEmbedCreateOrderBtn').classList.toggle('hidden', !(mode === 'reply' && kind !== 'repair'));
   document.getElementById('calcEmbedPanel').classList.toggle('calc-embed-stand', kind === 'stand');
   // Reopening the same calculator keeps what was already typed (e.g. closed by accident); switching
   // calculators, or reopening after Add to Order, starts fresh.
@@ -3706,6 +4019,8 @@ function renderCalcEmbedFooter() {
   const linesEl = document.getElementById('calcEmbedLines');
   const totalEl = document.getElementById('calcEmbedTotal');
   const addBtn = document.getElementById('addCalcEmbedToOrderBtn');
+  const createBtn = document.getElementById('calcEmbedCreateOrderBtn');
+  createBtn.disabled = !lines.length;
   if (!lines.length) {
     const problem = calcEmbedProblem || 'Fill in the calculator - the lines to add will show here.';
     linesEl.innerHTML = `<div class="calc-embed-problem">&#9888; ${escapeHtml(problem)}</div>`;
@@ -3738,6 +4053,31 @@ function addCalcEmbedToOrder() {
   renderNewOrderLines();
   closeCalcEmbedModal();
   calcEmbedKind = null; // next open starts a fresh build
+}
+
+// Quote mode's "Create Order" - per "once the quoted reply is wanted by the customer.. add a button on
+// the custom aquarium / custom stand to create an order for that specific customer". Same build, read
+// as Add to Order would (light / pump split into their own P0 lines), added to this conversation's
+// Create Order tab with the customer prefilled; staff check delivery etc. there and press Create.
+function createOrderFromCalcQuote() {
+  const conv = newOrderConv;
+  if (!conv) {
+    alert('Open the customer\'s conversation first.');
+    return;
+  }
+  const prevMode = calcEmbedMode;
+  calcEmbedMode = 'order';
+  const lines = buildCalcEmbedLines();
+  calcEmbedMode = prevMode;
+  if (!lines.length) return;
+  if (editingOrder && !confirm(`You're editing order ${editingOrder.order_no}. Add this build to that order?\n\n(Cancel, then "Cancel edit" on the Create Order tab, to start a new order instead.)`)) return;
+
+  lines.forEach((line) => newOrderLines.push(line));
+  closeCalcEmbedModal();
+  calcEmbedKind = null; // next open starts a fresh build
+  activeCustomerTab = 'create';
+  renderCustomerPanel(conv);
+  showMobileView('info'); // phone: the customer panel is its own screen
 }
 
 // Composer quote buttons (Aquarium / Stand / Stickers / Repair) -> customer-facing text in the reply
@@ -4064,8 +4404,22 @@ async function submitNewOrder() {
   newOrderWholesale = false;
   editingOrderWasWholesale = false;
 
-  const payAmount = parseFloat(document.getElementById('newOrderPayAmount').value);
-  if (result && payAmount > 0) {
+  // Staff's 📍 Map pin (Delivery only) - the order form itself has no pin field.
+  const pinToSave = currentNewOrderPin();
+  if (result && pinToSave && document.getElementById('newOrderFulfillment')?.value === 'Delivery') {
+    const { error: pinError } = await supabaseClient.rpc('admin_set_automated_order_pin', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_order_no: result.order_no,
+      p_latitude: pinToSave.lat,
+      p_longitude: pinToSave.lng
+    });
+    if (pinError) alert(`Order ${result.order_no} was saved with its delivery fee, but its map pin could not be saved: ${pinError.message}`);
+  }
+  newOrderPin = null;
+
+  const payAmount = parseFloat(document.getElementById('newOrderPayAmount')?.value);
+  if (result && payAmount > 0 && canRecordManualPayment()) {
     const { data: payData, error: payError } = await supabaseClient.rpc('admin_add_automated_order_payment', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -4452,6 +4806,30 @@ function setPendingReplyImages(images) {
 // Per direct request: no more explicit Send button for typed text - Enter (see the replyInput
 // keydown listener in init()) is the only way to send it now, same as most chat apps. The box clears
 // instantly (optimistic send), so staff can keep typing the next message while this one goes out.
+// While Xendit is live, a reply carrying our bank / GCash account numbers or GCash QR photo (taken from the
+// quick replies marked 💳, sql/supabase_quick_reply_payment_details.sql) is refused for everyone - typed
+// or from a quick reply. Super users still see and manage them in Manage Quick Replies.
+function paymentNumbersIn(text) {
+  return (String(text || '').match(/\d[\d \-]{8,}\d/g) || [])
+    .map((run) => run.replace(/\D/g, ''))
+    .filter((digits) => digits.length >= 10);
+}
+
+async function okToSendPaymentDetails(message, images) {
+  if (!xenditEnabled) return true;
+  if (!quickReplies.length) await loadQuickReplies();
+  const flagged = quickReplies.filter((q) => q.has_payment_details);
+  if (!flagged.length) return true;
+  const ourNumbers = flagged.flatMap((q) => paymentNumbersIn(q.message_text));
+  const ourImages = new Set(flagged.flatMap(qrImageUrls));
+  const hit = paymentNumbersIn(message).some((d) => ourNumbers.some((n) => d.includes(n) || n.includes(d)))
+    || (images || []).some((img) => ourImages.has(img.url));
+  if (!hit) return true;
+  // Per "this quick reply still sends our bank accounts details" - blocked for everyone, super users too.
+  alert('Not sent: this message has our bank / GCash details. Xendit is live, so send the customer a 💳 Pay link from the order card instead - the payment is recorded automatically.');
+  return false;
+}
+
 async function sendReply() {
   const input = document.getElementById('replyInput');
   // Enter pressed while a photo is still uploading - wait for it so it goes out with this message.
@@ -4460,6 +4838,7 @@ async function sendReply() {
   const message = input.value.trim();
   const images = pendingReplyImageUrls;
   if (!message && images.length === 0) return;
+  if (!(await okToSendPaymentDetails(message, images))) return;
 
   const replyTo = replyingTo && replyingTo.psid === selectedPsid ? replyingTo : null;
   input.value = '';
@@ -5186,20 +5565,25 @@ async function loadQuickReplies() {
 function renderQuickRepliesList() {
   const listEl = document.getElementById('quickRepliesList');
 
-  if (quickReplies.length === 0) {
+  // 💳-flagged quick replies stay listed; while Xendit is live their bank details are swapped on use
+  // (replacePaymentDetails).
+  const visibleQuickReplies = quickReplies;
+
+  if (visibleQuickReplies.length === 0) {
     listEl.innerHTML = '<div class="inbox-empty-state">No quick replies yet - add one below.</div>';
     return;
   }
 
-  const rows = quickReplies.map((q, i) => {
+  const rows = visibleQuickReplies.map((q, i) => {
     const urls = qrImageUrls(q);
     const topicCell = urls.length === 0
       ? '<span class="inbox-quick-reply-topic-placeholder">&#128172;</span>'
       : `<span class="inbox-quick-reply-thumb-wrap"><img class="inbox-quick-reply-thumb" src="${escapeHtml(urls[0])}" alt="" />${urls.length > 1 ? `<span class="inbox-quick-reply-thumb-count">+${urls.length - 1}</span>` : ''}</span>`;
+    const payTag = xenditEnabled && q.has_payment_details ? ' <span title="Xendit is live - its bank / GCash details are swapped for the Pay link">💳</span>' : '';
     return `
     <tr data-id="${q.id}">
       <td class="inbox-quick-reply-index">${i + 1}.</td>
-      <td class="inbox-quick-reply-shortcut">${escapeHtml(q.label)}</td>
+      <td class="inbox-quick-reply-shortcut">${escapeHtml(q.label)}${payTag}</td>
       <td class="inbox-quick-reply-topic">${topicCell}</td>
       <td class="inbox-quick-reply-message">${escapeHtml(q.message_text || (urls.length > 0 ? '(photo only)' : ''))}</td>
       <td><button type="button" class="inbox-quick-reply-delete" data-id="${q.id}" title="Delete this quick reply">&times;</button></td>
@@ -5226,7 +5610,9 @@ function renderQuickRepliesList() {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.inbox-quick-reply-delete')) return;
       const q = quickReplies.find((qr) => String(qr.id) === el.dataset.id);
-      if (q) useQuickReply(q.message_text, qrImageUrls(q));
+      if (!q) return;
+      if (xenditEnabled && q.has_payment_details) useQuickReply(replacePaymentDetails(q.message_text), []);
+      else useQuickReply(q.message_text, qrImageUrls(q));
     });
   });
 
@@ -5951,6 +6337,7 @@ function renderManageQuickRepliesList() {
       <td>${escapeHtml(q.message_text || (urls.length > 0 ? '(photo only)' : ''))}</td>
       <td>
         <div class="manage-qr-row-actions">
+          ${currentSession?.isSuperUser ? `<button type="button" class="manage-qr-payflag-btn" data-id="${q.id}" data-flag="${q.has_payment_details ? '1' : '0'}" style="opacity:${q.has_payment_details ? '1' : '0.3'}" title="${q.has_payment_details ? 'Marked: has our bank / GCash details (hidden from staff while Xendit is live). Click to unmark.' : 'Click to mark: has our bank / GCash details'}">💳</button>` : (q.has_payment_details ? '<span title="Has our bank / GCash details">💳</span>' : '')}
           <button type="button" class="manage-qr-edit-btn" data-id="${q.id}" title="Edit this quick reply">
             <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13.5 2.5 17 6l-9.5 9.5-4 1 1-4Z" stroke-linejoin="round" stroke-linecap="round" /></svg>
           </button>
@@ -5969,6 +6356,23 @@ function renderManageQuickRepliesList() {
   });
   listEl.querySelectorAll('.manage-qr-delete-btn').forEach((btn) => {
     btn.addEventListener('click', () => deleteQuickReply(btn.dataset.id));
+  });
+  listEl.querySelectorAll('.manage-qr-payflag-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const { error } = await supabaseClient.rpc('admin_set_chatbot_quick_reply_payment_flag', {
+        p_admin_username: currentSession.username,
+        p_admin_password: currentSession.password,
+        p_id: Number(btn.dataset.id),
+        p_has_payment_details: btn.dataset.flag !== '1'
+      });
+      if (error) {
+        alert(`Could not change it: ${error.message}`);
+        btn.disabled = false;
+        return;
+      }
+      await loadQuickReplies();
+    });
   });
 }
 
@@ -6844,7 +7248,11 @@ function setupThreadInteractions() {
     const img = e.target.closest('[data-lightbox-src]');
     if (img) openLightbox(img.dataset.lightboxSrc);
     const quoteChip = e.target.closest('.inbox-quote-chip');
-    if (quoteChip) {
+    if (quoteChip && quoteChip.dataset.kind === 'stand') {
+      // stand.html applyLinkedQuoteParams fills the size and calculates; Put in reply as usual.
+      const d = quoteChip.dataset;
+      openCalcEmbedModal('stand', 'reply', { length: d.length, width: d.width, height: d.height, unit: d.unit });
+    } else if (quoteChip) {
       const d = quoteChip.dataset;
       const prefill = { length: d.length, width: d.width, height: d.height, unit: d.unit };
       // Thinnest safe glass for the size - what the calculator itself picks when the size is typed in
@@ -7905,6 +8313,7 @@ function initDeliveryCalendar() {
   document.getElementById('addCustomStickerToSaleBtn').addEventListener('click', addCustomStickerToSale);
   document.getElementById('closeCalcEmbedBtn').addEventListener('click', closeCalcEmbedModal);
   document.getElementById('addCalcEmbedToOrderBtn').addEventListener('click', addCalcEmbedToOrder);
+  document.getElementById('calcEmbedCreateOrderBtn').addEventListener('click', createOrderFromCalcQuote);
   document.getElementById('closeLineNoteModalBtn').addEventListener('click', closeLineNoteModal);
   document.getElementById('lineNoteModalCancelBtn').addEventListener('click', closeLineNoteModal);
   document.getElementById('lineNoteModalSaveBtn').addEventListener('click', saveLineNoteModal);

@@ -985,6 +985,15 @@ INSERT INTO CardProcessingFeeLog (
                         AND NOT EXISTS (SELECT * FROM TenderTypes WHERE Code = 'XENDIT')
                         BEGIN
                             INSERT INTO TenderTypes (Code, Description) VALUES ('XENDIT', 'Xendit');
+                        END
+
+                        -- QR Ph tender - per ""can you add that QRPH tender"". Online it opens the Xendit QR
+                        -- (IsXenditRoutedTender); offline it's a manual QR Ph payment. Skipped if one exists.
+                        IF EXISTS (SELECT * FROM sysobjects WHERE name='TenderTypes' AND xtype='U')
+                        AND NOT EXISTS (SELECT * FROM TenderTypes WHERE Code IN ('QRPH', 'QR_PH')
+                                        OR REPLACE(Description, ' ', '') LIKE '%QRPH%')
+                        BEGIN
+                            INSERT INTO TenderTypes (Code, Description) VALUES ('QRPH', 'QR Ph');
                         END";
 
                     using (var commandXendit = new SqlCommand(addXenditTender, connection))
@@ -9001,7 +9010,7 @@ ORDER BY Code", conn);
                                 using (var conn = new SqlConnection(connectionString))
                                 {
                                     conn.Open();
-                                    var cmd = new SqlCommand("SELECT Code, Description FROM TenderTypes WHERE Code <> 'ADVANCEORDERS' ORDER BY Code", conn);
+                                    var cmd = new SqlCommand("SELECT Code, Description FROM TenderTypes WHERE Code NOT IN ('ADVANCEORDERS', 'XENDIT') ORDER BY Code", conn);
                                     using (var rdr = cmd.ExecuteReader())
                                     {
                                         while (rdr.Read())
@@ -18027,7 +18036,7 @@ END", connection);
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    var command = new SqlCommand("SELECT Code, Description FROM TenderTypes ORDER BY Code", connection);
+                    var command = new SqlCommand("SELECT Code, Description FROM TenderTypes WHERE Code NOT IN ('XENDIT', 'ADVANCEORDERS') ORDER BY Code", connection);
                     using (var reader = command.ExecuteReader())
                     {
                         int buttonIndex = 0;
@@ -18134,7 +18143,7 @@ END", connection);
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    var command = new SqlCommand("SELECT Code, Description FROM TenderTypes ORDER BY Code", connection);
+                    var command = new SqlCommand("SELECT Code, Description FROM TenderTypes WHERE Code NOT IN ('XENDIT', 'ADVANCEORDERS') ORDER BY Code", connection);
                     using (var reader = command.ExecuteReader())
                     {
                         int buttonIndex = 1; // Start from 1 since BACK button is at index 0
@@ -18216,6 +18225,41 @@ END", connection);
                     return;
                 }
 
+                // GCash / QR Ph / Bank Transfer: online -> Xendit QR (recorded as XENDIT, since the money lands in
+                // the Xendit balance, not our GCash/bank); offline -> the usual manual tender.
+                if (IsXenditRoutedTender(tenderCode, button.Text) && !isReturnExchangeMode
+                    && currentTotal - currentDiscount - totalPaid > 0m)
+                {
+                    if (IsXenditOnline())
+                    {
+                        decimal remaining = currentTotal - currentDiscount - totalPaid;
+                        bool useQr = true;
+                        if (remaining > XenditMaxAmount)
+                        {
+                            var choice = MessageBox.Show(this,
+                                $"P{remaining:N2} is over the P{XenditMaxAmount:N2} QR Ph limit per payment.\n\n"
+                                + $"Yes = pay by Xendit QR in parts (up to P{XenditMaxAmount:N2} each)\n"
+                                + $"No = record a manual {button.Text} (only once you see the money in OUR account)",
+                                "Xendit Payment", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+                            if (choice == DialogResult.Cancel) return;
+                            useQr = choice == DialogResult.Yes;
+                        }
+                        if (useQr)
+                        {
+                            PayWithXendit(XenditTenderDescription, XenditTenderCode, onlineChecked: true);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        MessageBox.Show(this,
+                            $"The POS is offline, so the Xendit QR can't be used.\n\n"
+                            + $"Record this as a manual {button.Text}. Only continue once you see the money in OUR "
+                            + $"{button.Text} account - never accept a screenshot as proof.",
+                            "Offline - manual payment", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+
                 // Show payment entry form
                 decimal defaultPaymentAmount = grandTotal;
                 decimal cardMarkupPercent = 0m;
@@ -18295,15 +18339,33 @@ END", connection);
             return true;
         }
 
-        private void PayWithXendit(string tenderDescription, string tenderCode)
+        private const string XenditTenderDescription = "Xendit";
+
+        // Tenders that go through the Xendit QR when the POS is online - per "if the local POS is online then the
+        // xendit qr will be applied for my tender types Gcash / QRPH / Bank Transfer". Matched by code, or by
+        // description in case a store's code differs.
+        private static readonly string[] XenditRoutedCodes = { "GCASH", "QRPH", "QR_PH", "BANK" };
+
+        private static bool IsXenditRoutedTender(string code, string description)
         {
-            // Stop here when offline, before any prompt - per "if the internet is down they cannot proceed".
-            bool online;
+            if (XenditRoutedCodes.Contains((code ?? string.Empty).Trim().ToUpperInvariant())) return true;
+            string d = (description ?? string.Empty).Replace(" ", string.Empty).ToUpperInvariant();
+            return d.Contains("GCASH") || d.Contains("QRPH") || d.Contains("BANKTRANSFER");
+        }
+
+        // Up to 5 seconds, with a wait cursor.
+        private static bool IsXenditOnline()
+        {
             Cursor previousCursor = Cursor.Current;
             Cursor.Current = Cursors.WaitCursor;
-            try { online = XenditPayForm.CanReachXenditFunction(); }
+            try { return XenditPayForm.CanReachXenditFunction(); }
             finally { Cursor.Current = previousCursor; }
-            if (!online)
+        }
+
+        private void PayWithXendit(string tenderDescription, string tenderCode, bool onlineChecked = false)
+        {
+            // Stop here when offline, before any prompt - per "if the internet is down they cannot proceed".
+            if (!onlineChecked && !IsXenditOnline())
             {
                 MessageBox.Show(this, "No internet connection, so Xendit can't be used right now.\n\nNo money was taken. Please pick another tender.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -18358,7 +18420,7 @@ END", connection);
                 using (var connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
-                    var command = new SqlCommand("SELECT Code, Description FROM TenderTypes ORDER BY Code", connection);
+                    var command = new SqlCommand("SELECT Code, Description FROM TenderTypes WHERE Code NOT IN ('XENDIT', 'ADVANCEORDERS') ORDER BY Code", connection);
                     using (var reader = command.ExecuteReader())
                     {
                         int buttonIndex = 0;
