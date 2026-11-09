@@ -83,7 +83,8 @@ Deno.serve(async (req) => {
       console.error('xendit-pos-payment:', createError, JSON.stringify(created?.body));
       return jsonResponse({ error: createError }, 502);
     }
-    return jsonResponse({ paymentId: prepared.payment_id, qrString: created!.qrString, amount, isTest, reference: prepared.order_ref });
+    // expiresInSeconds drives the POS "Pay before" countdown (it falls back to 15 min without it).
+    return jsonResponse({ paymentId: prepared.payment_id, qrString: created!.qrString, amount, isTest, reference: prepared.order_ref, expiresInSeconds: QR_MINUTES * 60 });
   }
 
   // The rest all work on an existing POS payment.

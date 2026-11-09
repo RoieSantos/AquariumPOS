@@ -22,14 +22,19 @@ namespace AquariumPOS
     {
         private const int PollMilliseconds = 3000;
         private const string WaitingText = "Ask the customer to scan this QR Ph code in GCash, Maya or their bank app.\nWaiting for payment...";
+        // Same as QR_MINUTES in the xendit-pos-payment Edge Function, used if it doesn't send expiresInSeconds.
+        private const int DefaultQrSeconds = 15 * 60;
+        private const int CardWidth = 340, CardHeight = 388, CardHeaderHeight = 46, QrSize = 280;
 
         private readonly decimal _amount;
         private readonly Label _statusLabel;
-        private readonly Label _testLabel;
+        private readonly Label _timerLabel;
         private readonly PictureBox _qrBox;
         private readonly Button _simulateButton;
         private readonly Button _cancelButton;
         private readonly System.Windows.Forms.Timer _pollTimer;
+        private readonly System.Windows.Forms.Timer _clockTimer;
+        private DateTime? _expiresAtLocal;
         private bool _polling;
         private bool _cancelling;
         private bool _finished;
@@ -42,7 +47,7 @@ namespace AquariumPOS
             _amount = amount;
             Text = "Xendit Payment";
             StartPosition = FormStartPosition.CenterParent;
-            ClientSize = new Size(440, 590);
+            ClientSize = new Size(440, 606);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -50,45 +55,72 @@ namespace AquariumPOS
 
             var amountLabel = new Label
             {
-                Location = new Point(16, 12),
+                Location = new Point(16, 10),
                 Size = new Size(408, 40),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Font = new Font("Arial", 20, FontStyle.Bold),
                 Text = $"P{amount:N2}"
             };
-            _testLabel = new Label
+            // "Pay before 3:45 PM - 14:59 left" - per "can we put a timer in the local POS.. pay before".
+            _timerLabel = new Label
             {
-                Location = new Point(16, 54),
-                Size = new Size(408, 24),
+                Location = new Point(16, 52),
+                Size = new Size(408, 28),
                 TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Arial", 10, FontStyle.Bold),
-                ForeColor = Color.Firebrick,
-                Text = "TEST MODE - no real money",
-                Visible = false
+                Font = new Font("Arial", 12, FontStyle.Bold),
+                ForeColor = UiTheme.TextMuted,
+                Text = string.Empty
             };
             _qrBox = new PictureBox
             {
-                Location = new Point(60, 84),
-                Size = new Size(320, 320),
-                BackColor = Color.White,
+                Location = new Point((440 - CardWidth) / 2, 88),
+                Size = new Size(CardWidth, CardHeight),
+                BackColor = UiTheme.PageBg,
                 SizeMode = PictureBoxSizeMode.CenterImage
             };
             _statusLabel = new Label
             {
-                Location = new Point(16, 412),
-                Size = new Size(408, 96),
+                Location = new Point(16, 482),
+                Size = new Size(408, 56),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Text = "Creating the payment..."
             };
             // Test mode only: a real GCash / bank app can't pay a test QR.
-            _simulateButton = new Button { Text = "Simulate Paid (TEST)", Location = new Point(16, 524), Size = new Size(200, 48), Visible = false };
+            _simulateButton = new Button { Text = "Simulate Paid (TEST)", Location = new Point(16, 546), Size = new Size(200, 48), Visible = false };
             _simulateButton.Click += async (s, e) => await SimulateAsync();
-            _cancelButton = new Button { Text = "Cancel Payment", Location = new Point(264, 524), Size = new Size(160, 48) };
+            _cancelButton = new Button { Text = "Cancel Payment", Location = new Point(264, 546), Size = new Size(160, 48) };
             _cancelButton.Click += async (s, e) => await CancelAsync();
-            Controls.AddRange(new Control[] { amountLabel, _testLabel, _qrBox, _statusLabel, _simulateButton, _cancelButton });
+            Controls.AddRange(new Control[] { amountLabel, _timerLabel, _qrBox, _statusLabel, _simulateButton, _cancelButton });
 
             _pollTimer = new System.Windows.Forms.Timer { Interval = PollMilliseconds };
             _pollTimer.Tick += async (s, e) => await PollAsync();
+            _clockTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _clockTimer.Tick += (s, e) => UpdateClock();
+        }
+
+        // Counts down to the Edge Function's expiry. At 0 the next status poll cancels the QR at Xendit and
+        // HandleStatus shows the "expired" message, so this is display only.
+        private void UpdateClock()
+        {
+            if (_expiresAtLocal == null) return;
+            var left = _expiresAtLocal.Value - DateTime.Now;
+            if (left <= TimeSpan.Zero)
+            {
+                _timerLabel.Text = "Time's up - closing this QR...";
+                _timerLabel.ForeColor = UiTheme.Danger;
+                return;
+            }
+            int totalSeconds = (int)Math.Ceiling(left.TotalSeconds);
+            _timerLabel.Text = $"Pay before {_expiresAtLocal.Value:h:mm tt}   •   {totalSeconds / 60}:{totalSeconds % 60:00} left";
+            _timerLabel.ForeColor = totalSeconds <= 60 ? UiTheme.Danger
+                : totalSeconds <= 180 ? UiTheme.Warning
+                : UiTheme.TextMain;
+        }
+
+        private void StopTimers()
+        {
+            _pollTimer.Stop();
+            _clockTimer.Stop();
         }
 
         protected override async void OnShown(EventArgs e)
@@ -106,7 +138,7 @@ namespace AquariumPOS
                 _ = CancelAsync();
                 return;
             }
-            _pollTimer.Stop();
+            StopTimers();
             base.OnFormClosing(e);
         }
 
@@ -115,6 +147,7 @@ namespace AquariumPOS
             if (disposing)
             {
                 _pollTimer.Dispose();
+                _clockTimer.Dispose();
                 _qrBox.Image?.Dispose();
             }
             base.Dispose(disposing);
@@ -139,10 +172,14 @@ namespace AquariumPOS
                 var root = doc.RootElement;
                 PaymentId = GetString(root, "paymentId");
                 bool isTest = root.TryGetProperty("isTest", out var test) && test.ValueKind == JsonValueKind.True;
-                _testLabel.Visible = isTest;
                 _simulateButton.Visible = isTest;
-                _qrBox.Image = CreateQrBitmap(GetString(root, "qrString"), _qrBox.Width);
+                _qrBox.Image = CreateQrCard(GetString(root, "qrString"), isTest);
                 _statusLabel.Text = WaitingText;
+                int seconds = root.TryGetProperty("expiresInSeconds", out var exp) && exp.ValueKind == JsonValueKind.Number
+                    && exp.TryGetInt32(out var s) && s > 0 ? s : DefaultQrSeconds;
+                _expiresAtLocal = DateTime.Now.AddSeconds(seconds);
+                UpdateClock();
+                _clockTimer.Start();
                 _pollTimer.Start();
             }
             catch (Exception ex)
@@ -201,7 +238,7 @@ namespace AquariumPOS
             }
 
             _cancelling = true;
-            _pollTimer.Stop();
+            StopTimers();
             _cancelButton.Enabled = false;
             _statusLabel.Text = "Cancelling the payment...";
             while (true)
@@ -238,7 +275,7 @@ namespace AquariumPOS
             {
                 Channel = GetString(root, "channel");
                 _finished = true;
-                _pollTimer.Stop();
+                StopTimers();
                 DialogResult = DialogResult.OK;
                 Close();
             }
@@ -247,9 +284,14 @@ namespace AquariumPOS
             {
                 bool wasCancelling = _cancelling;
                 _finished = true;
-                _pollTimer.Stop();
+                StopTimers();
                 if (!wasCancelling)
-                    MessageBox.Show(this, "This QR has expired and no money was taken. Start the payment again.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                {
+                    _timerLabel.Text = "QR expired";
+                    _timerLabel.ForeColor = UiTheme.Danger;
+                    string when = _expiresAtLocal.HasValue ? $" at {_expiresAtLocal.Value:h:mm tt}" : string.Empty;
+                    MessageBox.Show(this, $"This QR expired{when} and no money was taken. Start the payment again.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
                 DialogResult = DialogResult.Cancel;
                 Close();
             }
@@ -318,12 +360,87 @@ namespace AquariumPOS
         private static string GetString(JsonElement root, string name)
             => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
 
+        // The QR on a rounded card: coloured "SCAN TO PAY" header, scan-frame corners around the code and a
+        // footer line - per "can you beautify the QR borders". Drawn into one bitmap, so the theme can't restyle it.
+        private static Bitmap CreateQrCard(string value, bool isTest)
+        {
+            const int border = 3, radius = 18, bracketGap = 9, bracketLength = 30;
+            Color accent = isTest ? UiTheme.Warning : UiTheme.Primary;
+            var card = new Bitmap(CardWidth, CardHeight);
+            using var g = Graphics.FromImage(card);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            g.Clear(UiTheme.PageBg);
+
+            // Soft shadow, then the accent-coloured card, then the white body inside it.
+            using (var shadowPath = RoundedRect(new RectangleF(2, 4, CardWidth - 4, CardHeight - 5), radius))
+            using (var shadowBrush = new SolidBrush(Color.FromArgb(28, UiTheme.TextMain)))
+                g.FillPath(shadowBrush, shadowPath);
+            var outer = new RectangleF(0, 0, CardWidth - 3, CardHeight - 4);
+            using (var outerPath = RoundedRect(outer, radius))
+            using (var accentBrush = new SolidBrush(accent))
+                g.FillPath(accentBrush, outerPath);
+            var body = new RectangleF(border, CardHeaderHeight, outer.Width - 2 * border, outer.Height - CardHeaderHeight - border);
+            using (var bodyPath = RoundedRect(body, radius - border, roundTop: false))
+                g.FillPath(Brushes.White, bodyPath);
+
+            using (var headerFont = UiTheme.UiFont(12, FontStyle.Bold).Clone() as Font)
+            using (var centered = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+            {
+                string header = isTest ? "TEST MODE  •  NO REAL MONEY" : "SCAN TO PAY  •  QR Ph";
+                g.DrawString(header, headerFont!, Brushes.White, new RectangleF(0, 0, outer.Width, CardHeaderHeight), centered);
+
+                float qrX = (outer.Width - QrSize) / 2f, qrY = CardHeaderHeight + 20;
+                using (var qr = CreateQrBitmap(value, QrSize))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                    g.DrawImage(qr, qrX, qrY, QrSize, QrSize);
+                }
+
+                // Scan-frame corners.
+                using (var pen = new Pen(accent, 4) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round })
+                {
+                    float l = qrX - bracketGap, t = qrY - bracketGap, r = qrX + QrSize + bracketGap, b = qrY + QrSize + bracketGap;
+                    g.DrawLines(pen, new[] { new PointF(l, t + bracketLength), new PointF(l, t), new PointF(l + bracketLength, t) });
+                    g.DrawLines(pen, new[] { new PointF(r - bracketLength, t), new PointF(r, t), new PointF(r, t + bracketLength) });
+                    g.DrawLines(pen, new[] { new PointF(l, b - bracketLength), new PointF(l, b), new PointF(l + bracketLength, b) });
+                    g.DrawLines(pen, new[] { new PointF(r - bracketLength, b), new PointF(r, b), new PointF(r, b - bracketLength) });
+                }
+
+                using var footerFont = UiTheme.UiFont(9.5f).Clone() as Font;
+                using var footerBrush = new SolidBrush(UiTheme.TextMuted);
+                float footerTop = qrY + QrSize + bracketGap + 4;
+                g.DrawString("GCash  •  Maya  •  any bank app", footerFont!, footerBrush,
+                    new RectangleF(0, footerTop, outer.Width, outer.Height - border - footerTop), centered);
+            }
+            return card;
+        }
+
+        private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(RectangleF r, float radius, bool roundTop = true)
+        {
+            float d = radius * 2;
+            var path = new System.Drawing.Drawing2D.GraphicsPath();
+            if (roundTop)
+            {
+                path.AddArc(r.Left, r.Top, d, d, 180, 90);
+                path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+            }
+            else
+            {
+                path.AddLine(r.Left, r.Top, r.Right, r.Top);
+            }
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+
         private static Bitmap CreateQrBitmap(string value, int size)
         {
             var writer = new BarcodeWriterPixelData
             {
                 Format = BarcodeFormat.QR_CODE,
-                Options = new EncodingOptions { Width = size, Height = size, Margin = 2 }
+                Options = new EncodingOptions { Width = size, Height = size, Margin = 1 }
             };
             var pixelData = writer.Write(value);
             var bitmap = new Bitmap(pixelData.Width, pixelData.Height, PixelFormat.Format32bppRgb);
