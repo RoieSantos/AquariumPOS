@@ -859,6 +859,14 @@
           <div class="confirmation-order-no" id="confirmationOrderNo"></div>
           <div class="muted" style="margin-top:-8px; font-size:12px;">Order ID</div>
         </div>
+        <!-- Customers who opened Order Now directly (not from a Messenger button) get no Messenger
+             "Order Received" message, so ask everyone to send us the Order ID to confirm faster. -->
+        <div style="margin-bottom:14px; padding:10px 12px; border-radius:10px; background:rgba(0,132,255,0.08); font-size:14px; line-height:1.45;">
+          📸 <strong>Screenshot this Order ID</strong> and send it to us on Facebook Messenger so we can confirm your order faster.
+          <div style="margin-top:8px;">
+            <a class="btn btn-secondary" href="https://m.me/RSPetStop" target="_blank" rel="noopener">💬 Message us on Messenger</a>
+          </div>
+        </div>
         <!-- Xendit online payment (pay.html) - only shown when "Show Pay online on Order Now" is ticked on
              the Xendit Payments page (public_get_xendit_settings, sql/supabase_xendit_payments.sql). -->
         <div class="hidden" id="confirmationPayOnline" style="margin-bottom:14px;">
