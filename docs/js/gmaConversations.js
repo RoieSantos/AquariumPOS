@@ -2729,7 +2729,7 @@ function xenditPaymentBlock() {
   } else {
     lines.push('🔗 We\'ll send your secure payment link once your order is set up.');
   }
-  lines.push('✅ GCash (choose QR Ph, then scan it with GCash), Maya, online banking or card (card payments add a card fee, shown before you pay)');
+  lines.push('✅ GCash (choose QR Ph, then scan it with GCash), Maya, GrabPay, BPI / RCBC, cash at Cebuana / LBC, or card (card payments add a card fee, shown before you pay)');
   lines.push('💡 Your payment is recorded on your order automatically - no need to send a screenshot.');
   return lines.join('\n');
 }
@@ -2775,7 +2775,7 @@ async function sendPayLinkToCustomer(o, btn) {
     ? `Down payment (50%): ${payLinkPeso(downDue)}\nFull balance: ${payLinkPeso(balance)}`
     : `Balance: ${payLinkPeso(balance)}`;
   const message = `💳 You can pay for your order ${o.order_no} online here:\n${link}\n\n${amounts}\n\n`
-    + 'Pay with GCash, Maya, online banking or card (secured by Xendit). Card payments add a card fee, shown before you pay. Your payment shows on your order automatically.\n\n'
+    + 'Pay with GCash, Maya, GrabPay, BPI / RCBC, cash at Cebuana / LBC, or card (secured by Xendit). Card payments add a card fee, shown before you pay. Your payment shows on your order automatically.\n\n'
     + '📱 Paying with GCash? Choose QR Ph on the checkout page and scan it with GCash. On the same phone: save or screenshot the QR, then in GCash tap Scan QR → Upload QR.';
 
   const offNote = xenditEnabled ? '' : '\n\n⚠️ Xendit is switched OFF - the customer will see "Online payment isn\'t available yet". Only send this to a test chat.';

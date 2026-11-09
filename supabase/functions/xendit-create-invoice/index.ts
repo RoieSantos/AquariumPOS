@@ -28,7 +28,11 @@ const CORS_HEADERS = {
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 // The checkout's methods when the customer didn't choose card, so a card can't skip the card fee.
 // https://docs.xendit.co/docs/available-payment-channels
-const NON_CARD_CHANNELS = ['GCASH', 'PAYMAYA', 'GRABPAY', 'SHOPEEPAY', 'QRPH', 'BPI_DIRECT_DEBIT', 'UBP_EADA', 'BDO_ONLINE_BANKING'];
+// Matches the live account's Payment Channels page (2026-11-09): RCBC, Cebuana and LBC added; UBP (rejected)
+// and BDO (not on the account) dropped so every checkout doesn't fail once first. GCash (in progress) and
+// ShopeePay (not activated) stay listed - the retry below drops them until Xendit activates them. Apple Pay /
+// Google Pay have no channel code of their own (they're cards), so they stay on the card checkout.
+const NON_CARD_CHANNELS = ['GCASH', 'PAYMAYA', 'GRABPAY', 'SHOPEEPAY', 'QRPH', 'BPI_DIRECT_DEBIT', 'RCBC_DIRECT_DEBIT', 'CEBUANA', 'LBC'];
 
 // Return pages the customer may be sent back to - anything else falls back to PUBLIC_SITE_URL, so the
 // invoice can't be turned into a redirect to someone else's site.
