@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-09
 
+- **GCash via QR Ph wording.** GCash isn't activated on the live Xendit account, so checkout has no GCash button; GCash customers pay the QR Ph code. Alice gets a GCASH VIA QR PH rule (choose QR Ph, scan with GCash, same phone: Scan QR → Upload QR) ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)); the pay page shows a "Paying with GCash?" tip ([pay.html](docs/pay.html)); Order Now and the Conversations 💳 Pay link / quick-reply swap messages say the same ([order-now.html](docs/order-now.html), [gmaConversations.js](docs/js/gmaConversations.js) `?v=gcashqr1`). Order Now also drops "or pay later by GCash / bank transfer". Revert once GCash is activated.
+
 - **Conversations: Create Order from a quote.** The Custom Aquarium / Custom Stand quote calculator (composer Quote menu and the "Quote this" / "Stand" chips) now has a **Create Order** button beside Put in reply. It puts the same build on this customer's Create Order tab (customer prefilled, light / pump as their own lines like Add to Order), and staff finish and press Create there ([gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html), `?v=quoteorder1`).
 
 - **Conversations: "Stand" quote chip.** When a customer types a size (e.g. 36x18x30), a **Stand** chip now sits beside "📐 Quote this". It opens the Custom Stand calculator with that size (L x W top, H = stand height), and **Put in reply** drops the stand quote and drawing link into the reply box, the same as the aquarium chip ([gmaConversations.js](docs/js/gmaConversations.js), [gma-conversations.html](docs/gma-conversations.html), `?v=standchip1`).
