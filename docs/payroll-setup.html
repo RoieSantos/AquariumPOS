@@ -413,6 +413,21 @@
         </div>
         <div class="bc-field"><label for="editProfilePaidRestDay" title="Adds a day's worth of salary to each payrun">Paid Rest Day</label><input type="checkbox" class="bc-switch" id="editProfilePaidRestDay" /></div>
         <div class="bc-field"><label for="editProfileActive">Active<span class="bc-field-hint">Off = excluded from future payroll runs</span></label><input type="checkbox" class="bc-switch" id="editProfileActive" /></div>
+
+        <!-- Salary payout through Xendit (sql/supabase_xendit_payroll_payouts.sql) - super users only. -->
+        <details class="doc-fasttab hidden" id="payoutFastTab" open style="margin-top:12px;">
+          <summary>Salary Payout (Xendit) <span class="doc-fasttab-summary" id="payoutSummary"></span></summary>
+          <div class="doc-fasttab-body">
+            <div class="bc-field"><label for="payoutViaXendit">Pay salary via Xendit<span class="bc-field-hint">New payroll runs pay this employee from the Xendit balance</span></label><input type="checkbox" class="bc-switch" id="payoutViaXendit" /></div>
+            <div class="bc-field">
+              <label for="payoutChannel">Pay To</label>
+              <select id="payoutChannel"><option value="">(none)</option></select>
+            </div>
+            <div class="bc-field"><label for="payoutAccountNumber" id="payoutAccountNumberLabel">Account Number</label><input type="text" id="payoutAccountNumber" inputmode="numeric" autocomplete="off" maxlength="30" /></div>
+            <div class="bc-field"><label for="payoutAccountName">Account Name<span class="bc-field-hint">Exactly as on the GCash / bank account</span></label><input type="text" id="payoutAccountName" autocomplete="off" maxlength="100" /></div>
+            <p class="muted" id="payoutUpdated" style="margin:4px 0 0; font-size:12px;"></p>
+          </div>
+        </details>
       </div>
       <div class="bc-dialog-foot">
         <p id="editProfileError" class="bc-dialog-msg error-text hidden"></p>
@@ -516,7 +531,7 @@
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=xledger1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollSetup.js?v=ownerfund1"></script>
+  <script src="js/payrollSetup.js?v=xpayout1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

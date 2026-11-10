@@ -8,8 +8,8 @@
 // Secrets: see _shared/xendit-keys.ts. Both modes work whichever way the Xendit Payments page's switch is set, so
 // a payment already started is still recorded after switching.
 //
-// Xendit Dashboard > Settings > Webhooks > Payment Session (completed and expired) and Payments, in both TEST
-// and LIVE mode:  https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/xendit-webhook
+// Xendit Dashboard > Settings > Webhooks > Payment Session (completed and expired), Payments and Payouts (v2), in
+// both TEST and LIVE mode:  https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/xendit-webhook
 //
 // After a payment is applied, the customer gets a "payment received" message on the order's Messenger
 // chat (sendReceiptMessage below; uses the FACEBOOK_PAGE_ACCESS_TOKEN / FACEBOOK_PAGE_TOKENS secrets the
@@ -19,7 +19,8 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getPageAccessToken } from '../_shared/page-tokens.ts';
-import { callbackTokenFor, secretKeyFor } from '../_shared/xendit-keys.ts';
+import { callbackTokenFor, payoutKeyFor, secretKeyFor } from '../_shared/xendit-keys.ts';
+import { getPayout, recordArgs } from '../_shared/xendit-payouts.ts';
 import { readPaymentRequest, toRecordedInvoice } from '../_shared/xendit-qrph.ts';
 import { readSession, toRecordedSession } from '../_shared/xendit-session.ts';
 
@@ -168,6 +169,29 @@ Deno.serve(async (req) => {
       }
     }
     return jsonResponse(data ?? { ok: true });
+  }
+
+  // Payroll payouts (xendit-payroll-payout): payout.succeeded / payout.failed / payout.reversed... Re-read from
+  // Xendit with that mode's payout key, then recorded on XenditPayouts (sql/supabase_xendit_payroll_payouts.sql).
+  // Xendit Dashboard > Settings > Webhooks > Payouts (v2), same URL.
+  if (typeof payload?.event === 'string' && payload.event.startsWith('payout.')) {
+    const payoutId = String(payload?.data?.id ?? '').trim();
+    const referenceId = String(payload?.data?.reference_id ?? '').trim();
+    if (!referenceId.startsWith('RSPS-PAY-')) return jsonResponse({ ok: true, note: 'Not a payroll payout - ignored.' });
+    const payoutKey = payoutKeyFor(!isLive);
+    if (!payoutId || !payoutKey) return jsonResponse({ error: 'No payout id or payout key.' }, 400);
+    const read = await getPayout(payoutKey, payoutId);
+    if (read.status === 404) return jsonResponse({ ok: true, note: `Payout ${payoutId} is not on this account (dashboard test?) - ignored.` });
+    if (!read.ok || !read.body?.id) return jsonResponse({ error: `Payout lookup failed (${read.status}).` }, 502); // Xendit retries
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const { data, error } = await supabase.rpc('_payroll_payout_record', {
+      p_payout_id: null, p_reference_id: String(read.body.reference_id ?? referenceId), p_error: null, ...recordArgs(read.body)
+    });
+    if (error) {
+      console.error('xendit-webhook: payout record failed', error.message);
+      return jsonResponse({ error: error.message }, 500); // Xendit retries
+    }
+    return jsonResponse({ ok: true, status: data });
   }
 
   // POS / delivery QR Ph payments (xendit-pos-payment, xendit-delivery-payment) come from the Payments API, which posts { event, data }. Covers a

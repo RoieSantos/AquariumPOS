@@ -27,7 +27,7 @@
 -- deposit_total / deposit_count per row, total_deposited, and a p_deposit filter.
 --
 -- Run AFTER supabase_tender_declaration_tables.sql and supabase_phys_journal_store_manager_access.sql.
--- Safe to re-run. Needs js/tenderDeclarations.js ?v=tenderdeposit5 and js/auth.js / js/nav.js ?v=tenderdeposit1.
+-- Safe to re-run. Needs js/tenderDeclarations.js ?v=todeposit1 and js/auth.js / js/nav.js ?v=tenderdeposit1.
 
 -- ============================================================================
 -- 1. Storage bucket, table
@@ -488,6 +488,7 @@ grant execute on function public.staff_delete_tender_deposit(text, text, int) to
 -- Cashiers sometimes declare twice in a day: is_counted marks the LATEST declaration per Warehouse +
 -- DeclDate (highest EODID - the POS running number), decided over all rows before the filters apply, and
 -- total_declared sums only those - the earlier one of a re-declare is listed but not added in.
+-- total_to_deposit = Declared Cash still to deposit (same latest-per-day rule), for the "To Deposit" card.
 -- ============================================================================
 
 drop function if exists public.admin_list_tender_declarations(text, text, text, text, date, date, text, int, int);
@@ -532,7 +533,8 @@ returns table(
   total_over numeric,
   total_declared numeric,
   total_deposited numeric,
-  is_counted boolean
+  is_counted boolean,
+  total_to_deposit numeric
 )
 language plpgsql
 security definer
@@ -582,7 +584,10 @@ begin
       coalesce(sum(case when h."Variance" > 0 then h."Variance" else 0 end) over(), 0),
       coalesce(sum(h."DeclaredCash") filter (where h.counted) over(), 0),
       coalesce(sum(h.dep_amt) over(), 0),
-      h.counted
+      h.counted,
+      -- Declared Cash not deposited yet: latest declaration of each day only (a re-declare isn't added
+      -- twice), and a deposit over the declared amount doesn't offset another day's shortfall.
+      coalesce(sum(greatest(h."DeclaredCash" - h.dep_amt, 0)) filter (where h.counted) over(), 0)
     from joined h
     where (v_warehouse is null or lower(trim(h."Warehouse")) = lower(v_warehouse))
       and (p_from is null or h."DeclDate" >= p_from)

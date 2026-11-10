@@ -21,6 +21,14 @@ export function readKeyFor(isTest: boolean): string | null {
   return key?.startsWith(isTest ? 'xnd_development_' : 'xnd_production_') ? key : secretKeyFor(isTest);
 }
 
+// Payroll payouts (xendit-payroll-payout, xendit-webhook) send money OUT, which needs "Money-out: Write" on the
+// key. Keep that permission off the payments key: make a separate key and save it as XENDIT_LIVE_PAYOUT_KEY /
+// XENDIT_TEST_PAYOUT_KEY. Without one, the main secret key is tried (and Xendit refuses if it can't pay out).
+export function payoutKeyFor(isTest: boolean): string | null {
+  const key = Deno.env.get(isTest ? 'XENDIT_TEST_PAYOUT_KEY' : 'XENDIT_LIVE_PAYOUT_KEY');
+  return key?.startsWith(isTest ? 'xnd_development_' : 'xnd_production_') ? key : secretKeyFor(isTest);
+}
+
 export function callbackTokenFor(isTest: boolean): string | null {
   return Deno.env.get(isTest ? 'XENDIT_TEST_CALLBACK_TOKEN' : 'XENDIT_LIVE_CALLBACK_TOKEN') || null;
 }

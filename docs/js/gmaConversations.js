@@ -4821,8 +4821,13 @@ async function okToSendPaymentDetails(message, images) {
   if (!quickReplies.length) await loadQuickReplies();
   const flagged = quickReplies.filter((q) => q.has_payment_details);
   if (!flagged.length) return true;
-  const ourNumbers = flagged.flatMap((q) => paymentNumbersIn(q.message_text));
-  const ourImages = new Set(flagged.flatMap(qrImageUrls));
+  // Per "if i send the location quick reply im getting this error": a number / photo that also sits in
+  // an UNflagged quick reply (Location's store phone + map) is public info, not a payment detail.
+  const unflagged = quickReplies.filter((q) => !q.has_payment_details);
+  const publicNumbers = new Set(unflagged.flatMap((q) => paymentNumbersIn(q.message_text)));
+  const publicImages = new Set(unflagged.flatMap(qrImageUrls));
+  const ourNumbers = flagged.flatMap((q) => paymentNumbersIn(q.message_text)).filter((n) => !publicNumbers.has(n));
+  const ourImages = new Set(flagged.flatMap(qrImageUrls).filter((u) => !publicImages.has(u)));
   const hit = paymentNumbersIn(message).some((d) => ourNumbers.some((n) => d.includes(n) || n.includes(d)))
     || (images || []).some((img) => ourImages.has(img.url));
   if (!hit) return true;

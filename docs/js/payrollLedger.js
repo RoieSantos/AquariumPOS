@@ -152,7 +152,7 @@ async function loadLedger() {
   // for that method with no period restriction, since the point is to see everything that adds up
   // to the current running balance, not just this month.
   const methodParam = new URLSearchParams(window.location.search).get('method');
-  if (methodParam === 'Cash' || methodParam === 'Digital') {
+  if (methodParam === 'Cash' || methodParam === 'Digital' || methodParam === 'Xendit') {
     document.getElementById('filterMethod').value = methodParam;
   } else {
     // Default the visible range to the current month so a first-time load doesn't try to pull

@@ -878,6 +878,28 @@ WHEN NOT MATCHED THEN
             cmd.ExecuteNonQuery();
         }
 
+        // True when this receipt is an advance order's receipt (its Pay In Full SALES header shares it).
+        // A failed lookup returns false, so a real walk-in is never dropped.
+        private static bool IsAdvanceOrderReceipt(string receiptNo)
+        {
+            if (string.IsNullOrWhiteSpace(receiptNo))
+                return false;
+
+            try
+            {
+                using var conn = new SqlConnection(GlobalSettings.ConnectionString);
+                conn.Open();
+                using var cmd = new SqlCommand("SELECT CASE WHEN OBJECT_ID('dbo.AdvanceOrderHeader', 'U') IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.AdvanceOrderHeader WHERE ReceiptNo = @ReceiptNo) THEN 1 ELSE 0 END", conn);
+                cmd.Parameters.AddWithValue("@ReceiptNo", receiptNo.Trim());
+                return Convert.ToInt32(cmd.ExecuteScalar()) == 1;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"IsAdvanceOrderReceipt check failed for '{receiptNo}': {ex.Message}");
+                return false;
+            }
+        }
+
         private static void MarkReceiptSentToOnline(string receiptNo)
         {
             if (string.IsNullOrWhiteSpace(receiptNo))
@@ -1897,6 +1919,18 @@ END";
                 {
                     System.Diagnostics.Debug.WriteLine($"CreateInstoreOnlineOrder: Skipping Receipt '{ReceiptNo}' because TransactionHeader.Type='{transactionType}'.");
                     UpsertInstoreOnlineOrderMap(ReceiptNo, string.Empty, "INSTORE", "SKIP", $"Skipped because TransactionHeader.Type='{transactionType}'.");
+                    return string.Empty;
+                }
+
+                // Advance order "Pay In Full" writes a SALES header under the advance order's own receipt
+                // (AdvanceOrdersHeaderForm). That money is the advance order's payment (synced to the portal by
+                // SyncSingleAdvanceOrderToSupabase), not a walk-in sale - sending it made a POS-FALLBACK
+                // "POS WALKIN ORDERS" WI order and counted it as today's sales. Mark it sent so the
+                // SendFailedTransactionToCloud resend stops picking it up.
+                if (IsAdvanceOrderReceipt(ReceiptNo))
+                {
+                    UpsertInstoreOnlineOrderMap(ReceiptNo, string.Empty, "ADVANCEORDER", "SKIP", "Skipped: receipt belongs to an advance order (Pay In Full), not a walk-in.");
+                    MarkReceiptSentToOnline(ReceiptNo);
                     return string.Empty;
                 }
 

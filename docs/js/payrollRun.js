@@ -69,6 +69,20 @@ async function loadFundingRequirement() {
   document.getElementById('digitalOnHandRunDisplay').textContent = formatCurrency(req.digital_balance);
   document.getElementById('digitalStatusDisplay').innerHTML =
     digitalShort ? '<span class="badge badge-danger">Short</span>' : '<span class="badge badge-success">OK</span>';
+
+  // Xendit lines are paid from the Xendit sales balance after Finalize - shown, never a Finalize block.
+  const xenditRequired = Number(req.xendit_required) || 0;
+  document.getElementById('xenditFundingRow').classList.toggle('hidden', xenditRequired <= 0);
+  if (xenditRequired > 0) {
+    document.getElementById('xenditRequiredDisplay').textContent = formatCurrency(xenditRequired);
+    const balance = currentSession.isSuperUser ? await callPayoutFunction({ action: 'balance' }).catch(() => null) : null;
+    const onHand = balance && typeof balance.balance === 'number' ? balance.balance : null;
+    document.getElementById('xenditOnHandRunDisplay').textContent = onHand == null ? '-' : formatCurrency(onHand);
+    document.getElementById('xenditStatusDisplay').innerHTML = onHand == null
+      ? '<span class="muted">Checked when sending</span>'
+      : onHand >= xenditRequired ? '<span class="badge badge-success">OK</span>'
+        : '<span class="badge badge-warning">Short now</span> <span class="muted">- wait for sales to settle or top up before sending</span>';
+  }
 }
 
 function renderLedgerRows(entries) {
@@ -128,12 +142,19 @@ function renderLineRows(lines) {
   const hasDaysWorked = (l) => l.days_worked !== null && l.days_worked !== undefined;
   const unitLabel = (l) => l.pay_type === 'Hourly' ? 'hr' : 'day';
   // payment_method is already defaulted to Cash server-side, same rule as the funding requirement.
-  const methodBadge = (m) => `<span class="badge ${m === 'Digital' ? 'badge-primary' : 'badge-success'}">${m || 'Cash'}</span>`;
+  const methodBadge = (m) => `<span class="badge ${m === 'Xendit' ? 'badge-purple' : m === 'Digital' ? 'badge-primary' : 'badge-success'}">${m || 'Cash'}</span>`;
+  // Finalized Xendit lines: the payout's status under the badge (sql/supabase_xendit_payroll_payouts.sql).
+  const payoutNote = (l) => {
+    if (l.payment_method !== 'Xendit' || !isRunFinalized()) return '';
+    const p = currentPayouts.find((x) => x.line_id === l.line_id);
+    return p ? `<div style="font-size:11.5px;">${payoutStatusHtml(p)}</div>` : '';
+  };
   // Draft runs get a dropdown to change the method for this run only - see saveLineMethod().
-  const methodCell = (l) => isRunFinalized() ? methodBadge(l.payment_method) : `
+  const methodCell = (l) => isRunFinalized() ? methodBadge(l.payment_method) + payoutNote(l) : `
     <select data-method-line-id="${l.line_id}" aria-label="Pay method for ${l.display_name || l.username}">
       <option value="Cash"${l.payment_method === 'Digital' ? '' : ' selected'}>Cash</option>
       <option value="Digital"${l.payment_method === 'Digital' ? ' selected' : ''}>Digital</option>
+      <option value="Xendit"${l.payment_method === 'Xendit' ? ' selected' : ''}>Xendit</option>
     </select>`;
 
   tbody.innerHTML = lines
@@ -161,6 +182,7 @@ function renderLineRows(lines) {
 
   if (!lines.some((l) => l.line_id === selectedLineId)) selectedLineId = null;
   updateLineActionState();
+  updatePayXenditButton();
 }
 
 // BC document: Edit Line / Print Payslip act on the selected line (click a row to select it).
@@ -200,6 +222,7 @@ async function loadRun() {
 }
 
 async function loadLines() {
+  if (isRunFinalized()) await loadPayouts();
   const tbody = document.getElementById('lineTableBody');
   tbody.innerHTML = '<tr><td colspan="8" class="cell-msg">Loading...</td></tr>';
 
@@ -480,6 +503,173 @@ async function deleteLineItem(itemId) {
   await loadFundingRequirement();
 }
 
+// ---------------------------------------------------------------- Pay via Xendit
+// sql/supabase_xendit_payroll_payouts.sql + Edge Function xendit-payroll-payout. Sending is super users only (the
+// function re-checks); payroll officers see the statuses and can Refresh Status.
+let currentPayouts = [];
+let payoutBusy = false;
+let payoutBalanceInfo = null;
+
+const PAYOUT_DONE = ['SUCCEEDED'];
+const PAYOUT_GOING = ['Creating', 'ACCEPTED', 'REQUESTED'];
+
+async function callPayoutFunction(payload) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-payroll-payout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+    body: JSON.stringify({ ...payload, username: currentSession.username, password: currentSession.password })
+  });
+  const data = await response.json().catch(() => null);
+  if (response.status === 404) throw new Error('The xendit-payroll-payout Edge Function isn\'t deployed yet.');
+  if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+  return data;
+}
+
+async function loadPayouts() {
+  const { data, error } = await supabaseClient.rpc('admin_list_payroll_run_payouts', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_run_id: currentRunId
+  });
+  currentPayouts = error ? [] : (data || []);
+  return !error;
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function payoutStatusHtml(p) {
+  const test = p.is_test ? ' <strong style="color:#b45309;">TEST</strong>' : '';
+  if (!p.status) return '<span class="muted">Not sent</span>';
+  if (p.status === 'SUCCEEDED') {
+    return `<span style="color:var(--success);">Paid</span>${p.paid_at ? ` <span class="muted">${new Date(p.paid_at).toLocaleDateString()}</span>` : ''}${test}`;
+  }
+  if (PAYOUT_GOING.includes(p.status)) return `<span style="color:#a6720a;">Sending...</span>${test}`;
+  const label = p.status === 'Error' ? 'Not sent' : p.status.charAt(0) + p.status.slice(1).toLowerCase();
+  return `<span style="color:var(--danger);">${escapeHtmlText(label)}</span>${test}`
+    + (p.failure ? ` <span class="muted" title="${escapeHtmlText(p.failure)}">- ${escapeHtmlText(p.failure)}</span>` : '');
+}
+
+// Lines still to pay for real: never sent, only sent in test, or the last try failed / was refused.
+function payoutPending(p) {
+  if (!p.has_account || Number(p.net_pay) <= 0) return false;
+  if (!p.status || p.is_test) return true;
+  return !(PAYOUT_DONE.includes(p.status) || PAYOUT_GOING.includes(p.status));
+}
+
+function updatePayXenditButton() {
+  const show = isRunFinalized() && currentLines.some((l) => l.payment_method === 'Xendit');
+  document.getElementById('payXenditBtn').classList.toggle('hidden', !show);
+  document.getElementById('payXenditSep').classList.toggle('hidden', !show);
+}
+
+function renderPayoutDialog(balanceInfo) {
+  const tbody = document.getElementById('payoutTableBody');
+  if (!currentPayouts.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="cell-msg">No Xendit lines on this run.</td></tr>';
+  } else {
+    tbody.innerHTML = currentPayouts.map((p) => {
+      // Where it went (the payout's own copy) once sent / on its way; a line still to send (incl. a failed one)
+      // shows the account saved now, since that's where the next send goes.
+      const payTo = p.payout_channel && !payoutPending(p) ?`${escapeHtmlText(p.payout_channel)} ${escapeHtmlText(p.payout_account_masked || '')}`
+        : p.has_account ? `${escapeHtmlText(p.channel_name)} ${escapeHtmlText(p.account_masked || '')}`
+          : '<span class="error-text">No payout account - add it in Payroll Setup</span>';
+      return `<tr>
+        <td>${escapeHtmlText(p.display_name || p.username)}</td>
+        <td>${payTo}</td>
+        <td>${escapeHtmlText(p.account_name || '')}</td>
+        <td class="num">${formatCurrency(p.net_pay)}</td>
+        <td>${payoutStatusHtml(p)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const pending = currentPayouts.filter(payoutPending);
+  const toSend = pending.reduce((s, p) => s + (Number(p.net_pay) || 0), 0);
+  const paid = currentPayouts.filter((p) => p.status === 'SUCCEEDED' && !p.is_test).reduce((s, p) => s + (Number(p.net_pay) || 0), 0);
+  const balance = balanceInfo && typeof balanceInfo.balance === 'number' ? balanceInfo.balance : null;
+  const mode = !balanceInfo || balanceInfo.error ? ''
+    : balanceInfo.isTest ? '<strong style="color:#b45309;">TEST mode</strong> - no real money moves.' : '<strong>LIVE</strong> - real money.';
+  document.getElementById('payoutSummaryBox').innerHTML = `
+    ${mode ? `<div>${mode}</div>` : ''}
+    <div>To send now: <strong>${formatCurrency(toSend)}</strong> to ${pending.length} employee${pending.length === 1 ? '' : 's'}${paid ? ` · Already paid: ${formatCurrency(paid)}` : ''}</div>
+    <div>Xendit available balance: <strong>${balance == null ? '-' : formatCurrency(balance)}</strong>${balance != null && balance < toSend ? ' <span class="error-text">- not enough; wait for sales to settle or top up Xendit</span>' : ''}</div>`;
+
+  const sendBtn = document.getElementById('sendPayoutsBtn');
+  sendBtn.classList.toggle('hidden', !currentSession.isSuperUser);
+  sendBtn.disabled = payoutBusy || pending.length === 0;
+  sendBtn.textContent = pending.length ? `Send ${formatCurrency(toSend)}` : 'Nothing to send';
+  sendBtn.dataset.total = String(toSend);
+  sendBtn.dataset.count = String(pending.length);
+}
+
+function showPayoutMessage(text, isError) {
+  const el = document.getElementById('payoutMessage');
+  el.textContent = text || '';
+  el.className = `bc-dialog-msg ${isError ? 'error-text' : 'muted'}`;
+  el.classList.toggle('hidden', !text);
+}
+
+async function openPayoutDialog() {
+  document.getElementById('payoutModal').classList.remove('hidden');
+  showPayoutMessage('');
+  document.getElementById('payoutTableBody').innerHTML = '<tr><td colspan="5" class="cell-msg">Loading...</td></tr>';
+  const [balanceInfo] = await Promise.all([
+    currentSession.isSuperUser ? callPayoutFunction({ action: 'balance' }).catch((err) => ({ error: err.message })) : Promise.resolve(null),
+    loadPayouts()
+  ]);
+  payoutBalanceInfo = balanceInfo;
+  renderPayoutDialog(balanceInfo);
+  if (balanceInfo?.error) showPayoutMessage(balanceInfo.error, true);
+}
+
+async function sendPayouts() {
+  const btn = document.getElementById('sendPayoutsBtn');
+  const total = Number(btn.dataset.total) || 0;
+  const count = Number(btn.dataset.count) || 0;
+  if (!count || payoutBusy) return;
+  const mode = payoutBalanceInfo?.isTest ? 'TEST (no real money)' : 'LIVE - real money';
+  if (!confirm(`Send ${formatCurrency(total)} to ${count} employee${count === 1 ? '' : 's'} through Xendit?\n\nMode: ${mode}\n\nThis can't be undone.`)) return;
+  payoutBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  showPayoutMessage('Sending - keep this window open...');
+  try {
+    const result = await callPayoutFunction({ action: 'send', runId: currentRunId });
+    const failed = result.failed || [];
+    showPayoutMessage(
+      result.note || (`${result.sent} sent.`
+        + (failed.length ? ` ${failed.length} not sent: ${failed.map((f) => `${f.name} (${f.error})`).join('; ')}` : ' Xendit confirms each one shortly - press Refresh Status.')),
+      failed.length > 0
+    );
+  } catch (err) {
+    showPayoutMessage(err.message, true);
+  } finally {
+    payoutBusy = false;
+    await loadPayouts();
+    renderPayoutDialog(payoutBalanceInfo);
+    await loadLines();
+  }
+}
+
+async function refreshPayouts() {
+  const btn = document.getElementById('refreshPayoutsBtn');
+  btn.disabled = true;
+  showPayoutMessage('Checking with Xendit...');
+  try {
+    const result = await callPayoutFunction({ action: 'refresh', runId: currentRunId });
+    showPayoutMessage(result.checked ? `Checked ${result.checked} payout${result.checked === 1 ? '' : 's'} with Xendit.` : 'Nothing waiting on Xendit.');
+  } catch (err) {
+    showPayoutMessage(err.message, true);
+  } finally {
+    btn.disabled = false;
+    await loadPayouts();
+    renderPayoutDialog(payoutBalanceInfo);
+    await loadLines();
+  }
+}
+
 async function finalizeRun() {
   if (!confirm('Finalize this payroll run? Base pay and line items can no longer be edited afterward.')) return;
 
@@ -578,5 +768,11 @@ async function deleteRun() {
     if (btn) deleteLineItem(btn.getAttribute('data-delete-item-id'));
   });
   document.getElementById('finalizeRunBtn').addEventListener('click', finalizeRun);
+  document.getElementById('payXenditBtn').addEventListener('click', openPayoutDialog);
+  document.getElementById('sendPayoutsBtn').addEventListener('click', sendPayouts);
+  document.getElementById('refreshPayoutsBtn').addEventListener('click', refreshPayouts);
+  document.querySelectorAll('[data-close-payout]').forEach((el) => el.addEventListener('click', () => {
+    if (!payoutBusy) document.getElementById('payoutModal').classList.add('hidden');
+  }));
   document.getElementById('deleteRunBtn').addEventListener('click', deleteRun);
 })();

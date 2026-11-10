@@ -153,6 +153,8 @@ async function loadDeclarations() {
   document.getElementById('statCount').textContent = first ? Number(first.total_count).toLocaleString() : '0';
   document.getElementById('statDeclared').textContent = formatMoney(first ? first.total_declared : 0);
   document.getElementById('statDeposited').textContent = formatMoney(first ? first.total_deposited : 0);
+  // Missing until supabase_tender_deposit_receipts.sql is re-run - shown as '-' rather than a wrong 0.
+  document.getElementById('statToDeposit').textContent = first && first.total_to_deposit == null ? '-' : formatMoney(first ? first.total_to_deposit : 0);
   document.getElementById('statShort').textContent = formatMoney(first ? first.total_short : 0);
   document.getElementById('statOver').textContent = formatMoney(first ? first.total_over : 0);
 

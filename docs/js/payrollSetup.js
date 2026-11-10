@@ -257,6 +257,7 @@ function openEditProfileModal(username) {
   document.getElementById('editProfileActive').checked = employee.is_active !== false;
   document.getElementById('editProfileError').classList.add('hidden');
   document.getElementById('editProfileModal').classList.remove('hidden');
+  loadPayoutAccount(employee.username);
 }
 
 async function saveProfile() {
@@ -298,6 +299,15 @@ async function saveProfile() {
   if (error || !result || !result.success) {
     errorEl.textContent = error?.message || result?.message || 'Failed to update payroll profile.';
     errorEl.classList.remove('hidden');
+    return;
+  }
+
+  // Profile saved; the Xendit payout account (super users) saves separately - keep the dialog open if it fails.
+  const payoutError = await savePayoutAccountIfChanged(username);
+  if (payoutError) {
+    errorEl.textContent = 'Profile saved. ' + payoutError;
+    errorEl.classList.remove('hidden');
+    await loadEmployees();
     return;
   }
 
@@ -752,6 +762,139 @@ function wireSetupTabs() {
   showSetupTab(new URLSearchParams(window.location.search).get('tab') || stored || 'employees');
 }
 
+// ---------------------------------------------------------------- Salary Payout (Xendit) - super users only
+// sql/supabase_xendit_payroll_payouts.sql + Edge Function xendit-payroll-payout ('channels').
+const PAYOUT_WALLETS = ['PH_GCASH', 'PH_PAYMAYA', 'PH_GRABPAY', 'PH_SHOPEEPAY'];
+// Used until / unless Xendit's own list loads.
+const FALLBACK_PAYOUT_CHANNELS = [
+  { code: 'PH_GCASH', name: 'GCash', category: 'EWALLET' },
+  { code: 'PH_PAYMAYA', name: 'Maya', category: 'EWALLET' },
+  { code: 'PH_BDO', name: 'BDO Unibank', category: 'BANK' },
+  { code: 'PH_BPI', name: 'Bank of the Philippine Islands (BPI)', category: 'BANK' },
+  { code: 'PH_UBP', name: 'UnionBank', category: 'BANK' }
+];
+let payoutChannelsLoaded = false;
+let payoutLoadedFor = null; // username whose saved payout account is in the form - Save only writes it then
+let payoutSnapshot = '';
+
+function escapeHtmlPayout(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderPayoutChannelOptions(channels, keepValue) {
+  const sel = document.getElementById('payoutChannel');
+  const group = (cat, label) => {
+    const list = channels.filter((c) => c.category === cat);
+    return list.length ? `<optgroup label="${label}">${list.map((c) => `<option value="${escapeHtmlPayout(c.code)}">${escapeHtmlPayout(c.name || c.code)}</option>`).join('')}</optgroup>` : '';
+  };
+  sel.innerHTML = '<option value="">(none)</option>' + group('EWALLET', 'E-wallets') + group('BANK', 'Banks');
+  if (keepValue && ![...sel.options].some((o) => o.value === keepValue)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtmlPayout(keepValue)}">${escapeHtmlPayout(keepValue)}</option>`);
+  }
+  sel.value = keepValue || '';
+}
+
+// Xendit's own list of payout channels for the account; the built-in list shows meanwhile / if it fails.
+async function loadPayoutChannels() {
+  if (payoutChannelsLoaded) return;
+  payoutChannelsLoaded = true;
+  renderPayoutChannelOptions(FALLBACK_PAYOUT_CHANNELS, document.getElementById('payoutChannel').value);
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-payroll-payout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+      body: JSON.stringify({ action: 'channels', username: currentSession.username, password: currentSession.password })
+    });
+    const data = await response.json().catch(() => null);
+    if (response.ok && Array.isArray(data?.channels) && data.channels.length) {
+      renderPayoutChannelOptions(data.channels, document.getElementById('payoutChannel').value);
+      updatePayoutHints();
+    }
+  } catch (err) {
+    console.warn('Payout channels: using the built-in list', err);
+  }
+}
+
+function updatePayoutHints() {
+  const sel = document.getElementById('payoutChannel');
+  const code = sel.value;
+  const wallet = PAYOUT_WALLETS.includes(code);
+  document.getElementById('payoutAccountNumberLabel').textContent = wallet ? 'Mobile Number' : 'Account Number';
+  document.getElementById('payoutAccountNumber').placeholder = wallet ? '09171234567' : 'Bank account number';
+  const on = document.getElementById('payoutViaXendit').checked;
+  const name = code ? sel.options[sel.selectedIndex]?.textContent : '';
+  const number = document.getElementById('payoutAccountNumber').value.trim();
+  document.getElementById('payoutSummary').textContent = on && code ? `On - ${name}${number ? ' ••' + number.slice(-4) : ''}` : 'Off';
+}
+
+function payoutFormState() {
+  return JSON.stringify([
+    document.getElementById('payoutViaXendit').checked,
+    document.getElementById('payoutChannel').value,
+    document.getElementById('payoutAccountNumber').value.trim(),
+    document.getElementById('payoutAccountName').value.trim()
+  ]);
+}
+
+async function loadPayoutAccount(username) {
+  payoutLoadedFor = null;
+  document.getElementById('payoutFastTab').classList.toggle('hidden', !currentSession.isSuperUser);
+  if (!currentSession.isSuperUser) return;
+  ['payoutAccountNumber', 'payoutAccountName'].forEach((id) => { document.getElementById(id).value = ''; });
+  document.getElementById('payoutViaXendit').checked = false;
+  document.getElementById('payoutChannel').value = '';
+  document.getElementById('payoutUpdated').textContent = 'Loading...';
+  loadPayoutChannels();
+  const { data, error } = await supabaseClient.rpc('admin_get_payroll_payout_account', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_username: username
+  });
+  if (error) {
+    document.getElementById('payoutUpdated').textContent = /could not find the function|schema cache/i.test(error.message)
+      ? 'Not set up yet - run sql/supabase_xendit_payroll_payouts.sql.' : `Could not load: ${error.message}`;
+    return;
+  }
+  const p = (data && data[0]) || {};
+  const sel = document.getElementById('payoutChannel');
+  if (p.channel_code && ![...sel.options].some((o) => o.value === p.channel_code)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtmlPayout(p.channel_code)}">${escapeHtmlPayout(p.channel_name || p.channel_code)}</option>`);
+  }
+  document.getElementById('payoutViaXendit').checked = !!p.pay_via_xendit;
+  sel.value = p.channel_code || '';
+  document.getElementById('payoutAccountNumber').value = p.account_number || '';
+  document.getElementById('payoutAccountName').value = p.account_name || '';
+  document.getElementById('payoutUpdated').textContent = p.updated_at ? `Last changed by ${p.updated_by} on ${new Date(p.updated_at).toLocaleString()}` : '';
+  updatePayoutHints();
+  payoutLoadedFor = username;
+  payoutSnapshot = payoutFormState();
+}
+
+// Called by saveProfile after the profile itself saved. Returns an error message, or null.
+async function savePayoutAccountIfChanged(username) {
+  if (!currentSession.isSuperUser || payoutLoadedFor !== username || payoutFormState() === payoutSnapshot) return null;
+  const sel = document.getElementById('payoutChannel');
+  const code = sel.value;
+  const number = document.getElementById('payoutAccountNumber').value.trim();
+  if (code && !confirm(`Save the salary payout account for ${username}?\n\n${sel.options[sel.selectedIndex].textContent} ${number}\n\nSalaries sent through Xendit go to this account.`)) {
+    return 'Payout account not saved.';
+  }
+  const { data, error } = await supabaseClient.rpc('admin_set_payroll_payout_account', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_username: username,
+    p_pay_via_xendit: document.getElementById('payoutViaXendit').checked,
+    p_channel_code: code || null,
+    p_channel_name: code ? sel.options[sel.selectedIndex].textContent : null,
+    p_account_number: number || null,
+    p_account_name: document.getElementById('payoutAccountName').value.trim() || null
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) return error?.message || result?.message || 'Failed to save the payout account.';
+  payoutSnapshot = payoutFormState();
+  return null;
+}
+
 (async function init() {
   const session = await requireAuth();
   if (!session) return;
@@ -799,6 +942,8 @@ function wireSetupTabs() {
   document.getElementById('cancelEditProfileBtn').addEventListener('click', closeEditProfile);
   document.getElementById('saveProfileBtn').addEventListener('click', saveProfile);
   document.getElementById('editProfilePayType').addEventListener('change', () => togglePayTypeRows('editProfile'));
+  ['payoutViaXendit', 'payoutChannel'].forEach((id) => document.getElementById(id).addEventListener('change', updatePayoutHints));
+  document.getElementById('payoutAccountNumber').addEventListener('input', updatePayoutHints);
 
   document.getElementById('newEmployeePayType').addEventListener('change', () => togglePayTypeRows('newEmployee'));
   document.getElementById('newEmployeeBtn').addEventListener('click', openNewEmployeeModal);
