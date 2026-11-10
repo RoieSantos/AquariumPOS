@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payroll Setup - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
   <link rel="stylesheet" href="css/bc-list.css?v=redqty5" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
@@ -276,6 +276,7 @@
                     <select id="advanceMethod">
                       <option value="Cash">Cash</option>
                       <option value="Digital">Digital (GCash)</option>
+                      <option value="Xendit">Xendit (send from Timesheets)</option>
                     </select>
                   </div>
                   <div class="bc-doc-field">
@@ -299,6 +300,7 @@
               </select>
               <select id="filterAdvanceStatus" style="max-width:160px; height:28px;">
                 <option value="">All statuses</option>
+                <option value="Pending">Pending (Xendit, not paid yet)</option>
                 <option value="Outstanding">Outstanding</option>
                 <option value="Applied">Applied</option>
               </select>
@@ -529,9 +531,9 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
-  <script src="js/nav.js?v=xledger1"></script>
+  <script src="js/nav.js?v=navgroups2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollSetup.js?v=xpayout1"></script>
+  <script src="js/payrollSetup.js?v=xadvance1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

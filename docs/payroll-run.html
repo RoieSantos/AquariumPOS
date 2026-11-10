@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payroll Run - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
   <link rel="stylesheet" href="css/bc-list.css?v=redqty5" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
@@ -73,6 +73,8 @@
       </div>
 
       <div id="runError" class="bc-doc-error error-text hidden"></div>
+      <!-- Xendit available balance (Edge Function xendit-payroll-payout, action 'balance') - payroll officers + super users. -->
+      <div id="xenditBalanceBar" class="hidden" style="margin:10px 20px 0; padding:8px 12px; border:1px solid var(--panel-border); border-left:4px solid #7c3aed; font-size:13px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
 
       <div class="bc-doc-body">
         <!-- Shown only while Draft - a preview of admin_finalize_payroll_run's hard-block check
@@ -304,8 +306,8 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
-  <script src="js/nav.js?v=xledger1"></script>
-  <script src="js/payrollRun.js?v=xpayout1"></script>
+  <script src="js/nav.js?v=navgroups2"></script>
+  <script src="js/payrollRun.js?v=xbalance1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

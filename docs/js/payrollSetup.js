@@ -29,6 +29,7 @@ function formatCurrency(amount) {
 function formatPaymentMethod(method) {
   if (method === 'Cash') return 'Cash';
   if (method === 'Digital') return 'Digital (GCash)';
+  if (method === 'Xendit') return 'Xendit';
   return '<span class="muted">Not set (Cash)</span>';
 }
 
@@ -630,7 +631,8 @@ function renderAdvanceRows(rows) {
 let selectedAdvance = null; // { id, status }
 
 function updateAdvanceActionState() {
-  document.getElementById('deleteAdvanceBtn').disabled = !(selectedAdvance && selectedAdvance.status === 'Outstanding');
+  // Pending = a Xendit advance not paid yet; the RPC still refuses one already sent through Xendit.
+  document.getElementById('deleteAdvanceBtn').disabled = !(selectedAdvance && ['Outstanding', 'Pending'].includes(selectedAdvance.status));
 }
 
 function formatDate(dateStr) {

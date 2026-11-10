@@ -75,7 +75,7 @@ async function loadFundingRequirement() {
   document.getElementById('xenditFundingRow').classList.toggle('hidden', xenditRequired <= 0);
   if (xenditRequired > 0) {
     document.getElementById('xenditRequiredDisplay').textContent = formatCurrency(xenditRequired);
-    const balance = currentSession.isSuperUser ? await callPayoutFunction({ action: 'balance' }).catch(() => null) : null;
+    const balance = await getXenditBalance();
     const onHand = balance && typeof balance.balance === 'number' ? balance.balance : null;
     document.getElementById('xenditOnHandRunDisplay').textContent = onHand == null ? '-' : formatCurrency(onHand);
     document.getElementById('xenditStatusDisplay').innerHTML = onHand == null
@@ -525,6 +525,29 @@ async function callPayoutFunction(payload) {
   return data;
 }
 
+// Xendit available balance - one shared read per page load (force = re-read), shown in the bar under the command
+// bar, the Funding box and the Pay via Xendit dialog. Payroll officers can see it too; only super users send.
+let xenditBalancePromise = null;
+
+function getXenditBalance(force) {
+  if (force || !xenditBalancePromise) {
+    xenditBalancePromise = callPayoutFunction({ action: 'balance' }).catch((err) => ({ error: err.message }));
+  }
+  return xenditBalancePromise;
+}
+
+async function loadXenditBalanceBar(force) {
+  const bar = document.getElementById('xenditBalanceBar');
+  const info = await getXenditBalance(force);
+  const has = typeof info?.balance === 'number';
+  bar.innerHTML = `<span>Xendit available balance: <strong>${has ? formatCurrency(info.balance) : '-'}</strong></span>`
+    + (has && info.isTest ? '<strong style="color:#b45309;">TEST mode</strong>' : '')
+    + (has && !info.isTest ? '<span class="muted">Live - sales still settling aren\'t counted yet</span>' : '')
+    + (!has && (info?.error) ? `<span class="muted">${escapeHtmlText(info.error)}</span>` : '')
+    + '<button class="bc-link" type="button" data-refresh-xendit-balance>Refresh</button>';
+  bar.classList.remove('hidden');
+}
+
 async function loadPayouts() {
   const { data, error } = await supabaseClient.rpc('admin_list_payroll_run_payouts', {
     p_admin_username: currentSession.username,
@@ -616,7 +639,7 @@ async function openPayoutDialog() {
   showPayoutMessage('');
   document.getElementById('payoutTableBody').innerHTML = '<tr><td colspan="5" class="cell-msg">Loading...</td></tr>';
   const [balanceInfo] = await Promise.all([
-    currentSession.isSuperUser ? callPayoutFunction({ action: 'balance' }).catch((err) => ({ error: err.message })) : Promise.resolve(null),
+    getXenditBalance(true),
     loadPayouts()
   ]);
   payoutBalanceInfo = balanceInfo;
@@ -650,6 +673,7 @@ async function sendPayouts() {
     await loadPayouts();
     renderPayoutDialog(payoutBalanceInfo);
     await loadLines();
+    loadXenditBalanceBar(true);
   }
 }
 
@@ -729,6 +753,10 @@ async function deleteRun() {
   }
 
   document.getElementById('runContent').classList.remove('hidden');
+  loadXenditBalanceBar();
+  document.getElementById('xenditBalanceBar').addEventListener('click', (e) => {
+    if (e.target.closest('[data-refresh-xendit-balance]')) loadXenditBalanceBar(true);
+  });
   const loaded = await loadRun();
   if (loaded) await loadLines();
 

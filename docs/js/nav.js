@@ -155,18 +155,34 @@ function renderTopNavLinks(activeLabel) {
     { href: 'my-payslips.html', label: 'My Payslips' }
   ];
 
-  const orders = [];
-  if (isStoreManager) {
-    orders.push({ href: 'transfer-orders.html', label: 'Transfer Orders' });
-  } else if (!isSalesOnlyUser) {
-    orders.push({ href: 'transfer-orders.html', label: 'Transfer Orders' });
-    orders.push({ href: 'posted-transfer-orders.html', label: 'Posted Transfers' });
-  }
-  orders.push({ href: 'online-orders.html', label: 'Online Orders' });
-  if (isSuperUser) {
-    orders.push({ href: 'advance-orders.html', label: 'Advance Orders' });
-  }
+  // Menus are grouped by what the person is doing (sell, stock, build, money, look at numbers, promote,
+  // set up), per "can we do a better grouping" - each item carries a `section` shown as a small heading
+  // inside its dropdown. Labels are unchanged (pages match activeLabel against them).
+  const isProductionManager = !!session?.isProductionManager;
+  const canSeeSalesAnalysis = !isSalesOnlyUser && !isStoreManager;
 
+  // Sales: orders and delivery, customers, and the quoting calculators.
+  const sales = [];
+  sales.push({ section: 'Orders', href: 'online-orders.html', label: 'Online Orders' });
+  if (isSuperUser) {
+    sales.push({ section: 'Orders', href: 'advance-orders.html', label: 'Advance Orders' });
+  }
+  // Conversations Access sees GMA Conversations + Customers even without full Super User - same
+  // "isSuperUser || is<Flag>" gate the pages themselves enforce in their own init().
+  if (isSuperUser || isConversationsStaff) {
+    sales.push({ section: 'Customers', href: 'customers.html', label: 'Customers' });
+    sales.push({ section: 'Customers', href: 'gma-conversations.html', label: 'Conversations' });
+  }
+  if (canSeeSalesAnalysis) {
+    sales.push({ section: 'Customers', href: 'customer-aquarium.html', label: 'Customer Aquarium' });
+  }
+  sales.push({ section: 'Quotes & Calculators', href: 'aquarium-calculator.html', label: 'Aquarium Calculator' });
+  sales.push({ section: 'Quotes & Calculators', href: 'stand-calculator.html', label: 'Custom Stand' });
+  sales.push({ section: 'Quotes & Calculators', href: 'repair-calculator.html', label: 'Repair Calculator' });
+  sales.push({ section: 'Quotes & Calculators', href: 'sticker-calculator.html', label: 'Custom Accessories / Stickers' });
+  sales.push({ section: 'Quotes & Calculators', href: 'glass-cut-list.html', label: 'Glass Cut List' });
+
+  // Delivery: its own menu - the calendar, quoting a delivery fee, and (super users) zones / rates.
   const delivery = [
     { href: 'delivery.html', label: 'Delivery' },
     { href: 'delivery-quote.html', label: 'Delivery Quote' }
@@ -175,179 +191,149 @@ function renderTopNavLinks(activeLabel) {
     delivery.push({ href: 'delivery-setup.html', label: 'Delivery Setup' });
   }
 
-  const calculators = [
-    { href: 'stand-calculator.html', label: 'Custom Stand' },
-    { href: 'aquarium-calculator.html', label: 'Aquarium Calculator' },
-    { href: 'repair-calculator.html', label: 'Repair Calculator' },
-    { href: 'sticker-calculator.html', label: 'Custom Accessories / Stickers' },
-    { href: 'glass-cut-list.html', label: 'Glass Cut List' },
-  ];
-
+  // Inventory: what's on hand, moving it between stores, counting / returns, buying, item setup.
+  // Store Manager gets a curated subset (see js/auth.js's STORE_MANAGER_ALLOWED_PAGES) - enforced
+  // server-side too, so hiding these links is convenience, not the control.
   const inventory = [];
+  inventory.push({ section: 'Stock', href: 'stock-on-hand.html', label: 'Stock On Hand' });
+  // Per "let the sales user see it as well" - Inventory Summary stays visible to Sales-only users.
+  inventory.push({ section: 'Stock', href: 'inventory-summary.html', label: 'Inventory Summary' });
+  inventory.push({ section: 'Stock', href: 'shelf-map.html', label: 'Shelf Map' });
   if (!isSalesOnlyUser) {
-    inventory.push({ href: 'serial-tracker.html', label: 'Serial Tracker' });
-  }
-  // Per "let the sales user see it as well" - unlike Serial Tracker above, Inventory Summary stays
-  // visible to Sales-only users too.
-  inventory.push({ href: 'inventory-summary.html', label: 'Inventory Summary' });
-  inventory.push({ href: 'stock-on-hand.html', label: 'Stock On Hand' });
-  inventory.push({ href: 'shelf-map.html', label: 'Shelf Map' });
-  if (!isStoreManager) {
-    inventory.push({ href: 'purchase-orders.html', label: 'Purchase Orders' });
-    inventory.push({ href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
-  }
-  // Per "can you show this to manager permission too?" - Physical Inventory Journal is also open to
-  // Store Manager accounts (supabase_phys_journal_store_manager_access.sql swapped its RPCs' auth
-  // check to allow SuperUser OR StoreManager). Everything else in this super-user-only block stays
-  // SuperUser only.
-  if (isSuperUser || isStoreManager) {
-    inventory.push({ href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
-    // Store Managers report (own location, with a photo); Super Users report and approve.
-    inventory.push({ href: 'defect-items.html', label: 'Defect Items' });
-  }
-  // Store sends a damaged item to our makers and gets it back (supabase_repair_returns.sql);
-  // Production Managers receive / repair / return it.
-  if (isSuperUser || isStoreManager || session?.isProductionManager) {
-    inventory.push({ href: 'repair-returns.html', label: 'Repair Returns' });
+    inventory.push({ section: 'Stock', href: 'serial-tracker.html', label: 'Serial Tracker' });
   }
   if (isSuperUser) {
-    // Super users only for now - every RPC behind this page re-checks with is_admin_authorized, so
-    // this gate is convenience, not the control.
-    inventory.push({ href: 'item-ledger-entries.html', label: 'Item Ledger Entries' });
-    inventory.push({ href: 'warehouse-setup.html', label: 'Warehouse Setup' });
-    inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
-    inventory.push({ href: 'variant-setup.html', label: 'Variants' });
-    inventory.push({ href: 'category-setup.html', label: 'Categories' });
-    inventory.push({ href: 'vendor-setup.html', label: 'Vendors' });
+    inventory.push({ section: 'Stock', href: 'item-ledger-entries.html', label: 'Item Ledger Entries' });
+  }
+  if (isStoreManager) {
+    inventory.push({ section: 'Transfers', href: 'transfer-orders.html', label: 'Transfer Orders' });
+  } else if (!isSalesOnlyUser) {
+    inventory.push({ section: 'Transfers', href: 'transfer-orders.html', label: 'Transfer Orders' });
+    inventory.push({ section: 'Transfers', href: 'posted-transfer-orders.html', label: 'Posted Transfers' });
+  }
+  // Counting - Physical / Serial Inventory Journal RPCs use is_phys_journal_authorized (Super User or
+  // Store Manager). Defect Items: Store Managers report (own location), Super Users approve.
+  if (isSuperUser || isStoreManager) {
+    inventory.push({ section: 'Counts & Returns', href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
+    inventory.push({ section: 'Counts & Returns', href: 'serial-inventory-journal.html', label: 'Serial Inventory Journal' });
+    inventory.push({ section: 'Counts & Returns', href: 'defect-items.html', label: 'Defect Items' });
+  }
+  // Store sends a damaged item to our makers and gets it back (supabase_repair_returns.sql).
+  if (isSuperUser || isStoreManager || isProductionManager) {
+    inventory.push({ section: 'Counts & Returns', href: 'repair-returns.html', label: 'Repair Returns' });
+  }
+  if (!isStoreManager) {
+    inventory.push({ section: 'Purchasing', href: 'purchase-orders.html', label: 'Purchase Orders' });
+    inventory.push({ section: 'Purchasing', href: 'posted-purchase-orders.html', label: 'Posted Purchase Orders' });
+  }
+  // Super users only - every RPC behind these re-checks with is_admin_authorized.
+  if (isSuperUser) {
+    inventory.push({ section: 'Purchasing', href: 'vendor-setup.html', label: 'Vendors' });
+    inventory.push({ section: 'Item Setup', href: 'item-setup.html', label: 'Item Setup' });
+    inventory.push({ section: 'Item Setup', href: 'variant-setup.html', label: 'Variants' });
+    inventory.push({ section: 'Item Setup', href: 'category-setup.html', label: 'Categories' });
+    inventory.push({ section: 'Item Setup', href: 'warehouse-setup.html', label: 'Warehouse Setup' });
   } else if (session?.isCatalogEditor) {
     // Catalog Editor role (supabase_catalog_editor_role.sql) - Item Setup only, without prices / cost.
-    inventory.push({ href: 'item-setup.html', label: 'Item Setup' });
+    inventory.push({ section: 'Item Setup', href: 'item-setup.html', label: 'Item Setup' });
   }
 
   // Production (supabase_production_orders.sql) - restock builds; Super User / Production Manager
   // manage them, a Tank / Stand Maker sees only their own. The RPCs re-check the role.
   const production = [];
-  if (isSuperUser || session?.isProductionManager || session?.isOrderMaker) {
+  if (isSuperUser || isProductionManager || session?.isOrderMaker) {
     production.push({ href: 'production-orders.html', label: 'Production Orders' });
-    // Finished ones, in their own list (supabase_production_finished_orders_view.sql) - managers only.
-    if (isSuperUser || session?.isProductionManager) {
+    if (isSuperUser || isProductionManager) {
       production.push({ href: 'production-orders.html?view=finished', label: 'Finished Production Orders' });
     }
-    // Where each built unit is stored, by serial (supabase_production_shelf_map.sql).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
     // A maker's assigned repairs - managers already have it under Inventory.
-    if (isRepairMaker(session) && !(isSuperUser || isStoreManager || session?.isProductionManager)) {
+    if (isRepairMaker(session) && !(isSuperUser || isStoreManager || isProductionManager)) {
       production.push({ href: 'repair-returns.html', label: 'Repair Returns' });
     }
   } else if (session?.isSalesUser) {
     // View-only stock availability for Sales Users (canOpenProductionPage in js/auth.js).
     production.push({ href: 'production-shelf-map.html', label: 'Production Shelf Map' });
   }
-  // Every maker's open assignments, grouped by maker (supabase_maker_assignments_view.sql) - Super
-  // Users only; the RPC re-checks with is_admin_authorized.
   if (isSuperUser) {
     production.push({ href: 'maker-assignments.html', label: 'Maker Assignments' });
   }
-  // Counting serial-tracked units - same access as the Physical Inventory Journal (its RPCs use
-  // is_phys_journal_authorized: Super User or Store Manager).
-  if (isSuperUser || isStoreManager) {
-    production.push({ href: 'serial-inventory-journal.html', label: 'Serial Inventory Journal' });
-  }
 
-  const reports = [];
-  if (!isSalesOnlyUser && !isStoreManager) {
-    reports.push({ href: 'reports.html', label: 'Reports' });
-    reports.push({ href: 'top-selling-items.html', label: 'Top Selling Items' });
-    // Black vs Clear sealant variants sold (supabase_sealant_sales_report.sql), same audience.
-    reports.push({ href: 'sealant-sales-report.html', label: 'Sealant Sales' });
-    // Sales per category, drilling into items / variants (supabase_category_sales_report.sql).
-    reports.push({ href: 'category-sales-report.html', label: 'Category Sales' });
-    reports.push({ href: 'customer-aquarium.html', label: 'Customer Aquarium' });
+  // Finance: cash and payments in, money out, accounting, payroll. Super users only except
+  // Tender Declarations (Store Managers attach bank deposit slips, supabase_tender_deposit_receipts.sql)
+  // and Payroll (Payroll Officer - same "isSuperUser || isPayrollOfficer" gate the pages enforce).
+  const finance = [];
+  if (isSuperUser) {
+    finance.push({ section: 'Cash & Payments', href: 'daily-sales-report.html', label: 'Daily Sales Report' });
+  }
+  if (isSuperUser || isStoreManager) {
+    finance.push({ section: 'Cash & Payments', href: 'tender-declarations.html', label: 'Tender Declarations' });
   }
   if (isSuperUser) {
-    reports.push({ href: 'order-timing-dashboard.html', label: 'Order Timing' });
-    reports.push({ href: 'message-timing.html', label: 'Message Timing' });
-    reports.push({ href: 'expense-entries.html', label: 'Expenses' });
-    reports.push({ href: 'expense-journal.html', label: 'Expense Journal' });
-    // POS end-of-day cash counts + Short/Over (supabase_tender_declaration_tables.sql).
-    reports.push({ href: 'tender-declarations.html', label: 'Tender Declarations' });
-    // Recurring must-pay bills - rent, utilities, BIR, SSS... (supabase_business_bills.sql).
-    reports.push({ href: 'business-bills.html', label: 'Bills & Dues' });
-    // Owner's money in / out - capital, owner loans, drawings (supabase_owner_funds.sql).
-    reports.push({ href: 'owner-funds.html', label: 'Owner Funds' });
-    // Purchases + expenses and each cause's share of the total (supabase_spending_report.sql).
-    reports.push({ href: 'spending-report.html', label: 'Purchases & Expenses' });
-    // Financials - super users only, matching the Expenses page it draws from. Both RPCs behind
-    // these re-check with is_admin_authorized, so this gate is convenience, not the control.
-    reports.push({ href: 'gl-entries.html', label: 'General Ledger' });
-    // Payment Methods report - super users only; its RPCs re-check with is_admin_authorized.
-    reports.push({ href: 'payment-method-report.html', label: 'Payment Methods Report' });
-    // Walk-in sales for BIR - journal / daily / monthly + CSV (supabase_bir_walkin_sales_report.sql).
-    reports.push({ href: 'bir-sales-report.html', label: 'BIR Sales Report' });
-    // One day's online + walk-in sales by branch / tender / staff / category, cash count, expenses
-    // (supabase_daily_sales_report.sql).
-    reports.push({ href: 'daily-sales-report.html', label: 'Daily Sales Report' });
+    finance.push({ section: 'Cash & Payments', href: 'payment-method-report.html', label: 'Payment Methods Report' });
+    finance.push({ section: 'Cash & Payments', href: 'xendit-payments.html', label: 'Xendit Payments' });
+    finance.push({ section: 'Cash & Payments', href: 'xendit-ledger.html', label: 'Xendit Ledger' });
+    finance.push({ section: 'Spending', href: 'expense-entries.html', label: 'Expenses' });
+    finance.push({ section: 'Spending', href: 'expense-journal.html', label: 'Expense Journal' });
+    finance.push({ section: 'Spending', href: 'business-bills.html', label: 'Bills & Dues' });
+    finance.push({ section: 'Spending', href: 'spending-report.html', label: 'Purchases & Expenses' });
+    finance.push({ section: 'Spending', href: 'owner-funds.html', label: 'Owner Funds' });
+    finance.push({ section: 'Accounting', href: 'gl-entries.html', label: 'General Ledger' });
+    finance.push({ section: 'Accounting', href: 'bir-sales-report.html', label: 'BIR Sales Report' });
   }
-  // Store Managers: their own store's declarations, to attach the bank deposit receipts
-  // (supabase_tender_deposit_receipts.sql).
-  if (isStoreManager && !isSuperUser) {
-    reports.push({ href: 'tender-declarations.html', label: 'Tender Declarations' });
+  if (isSuperUser || isPayrollOfficer) {
+    finance.push({ section: 'Payroll', href: 'payroll.html', label: 'Payroll' });
+    finance.push({ section: 'Payroll', href: 'payroll-timesheets.html', label: 'Timesheets' });
+    finance.push({ section: 'Payroll', href: 'payroll-ledger.html', label: 'Payroll Ledger' });
+    finance.push({ section: 'Payroll', href: 'payroll-spending-report.html', label: 'Payroll Spending' });
+    finance.push({ section: 'Payroll', href: 'payroll-setup.html', label: 'Payroll Setup' });
   }
 
+  // Reports: sales analysis and response times.
+  const reports = [];
+  if (canSeeSalesAnalysis) {
+    reports.push({ section: 'Sales', href: 'reports.html', label: 'Reports' });
+    reports.push({ section: 'Sales', href: 'top-selling-items.html', label: 'Top Selling Items' });
+    reports.push({ section: 'Sales', href: 'category-sales-report.html', label: 'Category Sales' });
+    reports.push({ section: 'Sales', href: 'sealant-sales-report.html', label: 'Sealant Sales' });
+  }
+  if (isSuperUser) {
+    reports.push({ section: 'Speed', href: 'order-timing-dashboard.html', label: 'Order Timing' });
+    reports.push({ section: 'Speed', href: 'message-timing.html', label: 'Message Timing' });
+  }
+
+  // Marketing: Facebook posting / ads and the AI bot (Alice).
+  const marketing = [];
+  if (isSuperUser) {
+    marketing.push({ section: 'Facebook', href: 'quick-post.html', label: 'Quick Post' });
+    marketing.push({ section: 'Facebook', href: 'video-ad-builder.html', label: 'Video Ad Builder' });
+    marketing.push({ section: 'Facebook', href: 'facebook-post-test.html', label: 'Facebook Post Test' });
+    marketing.push({ section: 'AI Bot', href: 'ai-bot-setup.html', label: 'AI Bot Setup' });
+    marketing.push({ section: 'AI Bot', href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
+  }
+
+  // Admin: prices and system setup.
   const admin = [];
   if (isSuperUser) {
-    admin.push({ href: 'general-setup.html', label: 'General Setup' });
-    admin.push({ href: 'ai-bot-setup.html', label: 'AI Bot Setup' });
-  }
-  // Conversations Access sees GMA Conversations + Customers even without full Super User - same
-  // "isSuperUser || is<Flag>" gate the pages themselves enforce in their own init().
-  if (isSuperUser || isConversationsStaff) {
-    admin.push({ href: 'gma-conversations.html', label: 'Conversations' });
-    admin.push({ href: 'customers.html', label: 'Customers' });
-  }
-  if (isSuperUser) {
-    admin.push({ href: 'ai-bot-sandbox.html', label: 'AI Bot Sandbox' });
-    // Prototype automated Facebook posting (supabase/functions/facebook-page-post).
-    admin.push({ href: 'facebook-post-test.html', label: 'Facebook Post Test' });
-    // Phone flow: snap a photo -> auto watermark + AI caption -> Post Now.
-    admin.push({ href: 'quick-post.html', label: 'Quick Post' });
-    // Reels video ads (scenes -> MP4 in the browser) - sql/supabase_video_ads.sql.
-    admin.push({ href: 'video-ad-builder.html', label: 'Video Ad Builder' });
-    admin.push({ href: 'pricing-setup.html', label: 'Pricing Setup' });
-    // Size-based prices, e.g. fish (sql/supabase_item_size_pricing.sql).
-    admin.push({ href: 'size-pricing.html', label: 'Size Pricing' });
-    // Planned % price increases (draft -> apply -> undo) - sql/supabase_price_change_batches.sql.
-    admin.push({ href: 'price-increase.html', label: 'Price Increase' });
-    admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
-    // Online payments through Xendit (pay.html) - sql/supabase_xendit_payments.sql.
-    admin.push({ href: 'xendit-payments.html', label: 'Xendit Payments' });
-    // Xendit balance + every transaction in/out, from Xendit (Edge Function xendit-ledger).
-    admin.push({ href: 'xendit-ledger.html', label: 'Xendit Ledger' });
-    admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
-    admin.push({ href: 'user-setup.html', label: 'User Setup' });
-    // Read-only regression checks - calculator prices/safety rules, live pricing tables, website
-    // calculator vs Alice price match (docs/tests/*.js).
-    admin.push({ href: 'system-tests.html', label: 'System Tests' });
-  }
-  // Payroll Officer (supabase_staff_users_payroll_officer_field.sql) sees these three even
-  // without full Super User - same "isSuperUser || isPayrollOfficer" gate each payroll page itself
-  // enforces in its own init().
-  if (isSuperUser || isPayrollOfficer) {
-    admin.push({ href: 'payroll.html', label: 'Payroll' });
-    admin.push({ href: 'payroll-setup.html', label: 'Payroll Setup' });
-    admin.push({ href: 'payroll-timesheets.html', label: 'Timesheets' });
-    admin.push({ href: 'payroll-ledger.html', label: 'Payroll Ledger' });
-    // How much payroll costs, by employee / branch / month (supabase_payroll_spending_report.sql).
-    admin.push({ href: 'payroll-spending-report.html', label: 'Payroll Spending' });
+    admin.push({ section: 'Pricing', href: 'pricing-setup.html', label: 'Pricing Setup' });
+    admin.push({ section: 'Pricing', href: 'size-pricing.html', label: 'Size Pricing' });
+    admin.push({ section: 'Pricing', href: 'price-increase.html', label: 'Price Increase' });
+    admin.push({ section: 'Setup', href: 'general-setup.html', label: 'General Setup' });
+    admin.push({ section: 'Setup', href: 'user-setup.html', label: 'User Setup' });
+    admin.push({ section: 'Setup', href: 'payment-methods.html', label: 'Payment Methods' });
+    admin.push({ section: 'Setup', href: 'gl-setup.html', label: 'G/L Setup' });
+    // Read-only regression checks (docs/tests/*.js).
+    admin.push({ section: 'Tools', href: 'system-tests.html', label: 'System Tests' });
   }
 
   const groups = [
-    { label: 'Orders', items: orders },
+    { label: 'Sales', items: sales },
     { label: 'Delivery', items: delivery },
-    { label: 'Calculators', items: calculators },
     { label: 'Inventory', items: inventory },
     { label: 'Production', items: production },
+    { label: 'Finance', items: finance },
     { label: 'Reports', items: reports },
+    { label: 'Marketing', items: marketing },
     { label: 'Admin', items: admin },
   ].filter((group) => group.items.length > 0);
 
@@ -361,18 +347,41 @@ function renderTopNavLinks(activeLabel) {
   const groupsHtml = groups
     .map((group, index) => {
       const isActiveGroup = group.items.some((item) => item.label === activeLabel);
-      const itemsHtml = group.items
-        .map((item) => {
-          const activeClass = item.label === activeLabel ? ' active' : '';
-          return `<a class="topnav-link${activeClass}" href="${item.href}">${item.label}</a>`;
+      // Items in their section order (first appearance); a section heading only when the menu has
+      // more than one section.
+      const sections = [];
+      group.items.forEach((item) => {
+        const name = item.section || '';
+        let section = sections.find((s) => s.name === name);
+        if (!section) {
+          section = { name, items: [] };
+          sections.push(section);
+        }
+        section.items.push(item);
+      });
+      const showHeadings = sections.length > 1;
+      const itemsHtml = sections
+        .map((section) => {
+          const links = section.items
+            .map((item) => {
+              const activeClass = item.label === activeLabel ? ' active' : '';
+              return `<a class="topnav-link${activeClass}" href="${item.href}">${item.label}</a>`;
+            })
+            .join('');
+          const heading = showHeadings && section.name ? `<div class="topnav-menu-heading">${section.name}</div>` : '';
+          return `<div class="topnav-menu-section">${heading}${links}</div>`;
         })
         .join('');
+      // Long menus (Inventory, Finance for a super user) go two columns so they don't run off the
+      // screen; the last few menus open leftward so they stay inside the window.
+      const wideClass = group.items.length > 10 && sections.length > 1 ? ' topnav-group-menu-wide' : '';
+      const rightClass = index >= groups.length - 3 ? ' topnav-group-menu-right' : '';
       return `
         <div class="topnav-group" data-group-index="${index}">
           <button class="topnav-group-toggle${isActiveGroup ? ' active' : ''}" type="button" aria-expanded="false">
             ${group.label}<span class="topnav-group-caret">&#9662;</span>
           </button>
-          <div class="topnav-group-menu">${itemsHtml}</div>
+          <div class="topnav-group-menu${wideClass}${rightClass}">${itemsHtml}</div>
         </div>
       `;
     })

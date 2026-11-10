@@ -11,6 +11,12 @@ let currentPage = 1;
 let currentPageSize = 50;
 let weekStart = null; // Date - Monday of the week currently shown in the grid
 let cutoffSettings = null; // loaded once from admin_get_payroll_cutoff_settings, used by autofillDates()
+// Xendit cash advances (sql/supabase_xendit_cash_advance_payouts.sql): who can be paid by Xendit, and this week's
+// Xendit advances + their payouts (admin_list_cash_advance_payouts). Both empty until that SQL is run.
+let payoutFlags = {}; // username -> { pay_via_xendit, has_account }
+let advancePayouts = [];
+let advancePayoutBusy = false;
+let advanceBalanceInfo = null;
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -105,10 +111,16 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
         })
         .join('');
       const advance = advanceByUsername[e.username];
+      const flags = payoutFlags[e.username] || {};
       const caValue = advance ? advance.amount : '';
-      const caMethod = advance ? advance.method : 'Cash';
+      // A new advance starts as Xendit for a "Pay salary via Xendit" employee with a payout account.
+      const caMethod = advance ? advance.method : (flags.pay_via_xendit && flags.has_account ? 'Xendit' : 'Cash');
       const caLocked = !!advance;
-      const caApplied = advance?.status === 'Applied' ? 'data-applied="1" title="Already deducted in a payroll run"' : '';
+      const payout = advance ? advancePayouts.find((p) => p.advance_id === advance.id) : null;
+      // Applied (already deducted), or sent / paid through Xendit for real: stays locked even after Unlock Editing.
+      const caApplied = advance?.status === 'Applied' ? 'data-applied="1" title="Already deducted in a payroll run"'
+        : advancePayoutLocked(payout) ? 'data-applied="1" title="Already sent through Xendit"' : '';
+      const showXendit = flags.has_account || caMethod === 'Xendit';
       return `
         <tr data-username="${e.username}">
           <td>${e.display_name || e.username}</td>
@@ -122,7 +134,9 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
             <select class="bulk-ca-method bc-cell-select" ${caLocked ? 'disabled' : ''} ${caApplied}>
               <option value="Cash" ${caMethod === 'Cash' ? 'selected' : ''}>Cash</option>
               <option value="Digital" ${caMethod === 'Digital' ? 'selected' : ''}>Digital (GCash)</option>
+              ${showXendit ? `<option value="Xendit" ${caMethod === 'Xendit' ? 'selected' : ''}>Xendit</option>` : ''}
             </select>
+            ${advance && advance.method === 'Xendit' ? `<div style="font-size:11px; margin-top:2px;">${advanceStatusHtml(payout || {})}</div>` : ''}
           </td>
         </tr>
       `;
@@ -141,15 +155,18 @@ function updateCashAdvanceTotal() {
 
   let cash = 0;
   let digital = 0;
+  let xendit = 0;
   document.querySelectorAll('#bulkEntryTableBody tr[data-username]').forEach((row) => {
     const amount = Number(row.querySelector('.bulk-ca')?.value) || 0;
-    if (row.querySelector('.bulk-ca-method')?.value === 'Digital') digital += amount;
+    const method = row.querySelector('.bulk-ca-method')?.value;
+    if (method === 'Digital') digital += amount;
+    else if (method === 'Xendit') xendit += amount;
     else cash += amount;
   });
 
   const fmt = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  totalCell.textContent = fmt(cash + digital);
-  document.getElementById('caTotalByMethodCell').textContent = `Cash ${fmt(cash)} / GCash ${fmt(digital)}`;
+  totalCell.textContent = fmt(cash + digital + xendit);
+  document.getElementById('caTotalByMethodCell').textContent = `Cash ${fmt(cash)} / GCash ${fmt(digital)}${xendit ? ` / Xendit ${fmt(xendit)}` : ''}`;
 }
 
 function updateRowTotals() {
@@ -219,6 +236,268 @@ function renderWeekRangeLabel(dates) {
     `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
 }
 
+// ---------------------------------------------------------------- Xendit cash advances
+// sql/supabase_xendit_cash_advance_payouts.sql + Edge Function xendit-payroll-payout (send_advances /
+// refresh_advances). A Xendit advance is saved 'Pending'; once Xendit confirms the payout it turns 'Outstanding' and
+// the next payroll run deducts it. Sending is super users only (the function re-checks).
+const ADVANCE_PAYOUT_GOING = ['Creating', 'ACCEPTED', 'REQUESTED'];
+
+async function loadPayoutFlagsOnce() {
+  const { data, error } = await supabaseClient.rpc('admin_list_payroll_payout_flags', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  payoutFlags = {};
+  if (error) return; // SQL not run yet - the grid just offers Cash / Digital
+  (data || []).forEach((f) => { payoutFlags[f.username] = { pay_via_xendit: !!f.pay_via_xendit, has_account: !!f.has_account }; });
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function formatPeso(n) {
+  return '₱' + (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// A LIVE payout on its way or paid - the advance can't be changed any more.
+function advancePayoutLocked(p) {
+  return !!(p && p.status && !p.is_test && (p.status === 'SUCCEEDED' || ADVANCE_PAYOUT_GOING.includes(p.status)));
+}
+
+function advancePayoutStatusHtml(p) {
+  const test = p.is_test ? ' <strong style="color:#b45309;">TEST</strong>' : '';
+  if (!p.status) return '<span class="muted">Not sent</span>';
+  if (p.status === 'SUCCEEDED') {
+    return `<span style="color:var(--success);">Paid</span>${p.paid_at ? ` <span class="muted">${new Date(p.paid_at).toLocaleDateString()}</span>` : ''}${test}`;
+  }
+  if (ADVANCE_PAYOUT_GOING.includes(p.status)) return `<span style="color:#a6720a;">Sending...</span>${test}`;
+  const label = p.status === 'Error' ? 'Not sent' : p.status.charAt(0) + p.status.slice(1).toLowerCase();
+  return `<span style="color:var(--danger);">${escapeHtmlText(label)}</span>${test}`
+    + (p.failure ? ` <span class="muted" title="${escapeHtmlText(p.failure)}">- ${escapeHtmlText(p.failure)}</span>` : '');
+}
+
+// Still to pay for real: Pending, has an account, and no live payout going / paid.
+function advancePayoutPending(p) {
+  return p.advance_status === 'Pending' && p.has_account && Number(p.amount) > 0 && !advancePayoutLocked(p);
+}
+
+// Approval: a payroll officer submits, a super user sends only submitted ones.
+function advanceNeedsSubmit(p) {
+  return advancePayoutPending(p) && !p.submitted_at;
+}
+
+function advanceReadyToSend(p) {
+  return advancePayoutPending(p) && !!p.submitted_at;
+}
+
+// Approval step + payout status, for the grid and the dialog.
+function advanceStatusHtml(p) {
+  if (!advancePayoutPending(p)) return advancePayoutStatusHtml(p);
+  const step = p.submitted_at
+    ? `<span style="color:#a6720a;" title="Submitted by ${escapeHtmlText(p.submitted_by || '')}">Waiting for approval</span>`
+    : '<span class="muted">Not submitted</span>';
+  // A failed / refused earlier try is still worth seeing.
+  return p.status ? `${step} · ${advancePayoutStatusHtml(p)}` : step;
+}
+
+function updateSendAdvancesButton() {
+  const show = advancePayouts.length > 0;
+  const waiting = advancePayouts.filter(advanceReadyToSend).length;
+  const btn = document.getElementById('sendAdvancesBtn');
+  btn.classList.toggle('hidden', !show);
+  document.getElementById('sendAdvancesSep').classList.toggle('hidden', !show);
+  btn.lastChild.textContent = currentSession.isSuperUser && waiting
+    ? `Xendit Advances (${waiting} to approve)` : 'Xendit Advances';
+}
+
+async function callPayoutFunction(payload) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-payroll-payout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+    body: JSON.stringify({ ...payload, username: currentSession.username, password: currentSession.password })
+  });
+  const data = await response.json().catch(() => null);
+  if (response.status === 404) throw new Error('The xendit-payroll-payout Edge Function isn\'t deployed yet.');
+  if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+  return data;
+}
+
+// Xendit available balance - one shared read (force = re-read), shown in the bar above the grid and in the
+// Xendit Advances dialog. Payroll officers can see it too; only super users send.
+let xenditBalancePromise = null;
+
+function getXenditBalance(force) {
+  if (force || !xenditBalancePromise) {
+    xenditBalancePromise = callPayoutFunction({ action: 'balance' }).catch((err) => ({ error: err.message }));
+  }
+  return xenditBalancePromise;
+}
+
+async function loadXenditBalanceBar(force) {
+  const bar = document.getElementById('xenditBalanceBar');
+  const info = await getXenditBalance(force);
+  const has = typeof info?.balance === 'number';
+  bar.innerHTML = `<span class="bc-infobar-text">Xendit available balance: <strong>${has ? formatPeso(info.balance) : '-'}</strong>`
+    + (has && info.isTest ? ' <strong style="color:#b45309;">TEST mode</strong>' : '')
+    + (has && !info.isTest ? ' <span class="muted">Live - sales still settling aren\'t counted yet</span>' : '')
+    + (!has && info?.error ? ` <span class="muted">${escapeHtmlText(info.error)}</span>` : '')
+    + '</span><button class="bc-link" type="button" data-refresh-xendit-balance>Refresh</button>';
+  bar.classList.remove('hidden');
+}
+
+async function reloadAdvancePayouts() {
+  const dates = weekDates(weekStart);
+  const { data, error } = await supabaseClient.rpc('admin_list_cash_advance_payouts', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_week_start: toDateInputValue(dates[0]),
+    p_week_end: toDateInputValue(dates[6])
+  });
+  if (!error) advancePayouts = data || [];
+  return error;
+}
+
+function showAdvancePayoutMessage(text, isError) {
+  const el = document.getElementById('advancePayoutMessage');
+  el.textContent = text || '';
+  el.className = `bc-dialog-msg ${isError ? 'error-text' : 'muted'}`;
+  el.classList.toggle('hidden', !text);
+}
+
+function renderAdvancePayoutDialog() {
+  const tbody = document.getElementById('advancePayoutBody');
+  if (!advancePayouts.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="cell-msg">No Xendit cash advances this week. Pick Xendit as the Method in the grid and click Save All.</td></tr>';
+  } else {
+    tbody.innerHTML = advancePayouts.map((p) => {
+      const payTo = p.payout_channel && !advancePayoutPending(p) ? `${escapeHtmlText(p.payout_channel)} ${escapeHtmlText(p.payout_account_masked || '')}`
+        : p.has_account ? `${escapeHtmlText(p.channel_name)} ${escapeHtmlText(p.account_masked || '')}`
+          : '<span class="error-text">No payout account - add it in Payroll Setup</span>';
+      const deducted = p.advance_status === 'Applied' ? ' <span class="muted">(deducted)</span>' : '';
+      return `<tr>
+        <td>${escapeHtmlText(p.display_name || p.username)}</td>
+        <td>${escapeHtmlText(formatDate(p.advance_date))}</td>
+        <td>${payTo}</td>
+        <td>${escapeHtmlText(p.account_name || '')}</td>
+        <td class="num">${formatPeso(p.amount)}</td>
+        <td>${advanceStatusHtml(p)}${deducted}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const toSubmit = advancePayouts.filter(advanceNeedsSubmit);
+  const submitTotal = toSubmit.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const pending = advancePayouts.filter(advanceReadyToSend);
+  const toSend = pending.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const info = advanceBalanceInfo;
+  const balance = info && typeof info.balance === 'number' ? info.balance : null;
+  const mode = !info || info.error ? ''
+    : info.isTest ? '<strong style="color:#b45309;">TEST mode</strong> - no real money moves, and the advances stay unpaid.' : '<strong>LIVE</strong> - real money.';
+  document.getElementById('advancePayoutSummary').innerHTML = `
+    ${mode ? `<div>${mode}</div>` : ''}
+    ${toSubmit.length ? `<div>Not submitted yet: <strong>${formatPeso(submitTotal)}</strong> for ${toSubmit.length} employee${toSubmit.length === 1 ? '' : 's'}</div>` : ''}
+    <div>Waiting for approval: <strong>${formatPeso(toSend)}</strong> for ${pending.length} employee${pending.length === 1 ? '' : 's'}</div>
+    <div>Xendit available balance: <strong>${balance == null ? '-' : formatPeso(balance)}</strong>${balance != null && balance < toSend ? ' <span class="error-text">- not enough; wait for sales to settle or top up Xendit</span>' : ''}</div>`;
+
+  const submitBtn = document.getElementById('submitAdvancesBtn');
+  submitBtn.classList.toggle('hidden', toSubmit.length === 0);
+  submitBtn.disabled = advancePayoutBusy;
+  submitBtn.textContent = `Submit for Approval (${formatPeso(submitTotal)})`;
+  submitBtn.dataset.ids = JSON.stringify(toSubmit.map((p) => p.advance_id));
+
+  const sendBtn = document.getElementById('sendAdvancePayoutsBtn');
+  sendBtn.classList.toggle('hidden', !currentSession.isSuperUser);
+  sendBtn.disabled = advancePayoutBusy || pending.length === 0;
+  sendBtn.textContent = pending.length ? `Approve & Send ${formatPeso(toSend)}` : 'Nothing to approve';
+  sendBtn.dataset.total = String(toSend);
+  sendBtn.dataset.ids = JSON.stringify(pending.map((p) => p.advance_id));
+}
+
+async function openAdvancePayoutDialog() {
+  document.getElementById('advancePayoutModal').classList.remove('hidden');
+  showAdvancePayoutMessage('');
+  document.getElementById('advancePayoutBody').innerHTML = '<tr><td colspan="6" class="cell-msg">Loading...</td></tr>';
+  const [balanceInfo, listError] = await Promise.all([
+    getXenditBalance(true),
+    reloadAdvancePayouts()
+  ]);
+  advanceBalanceInfo = balanceInfo;
+  renderAdvancePayoutDialog();
+  if (listError) showAdvancePayoutMessage(listError.message, true);
+  else if (balanceInfo?.error) showAdvancePayoutMessage(balanceInfo.error, true);
+}
+
+async function closeAdvancePayoutDialog() {
+  document.getElementById('advancePayoutModal').classList.add('hidden');
+  await loadWeekGrid();
+}
+
+async function sendAdvancePayouts() {
+  const btn = document.getElementById('sendAdvancePayoutsBtn');
+  const ids = JSON.parse(btn.dataset.ids || '[]');
+  const total = Number(btn.dataset.total) || 0;
+  if (!ids.length || advancePayoutBusy) return;
+  const mode = advanceBalanceInfo?.isTest ? 'TEST (no real money)' : 'LIVE - real money';
+  if (!confirm(`Approve and send ${formatPeso(total)} in cash advances to ${ids.length} employee${ids.length === 1 ? '' : 's'} through Xendit?\n\nMode: ${mode}\n\nThis can't be undone.`)) return;
+  advancePayoutBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  showAdvancePayoutMessage('Sending - keep this window open...');
+  try {
+    const result = await callPayoutFunction({ action: 'send_advances', advanceIds: ids });
+    const failed = result.failed || [];
+    showAdvancePayoutMessage(
+      result.note || (`${result.sent} sent.`
+        + (failed.length ? ` ${failed.length} not sent: ${failed.map((f) => `${f.name} (${f.error})`).join('; ')}` : ' Xendit confirms each one shortly - press Refresh Status.')),
+      failed.length > 0
+    );
+  } catch (err) {
+    showAdvancePayoutMessage(err.message, true);
+  } finally {
+    advancePayoutBusy = false;
+    await reloadAdvancePayouts();
+    advanceBalanceInfo = await getXenditBalance(true);
+    renderAdvancePayoutDialog();
+    loadXenditBalanceBar();
+  }
+}
+
+async function submitAdvances() {
+  const btn = document.getElementById('submitAdvancesBtn');
+  const ids = JSON.parse(btn.dataset.ids || '[]');
+  if (!ids.length || advancePayoutBusy) return;
+  if (!confirm(`Submit ${ids.length} Xendit cash advance${ids.length === 1 ? '' : 's'} for a super user to approve?\n\nChanging an amount afterwards takes it out of approval until it's submitted again.`)) return;
+  advancePayoutBusy = true;
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_submit_cash_advances', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_advance_ids: ids
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+  showAdvancePayoutMessage(error?.message || result?.message || 'Could not submit.', !!error || !result?.success);
+  advancePayoutBusy = false;
+  await reloadAdvancePayouts();
+  renderAdvancePayoutDialog();
+}
+
+async function refreshAdvancePayouts() {
+  const btn = document.getElementById('refreshAdvancePayoutsBtn');
+  btn.disabled = true;
+  showAdvancePayoutMessage('Checking with Xendit...');
+  try {
+    const result = await callPayoutFunction({ action: 'refresh_advances' });
+    showAdvancePayoutMessage(result.checked ? `Checked ${result.checked} payout${result.checked === 1 ? '' : 's'} with Xendit.` : 'Nothing waiting on Xendit.');
+  } catch (err) {
+    showAdvancePayoutMessage(err.message, true);
+  } finally {
+    btn.disabled = false;
+    await reloadAdvancePayouts();
+    renderAdvancePayoutDialog();
+  }
+}
+
 async function loadWeekGrid() {
   const errorEl = document.getElementById('bulkEntryError');
   errorEl.classList.add('hidden');
@@ -226,7 +505,7 @@ async function loadWeekGrid() {
   const dates = weekDates(weekStart);
   renderWeekRangeLabel(dates);
 
-  const [{ data, error }, { data: advanceData, error: advanceError }] = await Promise.all([
+  const [{ data, error }, { data: advanceData, error: advanceError }, payoutResult] = await Promise.all([
     supabaseClient.rpc('admin_list_timesheet_entries', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -245,8 +524,16 @@ async function loadWeekGrid() {
       p_date_end: toDateInputValue(dates[6]),
       p_page: 1,
       p_page_size: 500
+    }),
+    supabaseClient.rpc('admin_list_cash_advance_payouts', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_week_start: toDateInputValue(dates[0]),
+      p_week_end: toDateInputValue(dates[6])
     })
   ]);
+  advancePayouts = payoutResult?.error ? [] : (payoutResult?.data || []);
+  updateSendAdvancesButton();
 
   if (error) {
     errorEl.textContent = error.message;
@@ -264,12 +551,14 @@ async function loadWeekGrid() {
 
   const advanceByUsername = {};
   // Applied advances (already deducted in a payroll run) still show, but stay locked even after
-  // Unlock Editing - admin_upsert_cash_advances_bulk only updates Outstanding ones, so re-saving an
-  // Applied amount would create a duplicate advance. An Outstanding one wins if a week has both.
+  // Unlock Editing - admin_upsert_cash_advances_bulk only updates Outstanding / Pending ones, so re-saving an
+  // Applied amount would create a duplicate advance. An Outstanding / Pending (Xendit, not paid yet) one wins if a
+  // week has both.
+  const editable = (s) => s === 'Outstanding' || s === 'Pending';
   (advanceData || []).forEach((a) => {
-    if (a.status !== 'Outstanding' && a.status !== 'Applied') return;
-    if (advanceByUsername[a.username]?.status === 'Outstanding') return;
-    advanceByUsername[a.username] = { amount: a.amount, method: a.method, status: a.status };
+    if (!editable(a.status) && a.status !== 'Applied') return;
+    if (editable(advanceByUsername[a.username]?.status)) return;
+    advanceByUsername[a.username] = { id: a.advance_id, amount: a.amount, method: a.method, status: a.status };
   });
 
   renderWeekGrid(dates, existingByKey, advanceByUsername);
@@ -805,7 +1094,11 @@ async function saveNewRun() {
 
   document.getElementById('timesheetsContent').classList.remove('hidden');
   document.getElementById('unlockEditingBtn').classList.toggle('hidden', !session.isSuperUser);
-  await loadEmployeeOptionsOnce();
+  loadXenditBalanceBar();
+  document.getElementById('xenditBalanceBar').addEventListener('click', (e) => {
+    if (e.target.closest('[data-refresh-xendit-balance]')) loadXenditBalanceBar(true);
+  });
+  await Promise.all([loadEmployeeOptionsOnce(), loadPayoutFlagsOnce()]);
   await loadEntries();
   await loadCutoffSettingsOnce();
 
@@ -853,6 +1146,11 @@ async function saveNewRun() {
     if (e.target.classList.contains('bulk-ca-method')) updateCashAdvanceTotal();
   });
   document.getElementById('saveBulkEntryBtn').addEventListener('click', saveBulkEntry);
+  document.getElementById('sendAdvancesBtn').addEventListener('click', openAdvancePayoutDialog);
+  document.getElementById('sendAdvancePayoutsBtn').addEventListener('click', sendAdvancePayouts);
+  document.getElementById('submitAdvancesBtn').addEventListener('click', submitAdvances);
+  document.getElementById('refreshAdvancePayoutsBtn').addEventListener('click', refreshAdvancePayouts);
+  document.querySelectorAll('[data-close-advance-payout]').forEach((btn) => btn.addEventListener('click', closeAdvancePayoutDialog));
   document.getElementById('unlockEditingBtn').addEventListener('click', unlockEditing);
 
   document.getElementById('toggleAllEntriesBtn').addEventListener('click', (e) => {

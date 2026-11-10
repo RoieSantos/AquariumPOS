@@ -41,6 +41,8 @@ function depositBadge(row) {
   const count = Number(row.deposit_count || 0);
   // An earlier re-declared count: the day's deposit goes on the latest declaration instead.
   if (count === 0 && row.is_counted === false) return '<span class="muted" style="font-size:12px;">On latest declaration</span>';
+  // Dated on/before the cut-off (supabase_tender_deposit_receipts.sql): treated as already deposited.
+  if (count === 0 && row.before_deposit_tracking) return '<span class="muted" style="font-size:12px;" title="Before deposit slips were tracked - treated as deposited">Deposited (before tracking)</span>';
   if (count === 0) return '<span class="badge badge-neutral">No deposit</span>';
   const diff = Number(row.deposit_total || 0) - Number(row.declared_cash || 0);
   const amount = `<div>${formatMoney(row.deposit_total)}</div>`;

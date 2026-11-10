@@ -27,7 +27,7 @@
 -- deposit_total / deposit_count per row, total_deposited, and a p_deposit filter.
 --
 -- Run AFTER supabase_tender_declaration_tables.sql and supabase_phys_journal_store_manager_access.sql.
--- Safe to re-run. Needs js/tenderDeclarations.js ?v=todeposit1 and js/auth.js / js/nav.js ?v=tenderdeposit1.
+-- Safe to re-run. Needs js/tenderDeclarations.js ?v=todeposit2 and js/auth.js / js/nav.js ?v=tenderdeposit1.
 
 -- ============================================================================
 -- 1. Storage bucket, table
@@ -488,7 +488,10 @@ grant execute on function public.staff_delete_tender_deposit(text, text, int) to
 -- Cashiers sometimes declare twice in a day: is_counted marks the LATEST declaration per Warehouse +
 -- DeclDate (highest EODID - the POS running number), decided over all rows before the filters apply, and
 -- total_declared sums only those - the earlier one of a re-declare is listed but not added in.
--- total_to_deposit = Declared Cash still to deposit (same latest-per-day rule), for the "To Deposit" card.
+-- total_to_deposit = sum of Declared Cash on the "No deposit" rows only (latest declaration of the day, no
+-- deposit attached), for the "To Deposit" card. Partly deposited ones aren't included.
+-- Declarations dated on/before 2026-10-25 (v_deposited_through) count as already deposited: left out of
+-- total_to_deposit and the 'none' filter, and flagged before_deposit_tracking so the page doesn't say "No deposit".
 -- ============================================================================
 
 drop function if exists public.admin_list_tender_declarations(text, text, text, text, date, date, text, int, int);
@@ -534,7 +537,8 @@ returns table(
   total_declared numeric,
   total_deposited numeric,
   is_counted boolean,
-  total_to_deposit numeric
+  total_to_deposit numeric,
+  before_deposit_tracking boolean
 )
 language plpgsql
 security definer
@@ -549,6 +553,9 @@ declare
   v_deposit text := lower(nullif(trim(coalesce(p_deposit, '')), ''));
   v_is_super boolean;
   v_caller_warehouse text;
+  -- Declarations on/before this date count as already deposited (from before deposit slips were
+  -- tracked), per "treat on and before 2026-10-25 as deposited".
+  v_deposited_through date := date '2026-10-25';
 begin
   select c.is_super, c.warehouse_name into v_is_super, v_caller_warehouse
     from public._tender_decl_caller(p_admin_username, p_admin_password) c;
@@ -585,9 +592,11 @@ begin
       coalesce(sum(h."DeclaredCash") filter (where h.counted) over(), 0),
       coalesce(sum(h.dep_amt) over(), 0),
       h.counted,
-      -- Declared Cash not deposited yet: latest declaration of each day only (a re-declare isn't added
-      -- twice), and a deposit over the declared amount doesn't offset another day's shortfall.
-      coalesce(sum(greatest(h."DeclaredCash" - h.dep_amt, 0)) filter (where h.counted) over(), 0)
+      -- Declared Cash of the "No deposit" rows only: latest declaration of the day (not the earlier
+      -- "On latest declaration" one), after the cut-off, with no deposit attached at all.
+      coalesce(sum(h."DeclaredCash")
+                 filter (where h.counted and h.dep_cnt = 0 and h."DeclDate" > v_deposited_through) over(), 0),
+      coalesce(h."DeclDate" <= v_deposited_through, false)
     from joined h
     where (v_warehouse is null or lower(trim(h."Warehouse")) = lower(v_warehouse))
       and (p_from is null or h."DeclDate" >= p_from)
@@ -601,7 +610,7 @@ begin
       and (
         v_deposit is null
         -- An earlier re-declared count never needs its own deposit (it goes on the latest one).
-        or (v_deposit = 'none' and h.dep_cnt = 0 and h.counted)
+        or (v_deposit = 'none' and h.dep_cnt = 0 and h.counted and h."DeclDate" > v_deposited_through)
         or (v_deposit = 'mismatch' and h.dep_cnt > 0 and h.dep_amt <> h."DeclaredCash")
         or (v_deposit = 'matched' and h.dep_cnt > 0 and h.dep_amt = h."DeclaredCash")
       )

@@ -376,6 +376,41 @@ h1, h2, h3 {
   color: #fff;
 }
 
+/* Section headings inside a menu (js/nav.js renderTopNav, item.section). */
+.topnav-menu-section {
+  break-inside: avoid;
+  padding-bottom: 4px;
+}
+
+.topnav-menu-section + .topnav-menu-section {
+  border-top: 1px solid var(--panel-border);
+  padding-top: 4px;
+}
+
+.topnav-menu-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #6b7280);
+  padding: 8px 10px 4px;
+}
+
+.topnav-group-menu-wide {
+  columns: 2;
+  column-gap: 8px;
+  width: 470px;
+}
+
+.topnav-group-menu-wide .topnav-menu-section + .topnav-menu-section {
+  border-top: none;
+}
+
+.topnav-group-menu-right {
+  left: auto;
+  right: 0;
+}
+
 .topnav-logout {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.5);
@@ -462,6 +497,19 @@ h1, h2, h3 {
   .topnav-group-menu .topnav-link.active {
     background: #fff;
     color: var(--primary-strong);
+  }
+
+  .topnav-group-menu-wide {
+    columns: auto;
+    width: 100%;
+  }
+
+  .topnav-menu-section + .topnav-menu-section {
+    border-top-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .topnav-menu-heading {
+    color: rgba(255, 255, 255, 0.6);
   }
 
   .topnav-logout {

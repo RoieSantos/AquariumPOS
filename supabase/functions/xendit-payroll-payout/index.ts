@@ -1,8 +1,10 @@
 // Payroll payouts through Xendit (Payroll Run > Pay via Xendit; Payroll Setup > Salary Payout).
 //   action 'channels' - the GCash / Maya / bank list Xendit can pay out to (payroll officers + super users)
-//   action 'balance'  - available Xendit balance, to compare with the run's Xendit total (super users)
+//   action 'balance'  - available Xendit balance, to compare with the run's Xendit total (payroll officers + super users)
 //   action 'send'     - pay a finalized run's Xendit lines (super users only)
 //   action 'refresh'  - re-read payouts still waiting on Xendit (payroll officers + super users)
+//   action 'send_advances' / 'refresh_advances' - the same for Timesheets cash advances (advanceIds); a paid
+//     advance turns Outstanding in _payroll_payout_record. sql/supabase_xendit_cash_advance_payouts.sql
 //
 // Safety: one XenditPayouts row per line per mode, made by _payroll_payouts_prepare under a lock; its PayoutID is
 // the Idempotency-key, so a double click, two tabs or a retry after a timeout can't pay anyone twice. A call that
@@ -23,6 +25,10 @@ const CORS_HEADERS = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHANNEL_CACHE_MS = 30 * 60 * 1000;
 const channelCache = new Map<boolean, { at: number; channels: unknown[] }>();
+
+function uuidList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String).filter((id) => UUID_RE.test(id)) : [];
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
@@ -47,7 +53,8 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Could not check your login.' }, 500);
   }
   if (!username || (!isAdmin && !isPayroll)) return jsonResponse({ error: 'Not authorized - log in again.' }, 401);
-  if ((action === 'send' || action === 'balance') && !isAdmin) {
+  // Reading the balance is open to payroll officers too (Timesheets / Payroll Run bar); sending is super users only.
+  if ((action === 'send' || action === 'send_advances') && !isAdmin) {
     return jsonResponse({ error: 'Only a super user can do this.' }, 403);
   }
 
@@ -91,24 +98,30 @@ Deno.serve(async (req) => {
     return jsonResponse({ isTest, balance: result.balance });
   }
 
-  const runId = String(body?.runId ?? '');
-  if (!UUID_RE.test(runId)) return jsonResponse({ error: 'Pick a payroll run.' }, 400);
-
-  // ---------------------------------------------------------------- send
-  if (action === 'send') {
+  // ---------------------------------------------------------------- send (run lines or cash advances)
+  if (action === 'send' || action === 'send_advances') {
     const key = payoutKeyFor(isTest);
     if (!key) return jsonResponse({ error: `No valid ${isTest ? 'test' : 'live'} Xendit payout key.` }, 500);
-    const lineIds: string[] | null = Array.isArray(body?.lineIds) ? body.lineIds.map(String).filter((id: string) => UUID_RE.test(id)) : null;
 
-    const { data: rows, error: prepError } = await supabase.rpc('_payroll_payouts_prepare', {
-      p_run_id: runId, p_is_test: isTest, p_sent_by: username, p_line_ids: lineIds && lineIds.length ? lineIds : null
-    });
-    if (prepError) return jsonResponse({ error: prepError.message }, 400);
-    const toSend: any[] = rows ?? [];
-    if (!toSend.length) return jsonResponse({ isTest, sent: 0, failed: [], note: 'Nothing to send - every Xendit line is already sent or paid.' });
+    let prep;
+    if (action === 'send') {
+      const runId = String(body?.runId ?? '');
+      if (!UUID_RE.test(runId)) return jsonResponse({ error: 'Pick a payroll run.' }, 400);
+      const lineIds = uuidList(body?.lineIds);
+      prep = await supabase.rpc('_payroll_payouts_prepare', {
+        p_run_id: runId, p_is_test: isTest, p_sent_by: username, p_line_ids: lineIds.length ? lineIds : null
+      });
+    } else {
+      const advanceIds = uuidList(body?.advanceIds);
+      if (!advanceIds.length) return jsonResponse({ error: 'Pick the cash advances to send.' }, 400);
+      prep = await supabase.rpc('_advance_payouts_prepare', { p_is_test: isTest, p_sent_by: username, p_advance_ids: advanceIds });
+    }
+    if (prep.error) return jsonResponse({ error: prep.error.message }, 400);
+    const toSend: any[] = prep.data ?? [];
+    if (!toSend.length) return jsonResponse({ isTest, sent: 0, failed: [], note: 'Nothing to send - everything here is already sent or paid.' });
 
     // Enough in Xendit? Only blocks when the balance can be read and is clearly short; otherwise Xendit itself
-    // refuses a payout it can't cover (INSUFFICIENT_BALANCE) and that line can be sent again later.
+    // refuses a payout it can't cover (INSUFFICIENT_BALANCE) and that row can be sent again later.
     const total = toSend.reduce((s, r) => s + Number(r.amount), 0);
     const readKey = readKeyFor(isTest);
     if (readKey) {
@@ -169,12 +182,20 @@ Deno.serve(async (req) => {
     return jsonResponse({ isTest, sent, failed });
   }
 
-  // ---------------------------------------------------------------- refresh
-  if (action === 'refresh') {
-    const { data: open, error } = await supabase.rpc('_payroll_payouts_open', { p_run_id: runId });
-    if (error) return jsonResponse({ error: error.message }, 500);
+  // ---------------------------------------------------------------- refresh (run lines or cash advances)
+  if (action === 'refresh' || action === 'refresh_advances') {
+    let open;
+    if (action === 'refresh') {
+      const runId = String(body?.runId ?? '');
+      if (!UUID_RE.test(runId)) return jsonResponse({ error: 'Pick a payroll run.' }, 400);
+      open = await supabase.rpc('_payroll_payouts_open', { p_run_id: runId });
+    } else {
+      open = await supabase.rpc('_advance_payouts_open', {});
+    }
+    if (open.error) return jsonResponse({ error: open.error.message }, 500);
+    const rows: any[] = open.data ?? [];
     let updated = 0;
-    for (const p of open ?? []) {
+    for (const p of rows) {
       const key = payoutKeyFor(p.is_test);
       if (!key) continue;
       const result = p.xendit_payout_id ? await getPayout(key, p.xendit_payout_id) : await findPayoutByReference(key, p.reference_id);
@@ -182,7 +203,7 @@ Deno.serve(async (req) => {
         await supabase.rpc('_payroll_payout_record', { p_payout_id: p.payout_id, p_reference_id: null, p_error: null, ...recordArgs(result.body) });
         updated++;
       } else if (!p.xendit_payout_id && result.ok && !result.body && Number(p.age_seconds) > 600) {
-        // Xendit has no payout with our reference 10+ minutes on: the create never landed - free the line to send
+        // Xendit has no payout with our reference 10+ minutes on: the create never landed - free the row to send
         // again. (Younger rows may still be in flight from another tab, so they're left alone.)
         await supabase.rpc('_payroll_payout_record', {
           p_payout_id: p.payout_id, p_reference_id: null, p_status: null, p_xendit_id: null, p_failure_code: null,
@@ -191,7 +212,7 @@ Deno.serve(async (req) => {
         updated++;
       }
     }
-    return jsonResponse({ isTest, checked: (open ?? []).length, updated });
+    return jsonResponse({ isTest, checked: rows.length, updated });
   }
 
   return jsonResponse({ error: 'Unknown action.' }, 400);

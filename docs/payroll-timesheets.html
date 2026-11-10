@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Employee Timesheets - RS Pet Stop Portal</title>
-  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
   <link rel="stylesheet" href="css/bc-list.css?v=redqty5" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
@@ -28,6 +28,7 @@
     <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
     <symbol id="ico-print" viewBox="0 0 16 16"><path d="M4.5 6V2.5h7V6M4.5 11.5h-2V6h11v5.5h-2"/><path d="M4.5 9.5h7v4h-7z"/></symbol>
     <symbol id="ico-check" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></symbol>
+    <symbol id="ico-send" viewBox="0 0 16 16"><path d="M2 8 14 2.5 10.5 14 8 9z"/><path d="M8 9 14 2.5"/></symbol>
     <symbol id="ico-calendar" viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="10" rx="1"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/></symbol>
     <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
     <symbol id="ico-ledger" viewBox="0 0 16 16"><path d="M3 2.5h10v11H3z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></symbol>
@@ -59,6 +60,9 @@
              corrected and re-saved, without going through the All Entries list below. -->
         <button class="bc-cmd hidden" id="unlockEditingBtn" type="button">Unlock Editing (Super User)</button>
         <span class="bc-cmd-sep"></span>
+        <!-- Xendit cash advances (sql/supabase_xendit_cash_advance_payouts.sql) - shown while any is pending or in this week. -->
+        <button class="bc-cmd hidden" id="sendAdvancesBtn" type="button" title="Submit this week's Xendit cash advances for approval; super users approve and send them to GCash / bank"><svg class="bc-ico"><use href="#ico-send"/></svg>Xendit Advances</button>
+        <span class="bc-cmd-sep hidden" id="sendAdvancesSep"></span>
         <button class="bc-cmd" id="createRunFromTimesheetsBtn" type="button"><svg class="bc-ico"><use href="#ico-money"/></svg>Create Payroll Run from This Week</button>
         <span class="bc-cmd-sep"></span>
         <a class="bc-cmd" href="payroll.html" style="text-decoration:none;"><svg class="bc-ico"><use href="#ico-money"/></svg>Payroll Runs</a>
@@ -81,6 +85,8 @@
         </span>
       </div>
       <div id="weeklyProjectedFundingNote" class="bc-infobar hidden"></div>
+      <!-- Xendit available balance (Edge Function xendit-payroll-payout, action 'balance') - payroll officers + super users. -->
+      <div id="xenditBalanceBar" class="bc-infobar hidden" style="border-left:4px solid #7c3aed;"></div>
 
       <div id="bulkEntryError" class="bc-infobar bc-infobar-warn error-text hidden"></div>
 
@@ -218,6 +224,43 @@
     </div>
   </div>
 
+  <!-- Send Advances via Xendit - BC dialog -->
+  <div id="advancePayoutModal" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="advancePayoutTitle">
+      <div class="bc-dialog-head">
+        <h2 id="advancePayoutTitle">Xendit Cash Advances</h2>
+        <button class="bc-iconbtn" type="button" data-close-advance-payout aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">1. Payroll officer: Save All, then <strong>Submit for Approval</strong>. 2. Super user: <strong>Approve &amp; Send</strong> - the money goes from the Xendit balance to each employee's GCash / bank, and can't be pulled back. Only submitted advances can be sent; changing an amount takes it out of approval. An advance is deducted from payroll only once Xendit confirms it was paid; a failed one can be sent again after fixing the account in Payroll Setup.</p>
+        <div class="bc-summary-box" id="advancePayoutSummary"></div>
+        <table class="bc-grid" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Date</th>
+              <th>Pay To</th>
+              <th>Account Name</th>
+              <th class="num">Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="advancePayoutBody">
+            <tr><td colspan="6" class="cell-msg">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="advancePayoutMessage" class="bc-dialog-msg hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn" id="refreshAdvancePayoutsBtn" type="button">Refresh Status</button>
+        <button class="bc-btn hidden" id="submitAdvancesBtn" type="button">Submit for Approval</button>
+        <button class="bc-btn bc-btn-primary" id="sendAdvancePayoutsBtn" type="button">Send</button>
+        <button class="bc-btn" type="button" data-close-advance-payout>Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Add/Edit timesheet entry - BC dialog -->
   <div id="entryModal" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog" role="dialog" aria-modal="true" aria-labelledby="entryModalTitle">
@@ -256,9 +299,9 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
-  <script src="js/nav.js?v=xledger1"></script>
+  <script src="js/nav.js?v=navgroups2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollTimesheets.js?v=bc1"></script>
+  <script src="js/payrollTimesheets.js?v=xbalance1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
