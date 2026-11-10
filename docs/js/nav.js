@@ -321,6 +321,8 @@ function renderTopNavLinks(activeLabel) {
     admin.push({ href: 'payment-methods.html', label: 'Payment Methods' });
     // Online payments through Xendit (pay.html) - sql/supabase_xendit_payments.sql.
     admin.push({ href: 'xendit-payments.html', label: 'Xendit Payments' });
+    // Xendit balance + every transaction in/out, from Xendit (Edge Function xendit-ledger).
+    admin.push({ href: 'xendit-ledger.html', label: 'Xendit Ledger' });
     admin.push({ href: 'gl-setup.html', label: 'G/L Setup' });
     admin.push({ href: 'user-setup.html', label: 'User Setup' });
     // Read-only regression checks - calculator prices/safety rules, live pricing tables, website
@@ -500,6 +502,7 @@ const TELL_ME_KEYWORDS = {
   'price-increase.html': 'price change raise markup wholesale percent',
   'payment-methods.html': 'gcash cash bank tender',
   'xendit-payments.html': 'online payment gateway gcash card pay link',
+  'xendit-ledger.html': 'xendit balance transactions fees vat withdrawal payout settlement money in out',
   'gl-setup.html': 'accounts chart accounting',
   'user-setup.html': 'staff employees permissions accounts login',
   'system-tests.html': 'test check broken regression health',

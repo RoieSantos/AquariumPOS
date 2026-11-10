@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xendit Ledger Entries - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=redqty5" />
+  <link rel="stylesheet" href="css/bc-list.css?v=redqty5" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    /* Status text in the grid, BC style: coloured words, no pills. */
+    .bc-ile .xl-status-SUCCESS { color: var(--success); }
+    .bc-ile .xl-status-PENDING { color: #a6720a; }
+    .bc-ile .xl-status-FAILED, .bc-ile .xl-status-REVERSED { color: var(--danger); }
+    .bc-ile .xl-status-VOIDED { color: var(--text-muted); }
+    .bc-ile button.bc-cue { cursor: pointer; font: inherit; text-align: left; }
+    .bc-ile button.bc-cue:hover { background: var(--bc-hover); }
+    .bc-ile .bc-cue.active { background: var(--bc-selected); }
+    .bc-ile .bc-cue.bc-cue-in { border-top-color: var(--success); }
+    .bc-ile .bc-cue.bc-cue-fee { border-top-color: #c19c00; }
+    .bc-ile .bc-cue.bc-cue-out { border-top-color: var(--danger); }
+    .bc-ile .bc-cue.bc-cue-static { cursor: default; }
+    .bc-ile .bc-cue.bc-cue-static:hover { background: var(--bc-surface); }
+    .bc-ile .bc-fp-field .xl-mode { display: flex; gap: 14px; }
+    .bc-ile .bc-fp-field .xl-mode label { display: flex; gap: 6px; align-items: center; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <!-- Shared icon set (Business Central-style line icons), referenced with <use>. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.5 10.5 14 14"/></symbol>
+    <symbol id="ico-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/></symbol>
+    <symbol id="ico-clear-filter" viewBox="0 0 16 16"><path d="M2 3h12l-4.6 5.4V13l-2.8-1.6V8.4z"/><path d="M11.5 11.5l3 3M14.5 11.5l-3 3"/></symbol>
+    <symbol id="ico-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4"/><path d="M13.6 2.2v3.3h-3.3"/></symbol>
+    <symbol id="ico-download" viewBox="0 0 16 16"><path d="M8 3v8M4.8 7.8 8 11l3.2-3.2M3 13h10"/></symbol>
+    <symbol id="ico-doc" viewBox="0 0 16 16"><path d="M4 2h5.5L13 5.5V14H4z"/><path d="M9.5 2v3.5H13M6 8.5h5M6 11h5"/></symbol>
+    <symbol id="ico-money" viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8" rx="1"/><circle cx="8" cy="8" r="1.8"/></symbol>
+    <symbol id="ico-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></symbol>
+  </svg>
+
+  <div class="page bc-ile">
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="bc-btn bc-btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="ledgerContent" class="hidden">
+      <div class="bc-titlebar">
+        <div>
+          <h1 class="bc-title">Xendit Ledger Entries</h1>
+          <p class="bc-subtitle">Every move on the Xendit account, straight from Xendit: customer payments in, Xendit fees and VAT, and money out (withdrawals, refunds).</p>
+        </div>
+        <div class="bc-title-tools">
+          <div class="bc-search">
+            <svg class="bc-ico"><use href="#ico-search"/></svg>
+            <input type="text" id="xlSearchInput" placeholder="Search" aria-label="Search entries" autocomplete="off" />
+          </div>
+          <button class="bc-iconbtn" id="filterPaneBtn" type="button" title="Show or hide the filter pane" aria-label="Show or hide the filter pane" aria-pressed="true">
+            <svg class="bc-ico"><use href="#ico-filter"/></svg>
+          </button>
+          <button class="bc-iconbtn" id="clearFiltersBtn" type="button" title="Clear filters" aria-label="Clear filters">
+            <svg class="bc-ico"><use href="#ico-clear-filter"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
+        <button class="bc-cmd" id="xlRefreshBtn" type="button"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh</button>
+        <button class="bc-cmd" id="xlCsvBtn" type="button" title="Download the filtered entries for Excel"><svg class="bc-ico"><use href="#ico-download"/></svg>Open in Excel</button>
+        <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="xlReceiptBtn" type="button" disabled title="Open the receipt of the selected payment"><svg class="bc-ico"><use href="#ico-doc"/></svg>Show Receipt</button>
+        <button class="bc-cmd" id="xlPayLinkBtn" type="button" disabled title="Open the pay page of the selected payment's order"><svg class="bc-ico"><use href="#ico-money"/></svg>Show Order</button>
+        <span class="bc-cmd-sep"></span>
+        <a class="bc-cmd" href="xendit-payments.html" title="Xendit settings and the order payment log"><svg class="bc-ico"><use href="#ico-settings"/></svg>Xendit Payments</a>
+      </div>
+
+      <div class="bc-infobar hidden" id="xlInfobar" role="status">
+        <span class="bc-infobar-text" id="xlInfobarText"></span>
+      </div>
+
+      <!-- BC cues: balance now, then the period's totals. Money In / Out / Fees filter the list. -->
+      <div class="bc-cues" id="xlCues">
+        <div class="bc-cue bc-cue-static" title="What Xendit holds that can be withdrawn now">
+          <span class="bc-cue-caption">Available Balance</span>
+          <span class="bc-cue-value" id="cueAvailable">-</span>
+          <span class="bc-cue-note">Can be withdrawn now</span>
+        </div>
+        <div class="bc-cue bc-cue-static bc-cue-warn" title="Paid by customers, not settled by Xendit yet">
+          <span class="bc-cue-caption">Pending Settlement</span>
+          <span class="bc-cue-value" id="cuePending">-</span>
+          <span class="bc-cue-note">Paid, not settled yet</span>
+        </div>
+        <button class="bc-cue bc-cue-in" type="button" data-cue-view="in" title="Show only money in">
+          <span class="bc-cue-caption">Money In</span>
+          <span class="bc-cue-value" id="cueIn">-</span>
+          <span class="bc-cue-note" id="cueInNote"></span>
+        </button>
+        <button class="bc-cue bc-cue-fee" type="button" data-cue-view="fees" title="Show only entries with Xendit fees">
+          <span class="bc-cue-caption">Fees + VAT</span>
+          <span class="bc-cue-value" id="cueFees">-</span>
+          <span class="bc-cue-note">Taken by Xendit</span>
+        </button>
+        <div class="bc-cue bc-cue-static" title="Money in after Xendit's fees">
+          <span class="bc-cue-caption">Net In</span>
+          <span class="bc-cue-value" id="cueNet">-</span>
+          <span class="bc-cue-note">Money in after fees</span>
+        </div>
+        <button class="bc-cue bc-cue-out" type="button" data-cue-view="out" title="Show only money out">
+          <span class="bc-cue-caption">Money Out</span>
+          <span class="bc-cue-value" id="cueOut">-</span>
+          <span class="bc-cue-note" id="cueOutNote"></span>
+        </button>
+      </div>
+
+      <div class="bc-tabs" role="tablist">
+        <button class="bc-tab active" type="button" role="tab" data-view="all" aria-selected="true">All Entries</button>
+        <button class="bc-tab" type="button" role="tab" data-view="in" aria-selected="false">Money In</button>
+        <button class="bc-tab" type="button" role="tab" data-view="out" aria-selected="false">Money Out</button>
+        <button class="bc-tab" type="button" role="tab" data-view="fees" aria-selected="false">Fees</button>
+      </div>
+
+      <div class="bc-chips hidden" id="filterChips" aria-label="Active filters"></div>
+
+      <div class="bc-body" id="bcBody">
+        <aside class="bc-filterpane" id="filterPane" aria-label="Filter list by">
+          <div class="bc-pane-head">Filter list by</div>
+          <div class="bc-pane-body">
+            <div class="bc-fp-field">
+              <label>Mode</label>
+              <div class="xl-mode">
+                <label><input type="radio" name="xlMode" value="live" checked /> Live</label>
+                <label><input type="radio" name="xlMode" value="test" /> Test</label>
+              </div>
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlPeriod">Period</label>
+              <select id="xlPeriod">
+                <option value="today">Today</option>
+                <option value="7d">Last 7 days</option>
+                <option value="month" selected>This month</option>
+                <option value="lastmonth">Last month</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlFromDate">Posting Date - from</label>
+              <input type="date" id="xlFromDate" />
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlToDate">Posting Date - to</label>
+              <input type="date" id="xlToDate" />
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlTypeFilter">Entry Type</label>
+              <select id="xlTypeFilter"><option value="">(all)</option></select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlStatusFilter">Status</label>
+              <select id="xlStatusFilter">
+                <option value="">(all)</option>
+                <option value="SUCCESS">Success</option>
+                <option value="PENDING">Pending</option>
+                <option value="FAILED">Failed</option>
+                <option value="VOIDED">Voided</option>
+                <option value="REVERSED">Reversed</option>
+              </select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlChannelFilter">Channel</label>
+              <select id="xlChannelFilter"><option value="">(all)</option></select>
+            </div>
+            <div class="bc-fp-field">
+              <label for="xlSourceFilter">Source</label>
+              <select id="xlSourceFilter">
+                <option value="">(all)</option>
+                <option value="Online">Pay link (online)</option>
+                <option value="POS">POS</option>
+                <option value="Delivery">Delivery QR</option>
+                <option value="none">Not from the portal</option>
+              </select>
+            </div>
+            <button class="bc-link" id="clearFiltersLink" type="button">Clear filters</button>
+            <p class="bc-fp-hint">Mode and dates are asked from Xendit; the other filters work on what's loaded. Cue totals count Success entries only.</p>
+          </div>
+        </aside>
+
+        <section class="bc-main" id="bcMain">
+          <div class="bc-grid-wrap" id="xlGridWrap">
+            <table class="bc-grid" id="xlTable" data-resize-key="xendit-ledger">
+              <thead>
+                <tr>
+                  <th>Posting Date</th>
+                  <th>Time</th>
+                  <th>Entry Type</th>
+                  <th>Channel</th>
+                  <th>Order No.</th>
+                  <th>Source</th>
+                  <th>Reference</th>
+                  <th class="num">Amount</th>
+                  <th class="num">Fees + VAT</th>
+                  <th class="num">Net Amount</th>
+                  <th>Status</th>
+                  <th>Settlement</th>
+                </tr>
+              </thead>
+              <tbody id="xlTableBody">
+                <tr><td colspan="12" class="cell-msg">Loading...</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="7">Total (all filtered Success entries)</td>
+                  <td id="xlTotalAmount" class="num">0.00</td>
+                  <td id="xlTotalFees" class="num">0.00</td>
+                  <td id="xlTotalNet" class="num">0.00</td>
+                  <td colspan="2"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <div id="xlPaginationBar"></div>
+        </section>
+
+        <aside class="bc-factbox" id="factBox" aria-label="Entry details">
+          <div class="bc-fact">
+            <div class="bc-fact-title">Entry Details</div>
+            <div class="bc-fact-body" id="factDetails">
+              <p class="bc-fact-empty">Select an entry to see its details.</p>
+            </div>
+          </div>
+          <div class="bc-fact hidden" id="factOrderBox">
+            <div class="bc-fact-title">Portal Payment</div>
+            <div class="bc-fact-body" id="factOrder"></div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=tenderdeposit1"></script>
+  <script src="js/nav.js?v=xledger1"></script>
+  <script src="js/pagination.js"></script>
+  <script src="js/bcFilterPane.js?v=1"></script>
+  <script src="js/bcColumnResize.js?v=1"></script>
+  <script src="js/xenditLedger.js?v=xledger2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

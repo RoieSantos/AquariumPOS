@@ -12,6 +12,15 @@ export function secretKeyFor(isTest: boolean): string | null {
   return key?.startsWith(isTest ? 'xnd_development_' : 'xnd_production_') ? key : null;
 }
 
+// Xendit Ledger (xendit-ledger) reads the balance + transactions, which need "Balance: Read" and
+// "Transactions: Read" on the key. If the main key doesn't have them, make a separate read-only key in the
+// Xendit Dashboard (Settings > API Keys) and save it as XENDIT_LIVE_READ_KEY / XENDIT_TEST_READ_KEY.
+// Without one, the main secret key is used.
+export function readKeyFor(isTest: boolean): string | null {
+  const key = Deno.env.get(isTest ? 'XENDIT_TEST_READ_KEY' : 'XENDIT_LIVE_READ_KEY');
+  return key?.startsWith(isTest ? 'xnd_development_' : 'xnd_production_') ? key : secretKeyFor(isTest);
+}
+
 export function callbackTokenFor(isTest: boolean): string | null {
   return Deno.env.get(isTest ? 'XENDIT_TEST_CALLBACK_TOKEN' : 'XENDIT_LIVE_CALLBACK_TOKEN') || null;
 }
