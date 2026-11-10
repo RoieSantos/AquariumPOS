@@ -698,10 +698,15 @@ async function openCollectModal(stopId, dropIds = null) {
   setCollectError('');
   const select = document.getElementById('collectMethodSelect');
   select.innerHTML = '<option value="">Loading...</option>';
+  document.getElementById('collectCashOnlyHint').classList.add('hidden');
   document.getElementById('collectModal').classList.remove('hidden');
+  // Fresh every time: while the delivery Xendit QR is on, the server only offers Cash
+  // (sql/supabase_delivery_manual_cash_only.sql), and the switch can change during the day.
+  collectMethodsPromise = null;
   try {
     const methods = await loadCollectMethods();
     select.innerHTML = methods.map((m) => `<option value="${escapeHtmlText(m.code)}">${escapeHtmlText(m.name)}</option>`).join('');
+    document.getElementById('collectCashOnlyHint').classList.toggle('hidden', !(methods.length === 1 && methods[0].code === 'CASH'));
   } catch (err) {
     select.innerHTML = '<option value="CASH">Cash</option>';
     setCollectError(/schema cache|could not find the function|does not exist/i.test(err.message || '')

@@ -321,6 +321,7 @@
       <input type="number" id="collectAmountInput" step="0.01" min="0" inputmode="decimal" style="width:100%; font-size:18px; padding:10px;" />
       <label for="collectMethodSelect" style="margin-top:10px; display:block;">Paid via</label>
       <select id="collectMethodSelect" style="width:100%; font-size:16px; padding:8px;"></select>
+      <p id="collectCashOnlyHint" class="muted hidden" style="margin:6px 0 0; font-size:13px;">Only cash is recorded here. Paid by GCash, Maya or bank? Use <b>Collect by QR</b> below - never accept a screenshot.</p>
       <label for="collectReferenceInput" style="margin-top:10px; display:block;">Reference <span class="muted">(GCash / bank ref no., optional)</span></label>
       <input type="text" id="collectReferenceInput" maxlength="200" style="width:100%; padding:8px;" />
       <p id="collectError" class="error-text hidden" style="margin:10px 0 0;"></p>
@@ -387,7 +388,7 @@
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/deliverySerialGate.js?v=sergate2"></script>
-  <script src="js/delivery.js?v=xqr1"></script>
+  <script src="js/delivery.js?v=xqr2"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>
