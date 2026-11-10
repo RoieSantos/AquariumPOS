@@ -328,6 +328,29 @@
         <button class="btn btn-success" id="collectSaveBtn" type="button" style="flex:1; padding:12px;">Save</button>
         <button class="btn btn-secondary" id="collectCancelBtn" type="button" style="flex:1;">Cancel</button>
       </div>
+      <!-- Xendit QR Ph on the driver's phone (js/delivery.js startCollectQr, sql/supabase_xendit_delivery_collect.sql):
+           the customer scans it, and the collection saves itself once Xendit says Paid. -->
+      <button class="btn btn-primary" id="collectQrBtn" type="button" style="width:100%; padding:12px; margin-top:10px;">&#128241; Collect by QR (GCash / Maya / bank) - the amount above</button>
+      <p class="muted" style="margin:6px 0 0; font-size:12px;">No "Paid via" needed: the payment saves itself once the customer pays, and the money goes to our Xendit account, not to you.</p>
+    </div>
+  </div>
+  <div id="collectQrModal" class="modal-backdrop hidden">
+    <div class="modal-panel driver-detail-panel" style="text-align:center;">
+      <div id="collectQrTestBanner" class="hidden" style="background:#f59e0b; color:#111; font-weight:bold; padding:6px; border-radius:6px; margin-bottom:8px;">TEST MODE - no real money</div>
+      <div id="collectQrAmount" style="font-size:28px; font-weight:bold;"></div>
+      <div id="collectQrOrder" class="muted" style="margin:2px 0 6px;"></div>
+      <div id="collectQrTimer" style="font-weight:bold; min-height:22px;"></div>
+      <div style="display:inline-block; background:#fff; border-radius:12px; padding:10px; margin:8px 0;">
+        <div style="background:#0f766e; color:#fff; font-weight:bold; border-radius:6px; padding:4px; margin-bottom:6px; font-size:13px;">SCAN TO PAY &bull; QR Ph</div>
+        <div id="collectQrCode" style="width:260px; height:260px; display:flex; align-items:center; justify-content:center; color:#555;"></div>
+        <div style="color:#333; font-size:12px; margin-top:4px;">GCash &bull; Maya &bull; any bank app</div>
+      </div>
+      <p id="collectQrStatus" style="margin:8px 0; min-height:40px;"></p>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-secondary hidden" id="collectQrSimulateBtn" type="button" style="flex:1;">Simulate Paid (TEST)</button>
+        <button class="btn btn-secondary" id="collectQrCancelBtn" type="button" style="flex:1; padding:12px;">Cancel QR</button>
+        <button class="btn btn-success hidden" id="collectQrDoneBtn" type="button" style="flex:1; padding:12px;">Done</button>
+      </div>
     </div>
   </div>
   <div id="markDoneTipModal" class="modal-backdrop hidden">
@@ -364,7 +387,7 @@
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/deliverySerialGate.js?v=sergate2"></script>
-  <script src="js/delivery.js?v=backjob2"></script>
+  <script src="js/delivery.js?v=xqr1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

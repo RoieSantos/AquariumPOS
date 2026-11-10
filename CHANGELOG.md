@@ -2,6 +2,13 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-10
+
+- **POS Online Pay takes the Xendit QR.** For portal orders, XENDIT / GCash / QR Ph / Bank Transfer open the Xendit QR when the POS is online. The part is added as XENDIT (no card fee) only once it's paid, and split payments still work. A QR already paid can't be cancelled out of the payment, and failure messages tell the cashier not to charge again. QR payments are linked to the `ONL-<order>` receipt; offline falls back to manual ([OnlinePayForm.cs](OnlinePayForm.cs)).
+
+- **Drivers can collect by Xendit QR at the door.** On the Delivery page's Payment Collected screen, the new **📱 Collect by QR** button shows a QR Ph code on the driver's phone. Once the customer pays, the collection saves itself: a combined drop is split across its orders, it goes on the order (AO- orders through the usual collection logic, ADV- orders as a portal payment the POS Pay In Full takes in), and it shows as "Paid to Xendit", never "With driver". Old Pancake orders are refused. New Edge Function [xendit-delivery-payment](supabase/functions/xendit-delivery-payment/index.ts); [xendit-webhook](supabase/functions/xendit-webhook/index.ts) records `RSPS-DLV-` payments too; [supabase_xendit_delivery_collect.sql](sql/supabase_xendit_delivery_collect.sql) adds a separate switch, default OFF ([delivery.js](docs/js/delivery.js) `?v=xqr1`, [xenditPayments.js](docs/js/xenditPayments.js) `?v=xdelivery1`).
+- **POS Pay In Full can take the Xendit QR.** For advance orders, XENDIT / GCash / QR Ph / Bank Transfer open the Xendit QR when the POS is online, the same as checkout, and record the payment as XENDIT. Serials are picked before the QR. Offline or over ₱50,000, the routed tenders fall back to manual ([AdvanceOrdersHeaderForm.cs](AdvanceOrdersHeaderForm.cs), [MainForm.cs](MainForm.cs)).
+
 ## 2026-11-09
 
 - **Order Now: ask customers to send their Order ID + pay link in Messenger.** The Thank-you screen now says "Screenshot this Order ID and send it to us on Facebook Messenger" with a Message us button (m.me/RSPetStop), since customers who open Order Now directly get no Messenger message ([order-now.html](docs/order-now.html)). The Messenger "Order Received" message now includes the `pay.html?order=AO-#####` online pay link when Xendit is on for Order Now, and asks for the Order No with manual proof of payment ([supabase_order_now_confirmation_pay_link.sql](sql/supabase_order_now_confirmation_pay_link.sql)).

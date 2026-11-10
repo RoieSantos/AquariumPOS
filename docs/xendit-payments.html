@@ -52,6 +52,11 @@
         </label>
         <p class="muted" style="margin:0 0 10px 26px; font-size:13px;">Separate from the customer switch above. Every POS on the new build shows the Xendit button; while this is off, it only shows a "switched off" message. In test mode a POS can only take test payments, so switching to test turns this off. Only turn it back on in test mode to test a POS yourself.</p>
         <label style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
+          <input type="checkbox" id="xenditDeliveryEnabled" />
+          Allow drivers to collect by Xendit QR at the door (Delivery page)
+        </label>
+        <p class="muted" style="margin:0 0 10px 26px; font-size:13px;">The driver shows a QR Ph code on their phone; once the customer pays, it saves itself on the stop, goes on the order and never counts as cash with the driver. Old Pancake orders can't use it. Switching to test turns this off too.</p>
+        <label style="display:flex; gap:8px; align-items:center; margin-bottom:4px;">
           Card fee on the pay page
           <input type="number" id="xenditCardFeePercent" min="0" max="20" step="0.01" style="width:90px;" /> %
         </label>
@@ -113,7 +118,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=tenderdeposit1"></script>
-  <script src="js/xenditPayments.js?v=xchannels1"></script>
+  <script src="js/xenditPayments.js?v=xdelivery1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

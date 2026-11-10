@@ -18293,9 +18293,9 @@ END", connection);
         // the sale completed, once Xendit says it's Paid. No change can be given, so the amount can't be more
         // than what's left, and QR Ph allows 1.00 to 50,000.00 per payment (a bigger sale is split).
         // Add a tender with this code in Tender Types to turn it on for a store.
-        private const string XenditTenderCode = "XENDIT";
-        private const decimal XenditMinAmount = 1m;
-        private const decimal XenditMaxAmount = 50000m;
+        internal const string XenditTenderCode = "XENDIT";
+        internal const decimal XenditMinAmount = 1m;
+        internal const decimal XenditMaxAmount = 50000m;
 
         // Customer + order description are asked BEFORE the QR - per "put the fill data before the checkout so we
         // ensure that the payout will save". Once set, CompleteSale / SaveAdvanceOrder post without prompting, so
@@ -18346,7 +18346,7 @@ END", connection);
         // description in case a store's code differs.
         private static readonly string[] XenditRoutedCodes = { "GCASH", "QRPH", "QR_PH", "BANK" };
 
-        private static bool IsXenditRoutedTender(string code, string description)
+        internal static bool IsXenditRoutedTender(string code, string description)
         {
             if (XenditRoutedCodes.Contains((code ?? string.Empty).Trim().ToUpperInvariant())) return true;
             string d = (description ?? string.Empty).Replace(" ", string.Empty).ToUpperInvariant();
@@ -18354,7 +18354,7 @@ END", connection);
         }
 
         // Up to 5 seconds, with a wait cursor.
-        private static bool IsXenditOnline()
+        internal static bool IsXenditOnline()
         {
             Cursor previousCursor = Cursor.Current;
             Cursor.Current = Cursors.WaitCursor;

@@ -499,14 +499,63 @@ namespace AquariumPOS
                 chosenTender = "CASH";
             }
 
-            // Prompt for payment of the full balance
-            using (var paymentForm = new PaymentEntryForm(chosenTender, balance))
+            // Xendit QR for the balance - per "allow a live QR in the POS Pay In Full": XENDIT / GCash / QR Ph /
+            // Bank Transfer go through the Xendit QR when the POS is online, like the checkout (MainForm.PayWithXendit),
+            // and the payment is recorded as XENDIT. Serials are picked BEFORE the QR, so a cancelled picker can't
+            // leave a paid order unposted. Offline / over the QR limit: XENDIT stops, the others fall back to manual.
+            bool xenditPaid = false;
+            string xenditPaymentId = string.Empty;
+            List<string>? serialsPickedBeforeQr = null;
+            bool isXenditTender = chosenTender.Equals(MainForm.XenditTenderCode, StringComparison.OrdinalIgnoreCase);
+            if (isXenditTender || MainForm.IsXenditRoutedTender(chosenTender, chosenTender))
             {
-                if (paymentForm.ShowDialog(this) != DialogResult.OK)
+                if (!MainForm.IsXenditOnline())
+                {
+                    if (isXenditTender)
+                    {
+                        MessageBox.Show(this, "No internet connection, so Xendit can't be used right now.\n\nNo money was taken. Please pick another tender.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    MessageBox.Show(this,
+                        $"The POS is offline, so the Xendit QR can't be used.\n\n"
+                        + $"Record this as a manual {chosenTender}. Only continue once you see the money in OUR "
+                        + $"{chosenTender} account - never accept a screenshot as proof.",
+                        "Offline - manual payment", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else if (balance < MainForm.XenditMinAmount || balance > MainForm.XenditMaxAmount)
+                {
+                    if (isXenditTender)
+                    {
+                        MessageBox.Show(this, $"A QR Ph payment must be between P{MainForm.XenditMinAmount:N2} and P{MainForm.XenditMaxAmount:N2}, and Pay In Full can't split it. Please pick another tender.", "Xendit Payment", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    if (MessageBox.Show(this,
+                            $"P{balance:N2} is over the P{MainForm.XenditMaxAmount:N2} QR Ph limit, and Pay In Full can't split it.\n\n"
+                            + $"OK = record a manual {chosenTender} (only once you see the money in OUR account)",
+                            "Xendit Payment", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                        return;
+                }
+                else
+                {
+                    if (!TryCollectSerialsForFullyPaidOrder(transactionNo, out var picked))
+                        return;
+                    serialsPickedBeforeQr = picked;
+                    using var xenditForm = new XenditPayForm(balance);
+                    if (xenditForm.ShowDialog(this) != DialogResult.OK)
+                        return;
+                    xenditPaid = true;
+                    xenditPaymentId = xenditForm.PaymentId;
+                }
+            }
+
+            // Prompt for payment of the full balance (skipped when the Xendit QR was just paid)
+            using (var paymentForm = xenditPaid ? (PaymentEntryForm?)null : new PaymentEntryForm(chosenTender, balance))
+            {
+                if (paymentForm != null && paymentForm.ShowDialog(this) != DialogResult.OK)
                     return;
 
-                decimal paid = paymentForm.Amount;
-                string tenderCode = paymentForm.TenderType ?? chosenTender ?? "CASH";
+                decimal paid = paymentForm?.Amount ?? balance;
+                string tenderCode = xenditPaid ? MainForm.XenditTenderCode : (paymentForm!.TenderType ?? chosenTender ?? "CASH");
                 decimal appliedAmount = Math.Min(paid, balance);
                 decimal changeDue = Math.Max(0m, paid - balance);
 
@@ -524,7 +573,12 @@ namespace AquariumPOS
                 // whole click handler (blocking the payment entirely) if staff cancels a picker that
                 // had real choices to make - matches "block payment until serials are chosen" rather
                 // than letting the order get marked paid with tracking left incomplete.
-                if (!TryCollectSerialsForFullyPaidOrder(transactionNo, out var serialsToMarkSold))
+                List<string> serialsToMarkSold;
+                if (serialsPickedBeforeQr != null)
+                {
+                    serialsToMarkSold = serialsPickedBeforeQr;
+                }
+                else if (!TryCollectSerialsForFullyPaidOrder(transactionNo, out serialsToMarkSold))
                 {
                     return;
                 }
@@ -588,6 +642,12 @@ namespace AquariumPOS
 
                             tx.Commit();
                         }
+                    }
+
+                    // Ties the Xendit payment to this advance order's receipt on the Xendit Payments page.
+                    if (xenditPaid)
+                    {
+                        _ = XenditPayForm.LinkToReceiptAsync(xenditPaymentId, receiptNo);
                     }
 
                     // Payment is committed at this point - serial tracking is best-effort from here
@@ -904,7 +964,9 @@ namespace AquariumPOS
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Failed to record payment: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(xenditPaid
+                            ? $"The customer PAID P{balance:N2} by Xendit, but the POS could not record it: {ex.Message}\n\nDo NOT ask them to pay again. Tell a Super User: the payment is on the Xendit Payments page, and they can use \"Mark Fully Paid\" (method Xendit) on the Advance Order card."
+                            : $"Failed to record payment: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
 

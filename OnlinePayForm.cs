@@ -66,10 +66,15 @@ namespace AquariumPOS
         }
 
         // Amount = what comes off the order's balance; Charged = what the customer pays (Amount + Fee).
-        private sealed record TenderPick(TenderType Tender, decimal Amount, decimal Fee)
+        // XenditPaymentId: set when this part was already paid by the Xendit QR (money taken before recording).
+        private sealed record TenderPick(TenderType Tender, decimal Amount, decimal Fee, string? XenditPaymentId = null)
         {
             public decimal Charged => Amount + Fee;
+            public bool PaidByQr => !string.IsNullOrEmpty(XenditPaymentId);
         }
+
+        private static string QrPaidText(IEnumerable<TenderPick> picks)
+            => picks.Where(p => p.PaidByQr).Sum(p => p.Amount).ToString("N2");
 
         private sealed class PaymentResult
         {
@@ -275,7 +280,15 @@ namespace AquariumPOS
             if (totalFee > 0m) confirm.AppendLine($"   Total to charge the customer: {total + totalFee:N2}");
             confirm.AppendLine();
             confirm.AppendLine($"Balance after this payment: {Math.Max(0m, order.Balance - total):N2}");
-            if (MessageBox.Show(this, confirm.ToString(), "Online Pay", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            bool anyQr = picks.Any(p => p.PaidByQr);
+            if (anyQr)
+            {
+                // Already paid by QR - no "No" here, it has to be recorded.
+                confirm.AppendLine();
+                confirm.AppendLine($"P{QrPaidText(picks)} is already PAID by Xendit QR - recording it now.");
+                MessageBox.Show(this, confirm.ToString(), "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else if (MessageBox.Show(this, confirm.ToString(), "Online Pay", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
             // Same ID on every retry, so the server never records it twice.
             Guid paymentId = Guid.NewGuid();
@@ -330,7 +343,12 @@ namespace AquariumPOS
                 {
                     // A refusal (Cancelled, more than the balance, no POS Bank ID...) - nothing was recorded.
                     SetBusy(false, null);
-                    MessageBox.Show(this, "The payment was NOT recorded:\n\n" + ex.Message + "\n\nDon't take the money for this payment.", "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(this, anyQr
+                            ? $"The portal refused the payment:\n\n{ex.Message}\n\nBUT the customer already PAID P{QrPaidText(picks)} by Xendit QR - do NOT ask them to pay that again. "
+                              + $"Tell a Super User: it's on the Xendit Payments page (receipt ONL-{order.OrderId}), and they add it on the order by hand."
+                            : "The payment was NOT recorded:\n\n" + ex.Message + "\n\nDon't take the money for this payment.",
+                        "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    LinkQrPayments(picks, receiptNo);
                     return;
                 }
                 finally { SetBusy(false, null); }
@@ -338,11 +356,18 @@ namespace AquariumPOS
                 if (result != null) break;
                 var choice = MessageBox.Show(this,
                     "The payment was NOT confirmed:\n\n" + (failure ?? "Unknown error.") + "\n\n"
+                    + (anyQr ? $"The customer already PAID P{QrPaidText(picks)} by Xendit QR - keep pressing Retry until it's recorded; never ask them to pay again.\n" : string.Empty)
                     + "Retry sends the same payment again - it can never be counted twice.\n"
                     + "If you Cancel, check the order on the portal before taking payment again.",
                     "Online Pay", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning);
-                if (choice != DialogResult.Retry) return;
+                if (choice != DialogResult.Retry)
+                {
+                    LinkQrPayments(picks, receiptNo);
+                    return;
+                }
             }
+
+            LinkQrPayments(picks, receiptNo);
 
             // Recorded online - now the till entry and the receipt.
             try
@@ -423,6 +448,12 @@ namespace AquariumPOS
                 if (dlg.ShowDialog(this) != DialogResult.OK)
                 {
                     if (picks.Count == 0) return null;
+                    // Money already taken by QR can't be cancelled - record what's been entered.
+                    if (picks.Any(p => p.PaidByQr))
+                    {
+                        MessageBox.Show(this, $"P{QrPaidText(picks)} was already PAID by Xendit QR, so this records the {picks.Sum(p => p.Amount):N2} entered so far (part payment).", "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return picks;
+                    }
                     // Stop here and pay what's been entered so far (a part payment), or cancel everything.
                     var partial = MessageBox.Show(this, $"Pay only {picks.Sum(p => p.Amount):N2} now (part payment)?\n\nNo = cancel the whole payment.", "Online Pay", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     return partial == DialogResult.Yes ? picks : null;
@@ -442,11 +473,56 @@ namespace AquariumPOS
                     continue;
                 }
 
+                // Xendit QR - per "the pay online on the local POS.. can that accept QR (Xendit too?)": XENDIT /
+                // GCash / QR Ph / Bank Transfer open the Xendit QR when online, like checkout (MainForm.PayWithXendit).
+                // The customer pays first; only then is the part added, as XENDIT with no card fee (QR Ph has none).
+                // A bigger amount is split: enter up to P50,000, then add another QR / tender for the rest.
+                bool isXenditCode = string.Equals(tender.Code, MainForm.XenditTenderCode, StringComparison.OrdinalIgnoreCase);
+                if (order.PortalOnly && (isXenditCode || MainForm.IsXenditRoutedTender(tender.Code, tender.Description)))
+                {
+                    if (!MainForm.IsXenditOnline())
+                    {
+                        if (isXenditCode)
+                        {
+                            MessageBox.Show(this, "No internet connection, so Xendit can't be used right now.\n\nNo money was taken. Please pick another tender.", "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            continue;
+                        }
+                        if (MessageBox.Show(this,
+                                $"The POS is offline, so the Xendit QR can't be used.\n\n"
+                                + $"OK = record a manual {tender.Description}. Only continue once you see the money in OUR "
+                                + $"{tender.Description} account - never accept a screenshot as proof.",
+                                "Offline - manual payment", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK)
+                            continue;
+                    }
+                    else if (amount < MainForm.XenditMinAmount || amount > MainForm.XenditMaxAmount)
+                    {
+                        MessageBox.Show(this, $"A QR Ph payment must be between P{MainForm.XenditMinAmount:N2} and P{MainForm.XenditMaxAmount:N2}.\n\nEnter up to P{MainForm.XenditMaxAmount:N2} now, then add another QR (or tender) for the rest.", "Online Pay", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        continue;
+                    }
+                    else
+                    {
+                        using var xenditForm = new XenditPayForm(amount);
+                        if (xenditForm.ShowDialog(this) != DialogResult.OK) continue;
+                        var xenditTender = new TenderType { Code = MainForm.XenditTenderCode, Description = "Xendit" };
+                        picks.Add(new TenderPick(xenditTender, amount, 0m, xenditForm.PaymentId));
+                        last = tender;
+                        remaining -= amount;
+                        continue;
+                    }
+                }
+
                 picks.Add(new TenderPick(tender, amount, CardFee(amount, tender)));
                 last = tender;
                 remaining -= amount;
             }
             return picks;
+        }
+
+        // Saves "ONL-<order>" on each QR payment, so the Xendit Payments page shows which order it was for.
+        private static void LinkQrPayments(IEnumerable<TenderPick> picks, string receiptNo)
+        {
+            foreach (var p in picks.Where(p => p.PaidByQr))
+                _ = XenditPayForm.LinkToReceiptAsync(p.XenditPaymentId!, receiptNo);
         }
 
         private static decimal CardFee(decimal amount, TenderType tender)

@@ -631,6 +631,8 @@ function collectionApplyHtml(c) {
 }
 
 function collectionMoneyHtml(c) {
+  // Xendit QR (sql/supabase_xendit_delivery_collect.sql): the money went straight to the Xendit account.
+  if (c.xendit_payment_id) return '<span class="badge badge-success" title="Paid by QR - the money is in the Xendit account, not with the driver">&#128241; Paid to Xendit</span>';
   if (!c.remitted_at_utc) return '<span class="badge badge-warning">With driver</span>';
   const when = new Date(c.remitted_at_utc).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   return `<span class="badge badge-success">Remitted</span> <span class="muted" style="font-size:12px;">${escapeHtmlText(c.remitted_by || '')} &middot; ${when}</span>`;
@@ -824,7 +826,214 @@ async function retryCollection(collectionId, btn) {
   }
 }
 
+// --- Xendit QR at the door ---------------------------------------------------------------------
+// Per "our delivery team sometimes can ask for payments once delivered.. since xendit is live": the driver
+// shows a QR Ph code on their phone (Edge Function xendit-delivery-payment, sql/supabase_xendit_delivery_collect.sql).
+// The customer scans it with GCash / Maya / a bank app; once Xendit says Paid the server saves the collection
+// (split across a combined drop's orders), marks it paid to Xendit (never "With driver") and puts it on the order.
+// Closing the page mid-way is safe: the xendit-webhook still records the payment and saves the collection.
+const QR_POLL_MS = 3000;
+let qrState = null; // { paymentId, isTest, expiresAt, pollTimer, clockTimer, busy, finished }
+let qrLibPromise = null;
+
+function loadQrLib() {
+  if (window.qrcode) return Promise.resolve();
+  if (!qrLibPromise) {
+    qrLibPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js';
+      s.onload = () => resolve();
+      s.onerror = () => { qrLibPromise = null; reject(new Error('Could not load the QR code maker - check the internet.')); };
+      document.head.appendChild(s);
+    });
+  }
+  return qrLibPromise;
+}
+
+async function callDeliveryQr(payload) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-delivery-payment`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+      'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ ...payload, username: currentSession.username, password: currentSession.password })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Xendit QR failed (${response.status}).`);
+  return body;
+}
+
+function setQrStatus(html) {
+  document.getElementById('collectQrStatus').innerHTML = html;
+}
+
+function stopQrTimers() {
+  if (!qrState) return;
+  clearInterval(qrState.pollTimer);
+  clearInterval(qrState.clockTimer);
+}
+
+function updateQrClock() {
+  const el = document.getElementById('collectQrTimer');
+  if (!qrState?.expiresAt || qrState.finished) { el.textContent = ''; return; }
+  const left = Math.ceil((qrState.expiresAt - Date.now()) / 1000);
+  if (left <= 0) {
+    el.textContent = "Time's up - closing this QR...";
+    el.style.color = '#ef4444';
+    return;
+  }
+  const until = new Date(qrState.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  el.textContent = `Pay before ${until} • ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`;
+  el.style.color = left <= 60 ? '#ef4444' : left <= 180 ? '#f59e0b' : '';
+}
+
+function finishQr(paid, html) {
+  if (!qrState) return;
+  qrState.finished = true;
+  stopQrTimers();
+  updateQrClock();
+  setQrStatus(html);
+  if (!paid) document.getElementById('collectQrCode').innerHTML = '<span style="font-size:15px;">QR closed</span>';
+  document.getElementById('collectQrCancelBtn').classList.add('hidden');
+  document.getElementById('collectQrSimulateBtn').classList.add('hidden');
+  const done = document.getElementById('collectQrDoneBtn');
+  done.textContent = paid ? 'Done' : 'Close';
+  done.classList.remove('hidden');
+}
+
+function handleQrAnswer(r) {
+  if (!qrState || qrState.finished) return;
+  if (r.status === 'Paid') {
+    const paidText = pesoAmount(r.paidAmount);
+    const failNote = r.collectionsFailed
+      ? '<div class="error-text" style="font-size:13px;">Paid and saved, but it could not go on the order yet - tap "Try again" on the stop later.</div>'
+      : '';
+    const savingNote = r.collectionsSaved ? '' : '<div class="muted" style="font-size:13px;">Saving it on the stop...</div>';
+    finishQr(true, `<b style="font-size:20px; color:#22c55e;">&#9989; PAID ${paidText}</b>`
+      + `<div class="muted">${escapeHtmlText(r.channel || 'QR Ph')}${r.receiptNo ? ` &middot; ${escapeHtmlText(r.receiptNo)}` : ''}</div>${failNote}${savingNote}`);
+    return;
+  }
+  if (r.status === 'Expired' || r.status === 'Failed') {
+    finishQr(false, 'This QR was closed and <b>nothing was paid</b>. Make a new QR if the customer still wants to pay.');
+  }
+}
+
+async function pollQr(action = 'status') {
+  if (!qrState || qrState.busy || qrState.finished) return;
+  qrState.busy = true;
+  try {
+    handleQrAnswer(await callDeliveryQr({ action, paymentId: qrState.paymentId }));
+  } catch (err) {
+    // A dropped signal just means "try again on the next tick".
+    if (!qrState.finished) setQrStatus(`Ask the customer to scan with GCash, Maya or their bank app.<br><span class="muted" style="font-size:12px;">Checking... (${escapeHtmlText(err.message)})</span>`);
+  } finally {
+    if (qrState) qrState.busy = false;
+  }
+}
+
+async function startCollectQr() {
+  if (collectBusy || !collectStopId) return;
+  const amount = Math.round(parseFloat(document.getElementById('collectAmountInput').value) * 100) / 100;
+  if (!(amount > 0)) { setCollectError('Enter the amount to collect.'); return; }
+  if (amount < 1 || amount > 50000) { setCollectError('A QR payment must be between ₱1.00 and ₱50,000.00 - for more, make one QR per part.'); return; }
+  let stopIds = [collectStopId];
+  if (collectDropParts) {
+    const total = collectDropParts.reduce((sum, p) => sum + p.cap, 0);
+    if (amount > total + 0.005) { setCollectError(`The amount is more than the balance to collect (₱${total.toFixed(2)}).`); return; }
+    stopIds = collectDropParts.filter((p) => p.cap > 0).map((p) => p.stopId);
+  }
+  const orderLabel = document.getElementById('collectOrderLabel').textContent.split(' · balance')[0];
+  const btn = document.getElementById('collectQrBtn');
+  collectBusy = true;
+  btn.disabled = true;
+  btn.textContent = 'Making the QR...';
+  setCollectError('');
+  let created;
+  try {
+    await loadQrLib();
+    created = await callDeliveryQr({ action: 'create', stopIds, amount });
+  } catch (err) {
+    setCollectError(`No QR made, nothing was charged: ${err.message}`);
+    return;
+  } finally {
+    collectBusy = false;
+    btn.disabled = false;
+    btn.innerHTML = '&#128241; Collect by QR (GCash / Maya / bank) - the amount above';
+  }
+  closeCollectModal();
+
+  qrState = {
+    paymentId: created.paymentId,
+    isTest: !!created.isTest,
+    expiresAt: Date.now() + (Number(created.expiresInSeconds) || 900) * 1000,
+    busy: false,
+    finished: false
+  };
+  const qr = window.qrcode(0, 'M');
+  qr.addData(created.qrString);
+  qr.make();
+  document.getElementById('collectQrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
+  const svg = document.querySelector('#collectQrCode svg');
+  if (svg) { svg.setAttribute('width', '260'); svg.setAttribute('height', '260'); }
+  document.getElementById('collectQrAmount').innerHTML = pesoAmount(created.amount);
+  document.getElementById('collectQrOrder').textContent = orderLabel;
+  document.getElementById('collectQrTestBanner').classList.toggle('hidden', !qrState.isTest);
+  document.getElementById('collectQrSimulateBtn').classList.toggle('hidden', !qrState.isTest);
+  document.getElementById('collectQrCancelBtn').classList.remove('hidden');
+  document.getElementById('collectQrDoneBtn').classList.add('hidden');
+  setQrStatus('Ask the customer to scan this with GCash, Maya or their bank app.<br><span class="muted">Waiting for payment...</span>');
+  document.getElementById('collectQrModal').classList.remove('hidden');
+  updateQrClock();
+  qrState.clockTimer = setInterval(updateQrClock, 1000);
+  qrState.pollTimer = setInterval(() => pollQr('status'), QR_POLL_MS);
+}
+
+async function cancelCollectQr() {
+  if (!qrState || qrState.finished) return;
+  if (!confirm('Cancel this QR? Only do this if the customer is NOT paying with it.')) return;
+  const btn = document.getElementById('collectQrCancelBtn');
+  btn.disabled = true;
+  // Wait for a poll in flight, so the cancel's answer is the last word.
+  for (let i = 0; i < 20 && qrState.busy; i += 1) await new Promise((r) => setTimeout(r, 250));
+  qrState.busy = true;
+  try {
+    const r = await callDeliveryQr({ action: 'cancel', paymentId: qrState.paymentId });
+    qrState.busy = false;
+    handleQrAnswer(r);
+    // Xendit took the cancel but the answer isn't a final status yet - treat it as closed.
+    if (!qrState.finished) finishQr(false, 'QR cancelled - <b>nothing was paid</b>.');
+  } catch (err) {
+    qrState.busy = false;
+    alert(`Could not cancel the QR: ${err.message}\n\nIt may still be payable - keep this screen open.`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function simulateCollectQr() {
+  if (!qrState || !qrState.isTest) return;
+  try {
+    await callDeliveryQr({ action: 'simulate', paymentId: qrState.paymentId });
+    setQrStatus('Simulated - waiting for Xendit to confirm...');
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function closeCollectQr() {
+  stopQrTimers();
+  qrState = null;
+  document.getElementById('collectQrModal').classList.add('hidden');
+  await reloadDriverDay();
+}
+
 function wireDriverCollections() {
+  document.getElementById('collectQrBtn').addEventListener('click', startCollectQr);
+  document.getElementById('collectQrCancelBtn').addEventListener('click', cancelCollectQr);
+  document.getElementById('collectQrSimulateBtn').addEventListener('click', simulateCollectQr);
+  document.getElementById('collectQrDoneBtn').addEventListener('click', closeCollectQr);
   document.getElementById('driverStopCards').addEventListener('click', async (e) => {
     const collectBtn = e.target.closest('.driver-collect-btn');
     if (collectBtn) {
@@ -853,8 +1062,9 @@ async function renderDayCollections(dateKey, stops) {
   const withDriver = rows.filter((c) => !c.remitted_at_utc);
   const withDriverTotal = withDriver.reduce((sum, c) => sum + Number(c.amount || 0), 0);
   const total = rows.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const byQrTotal = rows.filter((c) => c.xendit_payment_id).reduce((sum, c) => sum + Number(c.amount || 0), 0);
   document.getElementById('dayCollectionsSummary').innerHTML =
-    `${pesoAmount(total)} collected${withDriver.length ? ` &middot; ${pesoAmount(withDriverTotal)} still with driver` : ' &middot; all remitted'}`;
+    `${pesoAmount(total)} collected${byQrTotal > 0 ? ` (${pesoAmount(byQrTotal)} by Xendit QR)` : ''}${withDriver.length ? ` &middot; ${pesoAmount(withDriverTotal)} still with driver` : ' &middot; all remitted'}`;
   const remitAllBtn = document.getElementById('remitAllCollectionsBtn');
   remitAllBtn.classList.toggle('hidden', !isSuper || withDriver.length < 2);
   remitAllBtn.onclick = () => remitCollections(withDriver.map((c) => c.collection_id), withDriverTotal, dateKey, stops);

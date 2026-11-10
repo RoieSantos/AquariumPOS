@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
     return jsonResponse(data ?? { ok: true });
   }
 
-  // POS QR Ph payments (xendit-pos-payment) come from the Payments API, which posts { event, data }. Covers a
+  // POS / delivery QR Ph payments (xendit-pos-payment, xendit-delivery-payment) come from the Payments API, which posts { event, data }. Covers a
   // payment the POS stopped watching, e.g. it closed after the customer scanned. No Messenger message: the
   // POS prints the receipt. Xendit Dashboard > Settings > Webhooks > Payments, same URL as Invoices.
   if (typeof payload?.event === 'string') {
@@ -180,8 +180,11 @@ Deno.serve(async (req) => {
     if (!request) return jsonResponse({ error: 'Could not read the payment request from Xendit.' }, 502); // Xendit retries
     // A pay page session's attempts land here too. Skip them: a failed attempt must not close a session the
     // customer can still retry, and its payment_session.* event covers the outcome.
-    if (!String(request.reference_id ?? '').startsWith('RSPS-POS-')) {
-      return jsonResponse({ ok: true, note: `Event ${payload.event} is not a POS payment - ignored.` });
+    // Delivery QRs (xendit-delivery-payment, 'RSPS-DLV-') are recorded the same way; recording one Paid saves
+    // the driver's collection (sql/supabase_xendit_delivery_collect.sql).
+    const referenceId = String(request.reference_id ?? '');
+    if (!referenceId.startsWith('RSPS-POS-') && !referenceId.startsWith('RSPS-DLV-')) {
+      return jsonResponse({ ok: true, note: `Event ${payload.event} is not a POS or delivery payment - ignored.` });
     }
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const { data, error } = await supabase.rpc('_xendit_record_invoice_status', { p_invoice: toRecordedInvoice(request), p_webhook: payload });

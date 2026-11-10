@@ -29,6 +29,11 @@ function payLinkFor(orderRef) {
 // POS walk-in payments (sql/supabase_xendit_pos_walkin.sql) have no pay link or receipt page of their own -
 // the POS prints the receipt. Paid with no receipt no. = the sale wasn't finished at the counter.
 function orderCell(r) {
+  // Delivery QR (sql/supabase_xendit_delivery_collect.sql): the driver showed it at the door; it's saved as the
+  // stop's collection (Delivery page), not through the pay link.
+  if (r.source === 'Delivery') {
+    return `${esc(r.order_ref)}<div class="muted" style="font-size:12px;">&#128666; Delivery QR${r.delivery_driver ? ' · ' + esc(r.delivery_driver) : ''}</div>`;
+  }
   if (r.source !== 'POS') {
     return `<a href="${esc(payLinkFor(r.order_ref))}" target="_blank" rel="noopener">${esc(r.order_ref)}</a>${r.online_order_id && r.online_order_id !== r.order_ref ? `<div class="muted" style="font-size:12px;">#${esc(r.online_order_id)}</div>` : ''}`;
   }
@@ -72,15 +77,32 @@ function renderRows(rows) {
         <td>${r.is_test ? '<strong style="color:#b45309;">TEST</strong>' : 'Live'}</td>
         <td>${status}</td>
         <td>${esc([r.payment_channel, r.payment_method].filter(Boolean).join(' / ')) || '<span class="muted">-</span>'}</td>
-        <td>${r.paid_at ? `${peso(r.paid_amount)}${Number(r.card_fee) > 0 ? `<div class="muted" style="font-size:12px;">+ ${peso(r.card_fee)} card fee</div>` : ''}<div class="muted" style="font-size:12px;">${new Date(r.paid_at).toLocaleString()}</div>${r.source === 'POS' ? `<span class="muted" style="font-size:12px;">${esc(r.receipt_no || '')}</span>` : `<a href="payment-receipt.html?id=${encodeURIComponent(r.payment_id)}" target="_blank" rel="noopener" style="font-size:12px;">🧾 ${esc(r.receipt_no || 'Receipt')}</a>`}` : '<span class="muted">-</span>'}</td>
+        <td>${r.paid_at ? `${peso(r.paid_amount)}${Number(r.card_fee) > 0 ? `<div class="muted" style="font-size:12px;">+ ${peso(r.card_fee)} card fee</div>` : ''}<div class="muted" style="font-size:12px;">${new Date(r.paid_at).toLocaleString()}</div>${r.source === 'POS' || r.source === 'Delivery' ? `<span class="muted" style="font-size:12px;">${esc(r.receipt_no || '')}</span>` : `<a href="payment-receipt.html?id=${encodeURIComponent(r.payment_id)}" target="_blank" rel="noopener" style="font-size:12px;">🧾 ${esc(r.receipt_no || 'Receipt')}</a>`}` : '<span class="muted">-</span>'}</td>
         <td>${applyCell(r)}</td>
-        <td>${r.status === 'Paid' && r.apply_status === 'Failed' ? `<button class="btn btn-secondary btn-sm" data-retry="${esc(r.payment_id)}" type="button">Retry</button>` : ''}</td>
+        <td>${r.status === 'Paid' && r.apply_status === 'Failed' ? `<button class="btn btn-secondary btn-sm" data-retry="${esc(r.payment_id)}" type="button">Retry</button>` : ''}${r.source === 'Delivery' && r.status === 'Paid' && r.apply_error ? `<button class="btn btn-secondary btn-sm" data-retry-delivery="${esc(r.payment_id)}" type="button">Retry</button>` : ''}</td>
       </tr>`;
   }).join('');
 
   tbody.querySelectorAll('button[data-retry]').forEach((btn) => {
     btn.addEventListener('click', () => retryPayment(btn));
   });
+  tbody.querySelectorAll('button[data-retry-delivery]').forEach((btn) => {
+    btn.addEventListener('click', () => retryDeliveryPayment(btn));
+  });
+}
+
+// A paid delivery QR whose collection didn't save ("Delivery collection NOT saved").
+async function retryDeliveryPayment(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Retrying...';
+  const { data, error } = await supabaseClient.rpc('admin_retry_xendit_delivery_payment', { ...authArgs(), p_payment_id: btn.dataset.retryDelivery });
+  if (error) {
+    window.alert(`Retry failed: ${error.message}`);
+  } else {
+    const r = (data && data[0]) || {};
+    if (r.apply_error) window.alert(`Still not saved: ${r.apply_error}`);
+  }
+  await loadPayments();
 }
 
 async function loadPayments() {
@@ -121,6 +143,7 @@ async function loadSettings() {
   document.getElementById('xenditEnabled').checked = savedEnabled;
   document.getElementById('showOnOrderNow').checked = !!s.show_on_order_now;
   document.getElementById('xenditPosEnabled').checked = !!s.pos_enabled;
+  document.getElementById('xenditDeliveryEnabled').checked = !!s.delivery_enabled;
   document.getElementById('xenditCardFeePercent').value = s.card_fee_percent ?? 0;
   savedLiveMode = !!s.live_mode;
   document.getElementById('xenditLiveMode').checked = savedLiveMode;
@@ -150,7 +173,7 @@ async function saveSettings() {
   if (liveMode !== savedLiveMode) {
     const question = liveMode
       ? 'Switch to LIVE mode? New payments will take real money.'
-      : 'Switch to TEST mode? Customers won\'t be able to pay online, and the POS switch will turn off.';
+      : 'Switch to TEST mode? Customers won\'t be able to pay online, and the POS and delivery switches will turn off.';
     if (!window.confirm(question)) return;
   }
   if (enabled && !savedEnabled && !window.confirm('Turn on Xendit online payment for customers?')) return;
@@ -160,7 +183,10 @@ async function saveSettings() {
       window.alert(`Failed to save the mode: ${modeError.message}`);
       return;
     }
-    if (!liveMode) document.getElementById('xenditPosEnabled').checked = false;
+    if (!liveMode) {
+      document.getElementById('xenditPosEnabled').checked = false;
+      document.getElementById('xenditDeliveryEnabled').checked = false;
+    }
   }
   const { error } = await supabaseClient.rpc('admin_update_xendit_settings', {
     ...authArgs(),
@@ -177,6 +203,16 @@ async function saveSettings() {
   });
   if (posError) {
     window.alert(`Failed to save the POS setting: ${posError.message}`);
+    return;
+  }
+  const { error: deliveryError } = await supabaseClient.rpc('admin_set_xendit_delivery_enabled', {
+    ...authArgs(),
+    p_delivery_enabled: document.getElementById('xenditDeliveryEnabled').checked
+  });
+  if (deliveryError) {
+    window.alert(/could not find the function|schema cache/i.test(deliveryError.message)
+      ? 'The delivery QR switch isn\'t set up yet - run sql/supabase_xendit_delivery_collect.sql.'
+      : `Failed to save the delivery setting: ${deliveryError.message}`);
     return;
   }
   const { error: feeError } = await supabaseClient.rpc('admin_set_xendit_card_fee', {
