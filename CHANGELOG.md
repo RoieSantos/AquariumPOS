@@ -4,8 +4,12 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-11
 
+- **Payroll officers can set up Xendit payout accounts.** Payroll Setup > Edit > Salary Payout (Xendit) is now open to payroll officers, not just super users; sending money stays super users only. A payroll officer's change sends a Telegram alert (old vs new, masked), and they can't reuse another employee's account number ([supabase_xendit_payout_account_payroll_officer.sql](sql/supabase_xendit_payout_account_payroll_officer.sql), `payrollSetup.js` ?v=payoutofficer1).
+
 - Bot: new `send_promo_image` tool (chatbot-engine.ts) - sends a promo flyer on Messenger, only for image URLs written in AI Bot Setup > Custom Directions; website chat gets the link instead. Added the 75G clearance flyer at `docs/icons/promo-clearance-75g.jpg` for the clearance-sale campaign.
 - New `sql/supabase_item_clearance_75g_package.sql`: creates the "75 Gallon Aquarium with CABINET Package - CLEARANCE SALE" item (AQUARIUM, PHP 40,000, flyer as picture) so the bot can order it like a normal item.
+
+- **Xendit settlement due time.** The Settlement column now shows the due time as well as the date (e.g. "Due 11/12/2026 02:00 PM") on Xendit Ledger Entries and the Xendit phone app. `xenditLedger.js` / `xenditMobile.js` ?v=xsettle1.
 
 - **Delivery calendar: order id is now a link.** In the day's Stops table, clicking the order id opens the order in a new tab: online and walk-in orders open their order card on Online Orders (`?open=`), and advance orders open their Advance Order document. Order Form drafts stay plain text. `?open=` now switches to the Walk-in tab when the order isn't on the Online list. `delivery.js` (new `stopOrderLinkHtml`) ?v=xqr4, `onlineOrders.js` ?v=size2.
 

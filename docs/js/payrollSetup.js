@@ -764,7 +764,11 @@ function wireSetupTabs() {
   showSetupTab(new URLSearchParams(window.location.search).get('tab') || stored || 'employees');
 }
 
-// ---------------------------------------------------------------- Salary Payout (Xendit) - super users only
+// ---------------------------------------------------------------- Salary Payout (Xendit) - super users + payroll officers
+// (sql/supabase_xendit_payout_account_payroll_officer.sql: a payroll officer's change sends a Telegram alert).
+function canEditPayout() {
+  return !!(currentSession && (currentSession.isSuperUser || currentSession.isPayrollOfficer));
+}
 // sql/supabase_xendit_payroll_payouts.sql + Edge Function xendit-payroll-payout ('channels').
 const PAYOUT_WALLETS = ['PH_GCASH', 'PH_PAYMAYA', 'PH_GRABPAY', 'PH_SHOPEEPAY'];
 // Used until / unless Xendit's own list loads.
@@ -840,8 +844,8 @@ function payoutFormState() {
 
 async function loadPayoutAccount(username) {
   payoutLoadedFor = null;
-  document.getElementById('payoutFastTab').classList.toggle('hidden', !currentSession.isSuperUser);
-  if (!currentSession.isSuperUser) return;
+  document.getElementById('payoutFastTab').classList.toggle('hidden', !canEditPayout());
+  if (!canEditPayout()) return;
   ['payoutAccountNumber', 'payoutAccountName'].forEach((id) => { document.getElementById(id).value = ''; });
   document.getElementById('payoutViaXendit').checked = false;
   document.getElementById('payoutChannel').value = '';
@@ -874,7 +878,7 @@ async function loadPayoutAccount(username) {
 
 // Called by saveProfile after the profile itself saved. Returns an error message, or null.
 async function savePayoutAccountIfChanged(username) {
-  if (!currentSession.isSuperUser || payoutLoadedFor !== username || payoutFormState() === payoutSnapshot) return null;
+  if (!canEditPayout() || payoutLoadedFor !== username || payoutFormState() === payoutSnapshot) return null;
   const sel = document.getElementById('payoutChannel');
   const code = sel.value;
   const number = document.getElementById('payoutAccountNumber').value.trim();

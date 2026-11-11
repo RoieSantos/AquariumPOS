@@ -416,7 +416,7 @@
         <div class="bc-field"><label for="editProfilePaidRestDay" title="Adds a day's worth of salary to each payrun">Paid Rest Day</label><input type="checkbox" class="bc-switch" id="editProfilePaidRestDay" /></div>
         <div class="bc-field"><label for="editProfileActive">Active<span class="bc-field-hint">Off = excluded from future payroll runs</span></label><input type="checkbox" class="bc-switch" id="editProfileActive" /></div>
 
-        <!-- Salary payout through Xendit (sql/supabase_xendit_payroll_payouts.sql) - super users only. -->
+        <!-- Salary payout through Xendit (sql/supabase_xendit_payroll_payouts.sql) - super users + payroll officers. -->
         <details class="doc-fasttab hidden" id="payoutFastTab" open style="margin-top:12px;">
           <summary>Salary Payout (Xendit) <span class="doc-fasttab-summary" id="payoutSummary"></span></summary>
           <div class="doc-fasttab-body">
@@ -533,7 +533,7 @@
   <script src="js/auth.js?v=tenderdeposit1"></script>
   <script src="js/nav.js?v=navgroups2"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollSetup.js?v=xadvance1"></script>
+  <script src="js/payrollSetup.js?v=payoutofficer1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

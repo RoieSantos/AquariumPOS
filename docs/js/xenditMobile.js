@@ -55,7 +55,9 @@ function netOf(r) {
 function settlementLabel(r) {
   if (isOut(r) || !r.settlement_status || !isOk(r)) return '';
   if (r.settlement_status === 'SETTLED' || r.settlement_status === 'EARLY_SETTLED') return 'Settled';
-  return r.estimated_settlement ? `Due ${new Date(r.estimated_settlement).toLocaleDateString()}` : 'Pending';
+  if (!r.estimated_settlement) return 'Pending';
+  const due = new Date(r.estimated_settlement);
+  return `Due ${due.toLocaleDateString()} ${due.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 function store(key, value) {
   try { localStorage.setItem(key, value); } catch {}
