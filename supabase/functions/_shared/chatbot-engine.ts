@@ -1268,6 +1268,18 @@ export const TOOLS: Anthropic.Tool[] = [
     }
   },
   {
+    name: 'send_promo_image',
+    description:
+      'Sends a promo/sale flyer image to the customer on Messenger. Only for an image URL the store owner listed in the ADDITIONAL DIRECTIONS FROM THE STORE OWNER section - copy that URL exactly; any other URL is refused. Use it when those directions say to share the flyer (e.g. the customer asks for a photo or more details of the promo). If it says photo sending isn\'t available (website chat), paste the URL as a link in your reply instead.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        image_url: { type: 'string', description: 'The flyer image URL, copied exactly from the store owner\'s directions.' }
+      },
+      required: ['image_url']
+    }
+  },
+  {
     name: 'react_to_message',
     description:
       'Puts an emoji reaction on the customer\'s latest Messenger message, the way a person would tap ❤️ on it. This is in addition to your normal text reply and never replaces it. Call it at most once per customer message. ALWAYS ❤️ when they thank you ("thank you", "salamat", "ty") or say something kind, and when they send a photo of their tank or fish. Also ❤️ when they confirm something (a booking, a payment sent, "ok noted"), and 😆 for a joke. Don\'t react to plain questions, complaints, or angry or sad messages. A 😢 is fine for a fish that died, but always reply with words too. Only ❤️, 😆 and 😢 are allowed (never 👍, 😮 or 😠). This only works on Facebook Messenger. If the result says it isn\'t available, just carry on without mentioning it.',
@@ -3545,6 +3557,22 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       return sentCount > 0
         ? `${sentCount} ${color} sticker sample photo(s) sent to the customer.`
         : 'Sending the sample photos failed - let the customer know and continue without them.';
+    }
+    case 'send_promo_image': {
+      // Only URLs the owner typed into AI Bot Setup > Custom Directions can be sent - the model can't
+      // send an arbitrary link it made up or a customer gave it.
+      const imageUrl = String(input.image_url ?? '').trim();
+      const directions = String(aiSettings?.CustomDirections ?? '');
+      if (!/^https:\/\/\S+$/i.test(imageUrl) || !directions.includes(imageUrl)) {
+        return 'That image URL is not one of the store owner\'s promo images - do not send it. Describe the promo in words instead.';
+      }
+      if (simulate) {
+        return `SANDBOX MODE - no real photo was sent. If this were live, this promo image would be sent: ${imageUrl}`;
+      }
+      if (!pageAccessToken) return `Photo sending isn't available in this chat - paste this link in your reply so they can open the flyer: ${imageUrl}`;
+      const sent = await sendMessengerImage(psid, imageUrl, pageAccessToken, graphVersion || DEFAULT_GRAPH_VERSION);
+      if (sent) await logBotImage(supabase, psid, imageUrl);
+      return sent ? 'Promo image sent to the customer.' : `Sending the image failed - paste this link instead: ${imageUrl}`;
     }
     case 'react_to_message': {
       const reactionName = String(input.reaction ?? '').trim();

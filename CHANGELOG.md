@@ -4,6 +4,9 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-11
 
+- Bot: new `send_promo_image` tool (chatbot-engine.ts) - sends a promo flyer on Messenger, only for image URLs written in AI Bot Setup > Custom Directions; website chat gets the link instead. Added the 75G clearance flyer at `docs/icons/promo-clearance-75g.jpg` for the clearance-sale campaign.
+- New `sql/supabase_item_clearance_75g_package.sql`: creates the "75 Gallon Aquarium with CABINET Package - CLEARANCE SALE" item (AQUARIUM, PHP 40,000, flyer as picture) so the bot can order it like a normal item.
+
 - **Delivery calendar: order id is now a link.** In the day's Stops table, clicking the order id opens the order in a new tab: online and walk-in orders open their order card on Online Orders (`?open=`), and advance orders open their Advance Order document. Order Form drafts stay plain text. `?open=` now switches to the Walk-in tab when the order isn't on the Online list. `delivery.js` (new `stopOrderLinkHtml`) ?v=xqr4, `onlineOrders.js` ?v=size2.
 
 - **Withdraw to Owner (super users).** New button on Xendit Ledger Entries sends money from the Xendit balance to the owner's own GCash / bank account. Destinations come only from the `XENDIT_OWNER_ACCOUNTS` secret (not editable in the portal); one request id per withdrawal = Xendit Idempotency-key; balance check, optional `XENDIT_OWNER_MAX_PER_SEND` cap, recent withdrawals + Refresh Status, webhook via `RSPS-PAY-OWN-` reference. New [supabase_xendit_owner_payouts.sql](sql/supabase_xendit_owner_payouts.sql), Edge Function [xendit-owner-payout](supabase/functions/xendit-owner-payout/index.ts), [xenditLedger.js](docs/js/xenditLedger.js) `?v=xowner1`.
