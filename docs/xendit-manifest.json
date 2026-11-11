@@ -1,0 +1,26 @@
+{
+  "id": "xendit-mobile",
+  "name": "RS Xendit",
+  "short_name": "Xendit",
+  "description": "Super users only - live Xendit balance and money in / out for RS Pet Stop.",
+  "start_url": "xendit-mobile.html?app=xendit",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f7fb",
+  "theme_color": "#1d4f91",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

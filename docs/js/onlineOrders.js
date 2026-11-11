@@ -10400,6 +10400,12 @@ async function initAdvanceOrdersView() {
 
   if (openParam) {
     if (!findFlatOrder(openParam)) {
+      // Not on the Online list - it may be a walk-in (ReceivedAtShop), which only loads on the Walk-in
+      // tab. Links that don't know which it is (e.g. the Delivery calendar's order id) land here first.
+      if (currentScope !== 'walkin' && showScopeTabs) {
+        location.replace(`online-orders.html?scope=walkin&open=${encodeURIComponent(openParam)}`);
+        return;
+      }
       alert(`Online order ${openParam} isn't in this list yet - it may not have synced from Pancake. Try Refresh in a few minutes.`);
       return;
     }

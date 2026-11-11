@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Xendit - RS Pet Stop</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <!-- Own manifest, like Conversations: Add to Home Screen from here installs a separate "Xendit" app that
+       opens straight on this page (the portal app always opens dashboard.html). -->
+  <link rel="manifest" href="xendit-manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Xendit" />
+  <script>
+    // Launched from the Xendit app (its start_url) - remember it for this app window only, so logging in again
+    // lands back here (getDefaultLandingPage in js/auth.js). sessionStorage so the portal app isn't affected.
+    try {
+      if (new URLSearchParams(location.search).get('app') === 'xendit') sessionStorage.setItem('portalAppXendit', '1');
+    } catch {}
+  </script>
+  <style>
+    :root { --xm-in: #1e9a59; --xm-out: #c0392b; --xm-fee: #b7791f; --xm-chip: #e8eef8; }
+    :root[data-theme="dark"] { --xm-in: #2ecc82; --xm-out: #e2695a; --xm-fee: #e0a84a; --xm-chip: #1a2740; }
+    html, body { min-height: 100%; }
+    body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: contain; }
+    .xm { max-width: 560px; margin: 0 auto; padding: 0 16px calc(24px + env(safe-area-inset-bottom)); }
+    .hidden { display: none !important; }
+
+    .xm-top {
+      position: sticky; top: 0; z-index: 5; margin: 0 -16px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+      background: var(--primary); color: #fff; display: flex; align-items: center; gap: 10px;
+    }
+    .xm-top h1 { font-size: 18px; margin: 0; flex: 1; min-width: 0; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .xm-top h1 small { display: block; font-size: 11px; font-weight: 400; opacity: .8; }
+    .xm-iconbtn {
+      background: rgba(255,255,255,.14); border: 0; color: #fff; width: 38px; height: 38px; border-radius: 10px;
+      display: grid; place-items: center; cursor: pointer;
+    }
+    .xm-iconbtn:disabled { opacity: .5; }
+    .xm-iconbtn svg { width: 20px; height: 20px; }
+    .xm-iconbtn.spin svg { animation: xmspin 1s linear infinite; }
+    @keyframes xmspin { to { transform: rotate(360deg); } }
+
+    .xm-mode { display: flex; background: rgba(255,255,255,.14); border-radius: 10px; padding: 3px; }
+    .xm-mode button { border: 0; background: none; color: #fff; padding: 6px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .xm-mode button.on { background: #fff; color: var(--primary); font-weight: 600; }
+    .xm-mode button.on[data-mode="test"] { background: #f6c343; color: #3b2a00; }
+
+    .xm-balance {
+      margin-top: 14px; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 16px;
+      padding: 16px; box-shadow: var(--shadow);
+    }
+    .xm-balance .lbl { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+    .xm-balance .big { font-size: 32px; font-weight: 700; margin: 2px 0 10px; font-variant-numeric: tabular-nums; }
+    .xm-balance .row { display: flex; justify-content: space-between; font-size: 14px; border-top: 1px solid var(--panel-border); padding-top: 10px; }
+    .xm-balance .row b { font-variant-numeric: tabular-nums; }
+    .xm-test-note { margin-top: 8px; font-size: 12px; color: #8a6100; background: #fff4d1; border-radius: 8px; padding: 6px 8px; }
+    :root[data-theme="dark"] .xm-test-note { color: #f6c343; background: #2d250f; }
+
+    .xm-periods { display: flex; gap: 6px; overflow-x: auto; margin: 14px -16px 0; padding: 0 16px 2px; scrollbar-width: none; }
+    .xm-periods::-webkit-scrollbar { display: none; }
+    .xm-periods button {
+      flex: none; border: 1px solid var(--panel-border); background: var(--panel-bg); color: var(--text-main);
+      padding: 7px 12px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    }
+    .xm-periods button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .xm-range { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+    .xm-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .xm-tile {
+      text-align: left; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 10px 12px;
+      cursor: pointer; color: var(--text-main); font: inherit; border-top-width: 3px;
+    }
+    .xm-tile.on { outline: 2px solid var(--primary); outline-offset: -1px; }
+    .xm-tile .lbl { font-size: 12px; color: var(--text-muted); }
+    .xm-tile .val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .xm-tile .sub { font-size: 11px; color: var(--text-muted); }
+    .xm-tile[data-view="in"] { border-top-color: var(--xm-in); }
+    .xm-tile[data-view="out"] { border-top-color: var(--xm-out); }
+    .xm-tile[data-view="fees"] { border-top-color: var(--xm-fee); }
+    .xm-tile[data-view="all"] { border-top-color: var(--primary); }
+
+    .xm-tabs { display: flex; gap: 4px; margin-top: 14px; background: var(--xm-chip); border-radius: 10px; padding: 3px; }
+    .xm-tabs button { flex: 1; border: 0; background: none; padding: 7px 0; border-radius: 8px; font-size: 13px; color: var(--text-main); cursor: pointer; }
+    .xm-tabs button.on { background: var(--panel-bg); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+    .xm-search {
+      width: 100%; box-sizing: border-box; margin-top: 10px; padding: 9px 12px; border-radius: 10px; font-size: 16px; /* 16px+ so iOS doesn't zoom in on focus */
+      border: 1px solid var(--input-border); background: var(--panel-bg); color: var(--text-main);
+    }
+
+    .xm-day { margin-top: 14px; display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .xm-list { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; margin-top: 6px; overflow: hidden; }
+    .xm-item { display: flex; align-items: center; gap: 10px; padding: 11px 12px; cursor: pointer; width: 100%; border: 0; background: none; text-align: left; font: inherit; color: inherit; }
+    .xm-item + .xm-item { border-top: 1px solid var(--panel-border); }
+    .xm-item.dim { opacity: .55; }
+    .xm-dot { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 16px; }
+    .xm-dot.in { background: color-mix(in srgb, var(--xm-in) 15%, transparent); color: var(--xm-in); }
+    .xm-dot.out { background: color-mix(in srgb, var(--xm-out) 15%, transparent); color: var(--xm-out); }
+    .xm-main { flex: 1; min-width: 0; }
+    .xm-main .t { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .xm-main .s { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .xm-amt { text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+    .xm-amt .a { font-size: 15px; font-weight: 700; }
+    .xm-amt .a.in { color: var(--xm-in); }
+    .xm-amt .a.out { color: var(--xm-out); }
+    .xm-amt .f { font-size: 11px; color: var(--xm-fee); }
+    .xm-amt .st { font-size: 11px; color: var(--text-muted); }
+
+    .xm-msg { text-align: center; color: var(--text-muted); padding: 28px 8px; font-size: 14px; }
+    .xm-msg.error { color: var(--danger); }
+    .xm-more { display: block; width: 100%; margin-top: 10px; padding: 10px; border-radius: 10px; border: 1px solid var(--panel-border); background: var(--panel-bg); color: var(--primary); font-size: 14px; cursor: pointer; }
+    .xm-updated { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 14px; }
+    .xm-updated a { color: var(--primary); }
+
+    .xm-sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 20; }
+    .xm-sheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 21; max-height: 85vh; overflow-y: auto;
+      background: var(--panel-bg); border-radius: 18px 18px 0 0; padding: 8px 16px calc(18px + env(safe-area-inset-bottom));
+      max-width: 560px; margin: 0 auto; box-sizing: border-box;
+    }
+    .xm-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--panel-border); margin: 4px auto 12px; }
+    .xm-sheet h2 { font-size: 22px; margin: 0; font-variant-numeric: tabular-nums; }
+    .xm-sheet .sub { color: var(--text-muted); font-size: 13px; margin: 2px 0 12px; }
+    .xm-sheet dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; font-size: 14px; }
+    .xm-sheet dt { color: var(--text-muted); }
+    .xm-sheet dd { margin: 0; text-align: right; word-break: break-all; }
+    .xm-sheet h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 16px 0 8px; }
+    .xm-sheet .actions { display: flex; gap: 8px; margin-top: 16px; }
+    .xm-sheet .actions a, .xm-sheet .actions button {
+      flex: 1; text-align: center; padding: 11px; border-radius: 10px; font-size: 14px; text-decoration: none; cursor: pointer;
+      border: 1px solid var(--panel-border); background: var(--panel-bg); color: var(--primary);
+    }
+
+    .xm-gate { margin-top: 40px; text-align: center; }
+    .xm-gate p { color: var(--text-muted); }
+    .xm-gate button { padding: 10px 18px; border-radius: 10px; border: 0; background: var(--primary); color: #fff; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <div class="xm">
+    <header class="xm-top">
+      <h1>Xendit<small id="xmWho"></small></h1>
+      <div class="xm-mode" id="xmMode" role="group" aria-label="Mode">
+        <button type="button" data-mode="live" class="on">Live</button>
+        <button type="button" data-mode="test">Test</button>
+      </div>
+      <button class="xm-iconbtn" id="xmRefresh" type="button" aria-label="Refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+      </button>
+      <button class="xm-iconbtn" id="xmLogout" type="button" aria-label="Log out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h10"/></svg>
+      </button>
+    </header>
+
+    <div id="xmGate" class="xm-gate hidden">
+      <p id="xmGateText"></p>
+      <button type="button" id="xmGateBtn">Log in again</button>
+    </div>
+
+    <main id="xmApp" class="hidden">
+      <section class="xm-balance">
+        <div class="lbl">Available balance</div>
+        <div class="big" id="xmAvailable">-</div>
+        <div class="row"><span>Pending settlement</span><b id="xmPending">-</b></div>
+        <div class="xm-test-note hidden" id="xmTestNote">TEST mode - test payments only, no real money.</div>
+      </section>
+
+      <nav class="xm-periods" id="xmPeriods">
+        <button type="button" data-period="today" class="on">Today</button>
+        <button type="button" data-period="yesterday">Yesterday</button>
+        <button type="button" data-period="7d">7 days</button>
+        <button type="button" data-period="month">This month</button>
+        <button type="button" data-period="lastmonth">Last month</button>
+      </nav>
+      <div class="xm-range" id="xmRange"></div>
+
+      <section class="xm-tiles">
+        <button type="button" class="xm-tile" data-view="in"><div class="lbl">Money In</div><div class="val" id="xmIn">-</div><div class="sub" id="xmInSub"></div></button>
+        <button type="button" class="xm-tile" data-view="out"><div class="lbl">Money Out</div><div class="val" id="xmOut">-</div><div class="sub" id="xmOutSub"></div></button>
+        <button type="button" class="xm-tile" data-view="fees"><div class="lbl">Fees + VAT</div><div class="val" id="xmFees">-</div><div class="sub">Taken by Xendit</div></button>
+        <button type="button" class="xm-tile" data-view="all"><div class="lbl">Net In</div><div class="val" id="xmNet">-</div><div class="sub">Money in after fees</div></button>
+      </section>
+
+      <div class="xm-tabs" id="xmTabs" role="tablist">
+        <button type="button" data-view="all" class="on">All</button>
+        <button type="button" data-view="in">In</button>
+        <button type="button" data-view="out">Out</button>
+        <button type="button" data-view="fees">Fees</button>
+      </div>
+      <input type="search" class="xm-search" id="xmSearch" placeholder="Search order no., reference, channel..." autocomplete="off" />
+
+      <div id="xmList"></div>
+      <div class="xm-updated" id="xmUpdated"></div>
+    </main>
+  </div>
+
+  <div class="xm-sheet-bg hidden" id="xmSheetBg"></div>
+  <div class="xm-sheet hidden" id="xmSheet" role="dialog" aria-modal="true"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=xmobile1"></script>
+  <script src="js/xenditMobile.js?v=xmobile1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

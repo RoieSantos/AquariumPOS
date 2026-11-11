@@ -1210,6 +1210,21 @@ function escapeHtmlText(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Order id on the calendar's stops table, as a link to the order itself (new tab, so the calendar
+// stays put): online / walk-in -> the order card on Online Orders (?open=, which falls back to the
+// Walk-in tab by itself), advance -> its Advance Order document. Order Form drafts ('automated')
+// have no order page, so they stay plain text.
+function stopOrderLinkHtml(s) {
+  const id = String(s.order_id || '');
+  if (!id) return '';
+  let href = null;
+  if (s.source === 'advance') href = `advance-order-lines.html?transaction=${encodeURIComponent(id.replace(/^ADV-/, ''))}`;
+  else if (s.source !== 'automated') href = `online-orders.html?open=${encodeURIComponent(id)}`;
+  return href
+    ? `<a href="${href}" target="_blank" rel="noopener" title="Open this order">${escapeHtmlText(id)}</a>`
+    : escapeHtmlText(id);
+}
+
 function setMarkDoneState({ status, caption, error, canRetry }) {
   document.getElementById('markDoneStatus').textContent = status || '';
   if (caption !== undefined) document.getElementById('markDoneCaption').textContent = caption;
@@ -1843,7 +1858,7 @@ function showDayDetail(dateKey) {
         // scheduling note, an unrelated field).
         return `
         <tr${inDrop ? ' class="delivery-drop-member-row"' : ''}>
-          <td>${inDrop ? '<span class="muted">&#8627;</span> ' : ''}${s.order_id || ''}</td>
+          <td>${inDrop ? '<span class="muted">&#8627;</span> ' : ''}${stopOrderLinkHtml(s)}</td>
           <td>${s.customer_name || ''}</td>
           <td>${s.route_name || ''}</td>
           <td>${s.status || ''}${s.is_manual_delivery_fee && !s.fee_combined_with ? `<br><span class="muted">Delivery fee ${Number(s.delivery_fee).toFixed(2)} (manual)</span>` : ''}${stopDropFeeNoteHtml(s, group)}${stopHasDeliveryFee(s) ? '' : '<br><span class="error-text">No delivery fee - can\'t print yet</span>'}${stopBackJobToggleHtml(s)}</td>

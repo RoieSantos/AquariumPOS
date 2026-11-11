@@ -83,7 +83,10 @@
         <button class="bc-cmd" id="xlReceiptBtn" type="button" disabled title="Open the receipt of the selected payment"><svg class="bc-ico"><use href="#ico-doc"/></svg>Show Receipt</button>
         <button class="bc-cmd" id="xlPayLinkBtn" type="button" disabled title="Open the pay page of the selected payment's order"><svg class="bc-ico"><use href="#ico-money"/></svg>Show Order</button>
         <span class="bc-cmd-sep"></span>
+        <button class="bc-cmd" id="xlOwnerBtn" type="button" title="Send money from the Xendit balance to the owner's own GCash / bank account"><svg class="bc-ico"><use href="#ico-money"/></svg>Withdraw to Owner</button>
+        <span class="bc-cmd-sep"></span>
         <a class="bc-cmd" href="xendit-payments.html" title="Xendit settings and the order payment log"><svg class="bc-ico"><use href="#ico-settings"/></svg>Xendit Payments</a>
+        <a class="bc-cmd" href="xendit-mobile.html?app=xendit" title="Phone view - open on your phone and Add to Home Screen to install the Xendit app"><svg class="bc-ico"><use href="#ico-money"/></svg>Phone App</a>
       </div>
 
       <div class="bc-infobar hidden" id="xlInfobar" role="status">
@@ -246,6 +249,67 @@
         </aside>
       </div>
     </div>
+
+    <!-- Withdraw to Owner (sql/supabase_xendit_owner_payouts.sql, Edge Function xendit-owner-payout). The accounts
+         come only from the XENDIT_OWNER_ACCOUNTS secret - they can't be typed or changed here. -->
+    <div id="ownerModal" class="bc-dialog-backdrop hidden">
+      <div class="bc-dialog bc-dialog-wide" role="dialog" aria-modal="true" aria-labelledby="ownerModalTitle">
+        <div class="bc-dialog-head">
+          <h2 id="ownerModalTitle">Withdraw to Owner</h2>
+          <button class="bc-iconbtn" type="button" data-close-owner aria-label="Close">&times;</button>
+        </div>
+        <div class="bc-dialog-body">
+          <p class="bc-lede">Sends money from the Xendit balance to the owner's own GCash / bank account. Only the accounts saved in the server settings can be picked. Money sent can't be pulled back, and Xendit's payout fee applies.</p>
+          <p class="error-text hidden" id="ownerTestNote"></p>
+          <div class="bc-field">
+            <label>Available Balance</label>
+            <div><strong id="ownerBalance">-</strong></div>
+          </div>
+          <div class="bc-field">
+            <label for="ownerAccount">Send To</label>
+            <select id="ownerAccount"></select>
+          </div>
+          <div class="bc-field">
+            <label for="ownerAmount">Amount</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="number" id="ownerAmount" min="1" step="0.01" inputmode="decimal" style="width:160px;" />
+              <button class="bc-link" type="button" id="ownerAllBtn">Use full balance</button>
+            </div>
+          </div>
+          <div class="bc-field">
+            <label for="ownerNote">Note</label>
+            <input type="text" id="ownerNote" maxlength="80" placeholder="Optional, e.g. Owner draw November" />
+          </div>
+          <p class="bc-hint" id="ownerHint"></p>
+
+          <h3 style="font-size:14px; margin:16px 0 6px;">Recent Withdrawals</h3>
+          <div class="bc-preview-wrap">
+            <table class="bc-grid">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Send To</th>
+                  <th class="num">Amount</th>
+                  <th>Status</th>
+                  <th>By</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody id="ownerRecentBody">
+                <tr><td colspan="6" class="cell-msg">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="bc-dialog-foot">
+          <p id="ownerMessage" class="bc-dialog-msg hidden"></p>
+          <span style="flex:1;"></span>
+          <button class="bc-btn" id="ownerRefreshBtn" type="button">Refresh Status</button>
+          <button class="bc-btn bc-btn-primary" id="ownerSendBtn" type="button">Send</button>
+          <button class="bc-btn" type="button" data-close-owner>Close</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -256,7 +320,7 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/xenditLedger.js?v=xledger2"></script>
+  <script src="js/xenditLedger.js?v=xowner1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

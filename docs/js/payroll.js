@@ -166,7 +166,7 @@ function wireRunList() {
     if (tr) openRun(tr.dataset.runId);
   });
   document.getElementById('openRunBtn').addEventListener('click', () => openRun(selectedRunId));
-  document.getElementById('refreshRunsBtn').addEventListener('click', () => { loadRuns(); loadFundBalances(); });
+  document.getElementById('refreshRunsBtn').addEventListener('click', () => { loadRuns(); loadFundBalances(); loadXenditBalance(); });
 }
 
 async function loadRuns() {
@@ -208,6 +208,29 @@ async function loadFundBalances() {
 
   document.getElementById('cashOnHandDisplay').textContent = formatCurrency(balances.cash_balance);
   document.getElementById('digitalOnHandDisplay').textContent = formatCurrency(balances.digital_balance);
+}
+
+// Xendit available balance (same read the Payroll Run page uses - payroll officers can see it, only super users send).
+async function loadXenditBalance() {
+  const value = document.getElementById('xenditBalanceDisplay');
+  const note = document.getElementById('xenditBalanceNote');
+  value.textContent = '...';
+  note.textContent = '';
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-payroll-payout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+      body: JSON.stringify({ action: 'balance', username: currentSession.username, password: currentSession.password })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || typeof data?.balance !== 'number') throw new Error(data?.error || `HTTP ${response.status}`);
+    value.textContent = formatCurrency(data.balance);
+    note.textContent = data.isTest ? 'TEST mode' : 'Live';
+  } catch (err) {
+    value.textContent = '-';
+    note.textContent = 'Could not read balance';
+    note.title = err.message;
+  }
 }
 
 function updateCutoffRowVisibility() {
@@ -309,6 +332,7 @@ async function saveNewRun() {
   document.getElementById('payrollContent').classList.remove('hidden');
   await loadRuns();
   await loadCutoffSettingsOnce();
+  loadXenditBalance();
   await loadFundBalances();
 
   wireRunList();

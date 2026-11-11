@@ -519,8 +519,18 @@ function conversationsAppLaunched() {
   }
 }
 
+function xenditAppLaunched() {
+  try {
+    return sessionStorage.getItem('portalAppXendit') === '1';
+  } catch {
+    return false;
+  }
+}
+
 function getDefaultLandingPage(session) {
   if (!session) return 'dashboard.html';
+  // Opened from the home-screen "Xendit" app (xendit-manifest.json, super users only) - go back there.
+  if (session.isSuperUser && xenditAppLaunched()) return 'xendit-mobile.html';
   // Opened from the home-screen "Conversations" app (conversations-manifest.json) - go back there.
   if ((session.isSuperUser || session.isConversationsStaff) && conversationsAppLaunched()) return 'gma-conversations.html';
   if (isOrderMakerOnly(session)) return 'online-orders.html';

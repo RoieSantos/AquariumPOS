@@ -152,7 +152,8 @@ async function loadLedger() {
     if (token !== loadToken) return; // a newer load started meanwhile
     if (response.status === 404) throw new Error('The xendit-ledger Edge Function isn\'t deployed yet.');
     if (!response.ok || !data?.transactions) throw new Error(data?.error || `HTTP ${response.status}`);
-    allRows = data.transactions;
+    // Xendit sends 'SUCCESSFUL' (not 'SUCCESS'); normalize so the totals, cues, settlement and filter match.
+    allRows = data.transactions.map((r) => (r.status === 'SUCCESSFUL' ? { ...r, status: 'SUCCESS' } : r));
     ledgerIsTest = data.isTest;
     fillFilterOptions();
     renderBalance(data.balance);
@@ -474,6 +475,197 @@ function downloadCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// ---------------------------------------------------------------- Withdraw to Owner
+// Edge Function xendit-owner-payout + sql/supabase_xendit_owner_payouts.sql. The accounts come only from the
+// XENDIT_OWNER_ACCOUNTS secret (masked here). One requestId per withdrawal = Xendit's Idempotency-key: it is kept
+// while Xendit's answer is unknown (sending again can't pay twice) and replaced once the withdrawal is settled.
+let ownerInfo = null;
+let ownerRequestId = null;
+let ownerPendingRetry = false; // last send got no clear answer - only the SAME withdrawal can be sent again
+let ownerBusy = false;
+
+const OWNER_GOING = ['Creating', 'ACCEPTED', 'REQUESTED'];
+
+function newRequestId() {
+  return crypto.randomUUID ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = crypto.getRandomValues(new Uint8Array(1))[0] % 16;
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+}
+
+async function callOwnerFunction(payload) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-owner-payout`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+      'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ username: currentSession.username, password: currentSession.password, ...payload })
+  });
+  if (response.status === 404) throw new Error('The xendit-owner-payout Edge Function isn\'t deployed yet.');
+  const data = await response.json().catch(() => null);
+  return { ok: response.ok, data: data || { error: `HTTP ${response.status}` } };
+}
+
+function setOwnerMessage(text, kind) {
+  const el = document.getElementById('ownerMessage');
+  el.classList.toggle('hidden', !text);
+  el.className = `bc-dialog-msg${text ? '' : ' hidden'}${kind === 'error' ? ' error-text' : ''}`;
+  el.style.color = kind === 'ok' ? 'var(--success)' : '';
+  el.textContent = text || '';
+}
+
+function ownerStatusHtml(r) {
+  const test = r.is_test ? ' <span class="muted">(TEST)</span>' : '';
+  if (r.status === 'SUCCEEDED') return `<span style="color:var(--success);">Paid</span>${test}`;
+  if (OWNER_GOING.includes(r.status)) return `<span style="color:#a6720a;">${r.status === 'Creating' ? 'Sending...' : 'On its way'}</span>${test}`;
+  const why = r.failure_code || r.error || '';
+  return `<span style="color:var(--danger);" title="${esc(why)}">${esc(statusLabel(r.status))}</span>${why ? ` <span class="muted">· ${esc(why)}</span>` : ''}${test}`;
+}
+
+function renderOwnerDialog() {
+  const info = ownerInfo || {};
+  document.getElementById('ownerBalance').textContent = info.balance == null ? 'Could not read' : peso(info.balance);
+  const testNote = document.getElementById('ownerTestNote');
+  testNote.classList.toggle('hidden', !info.isTest);
+  testNote.textContent = info.isTest ? 'TEST mode - this is a test payout, no real money moves.' : '';
+
+  const sel = document.getElementById('ownerAccount');
+  const current = sel.value;
+  const accounts = info.accounts || [];
+  sel.innerHTML = accounts.length
+    ? accounts.map((a) => `<option value="${esc(a.key)}">${esc(a.label)} - ${esc(a.channel)} ••••${esc(a.accountLast4)} (${esc(a.accountName)})</option>`).join('')
+    : '<option value="">(no owner accounts set up)</option>';
+  if (accounts.some((a) => a.key === current)) sel.value = current;
+
+  const hint = [];
+  if (info.accountsError) hint.push(info.accountsError);
+  if (info.maxPerSend) hint.push(`One withdrawal can be at most ${peso(info.maxPerSend)}.`);
+  if (ownerPendingRetry) hint.push('The last withdrawal got no clear answer from Xendit. Press Refresh Status first; "Send Again" re-sends that SAME withdrawal and can\'t pay twice.');
+  document.getElementById('ownerHint').textContent = hint.join(' ');
+
+  // While the last send is unresolved, its account / amount can't change (the same key must carry the same payout).
+  ['ownerAccount', 'ownerAmount', 'ownerNote'].forEach((id) => { document.getElementById(id).disabled = ownerPendingRetry || ownerBusy; });
+  document.getElementById('ownerAllBtn').disabled = ownerPendingRetry || ownerBusy || info.balance == null;
+  const sendBtn = document.getElementById('ownerSendBtn');
+  sendBtn.textContent = ownerPendingRetry ? 'Send Again' : 'Send';
+  sendBtn.disabled = ownerBusy || !accounts.length;
+  document.getElementById('ownerRefreshBtn').disabled = ownerBusy;
+
+  const recent = info.recent || [];
+  document.getElementById('ownerRecentBody').innerHTML = info.recentError
+    ? `<tr><td colspan="6" class="cell-msg error-text">${esc(info.recentError)}</td></tr>`
+    : recent.length
+      ? recent.map((r) => `
+        <tr>
+          <td>${esc(new Date(r.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</td>
+          <td>${esc(r.label || '')} <span class="muted">${esc(r.channel_name || '')} ••••${esc(r.account_last4 || '')}</span></td>
+          <td class="num">${amount(r.amount)}</td>
+          <td>${ownerStatusHtml(r)}</td>
+          <td>${esc(r.sent_by || '')}</td>
+          <td class="cell-text">${esc(r.note || '')}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="6" class="cell-msg">No withdrawals yet.</td></tr>';
+}
+
+async function loadOwnerInfo() {
+  const { ok, data } = await callOwnerFunction({ action: 'info' });
+  if (!ok) throw new Error(data.error || 'Could not load.');
+  ownerInfo = data;
+  // An unresolved send is settled once its row is no longer 'Creating' - then a new withdrawal can be made.
+  if (ownerPendingRetry) {
+    const row = (data.recent || []).find((r) => r.payout_id === ownerRequestId);
+    if (row && row.status !== 'Creating') {
+      ownerPendingRetry = false;
+      ownerRequestId = newRequestId();
+    } else if (!row && !data.recentError) {
+      ownerPendingRetry = false; // never reached the server - nothing to protect; the unused id is kept
+    }
+  }
+  renderOwnerDialog();
+}
+
+async function openOwnerDialog() {
+  document.getElementById('ownerModal').classList.remove('hidden');
+  if (!ownerRequestId) ownerRequestId = newRequestId();
+  setOwnerMessage('Loading...');
+  try {
+    await loadOwnerInfo();
+    setOwnerMessage('');
+  } catch (err) {
+    setOwnerMessage(err.message, 'error');
+  }
+}
+
+function closeOwnerDialog() {
+  if (ownerBusy) return;
+  document.getElementById('ownerModal').classList.add('hidden');
+}
+
+async function sendOwnerWithdrawal() {
+  if (ownerBusy || !ownerInfo) return;
+  const sel = document.getElementById('ownerAccount');
+  const account = (ownerInfo.accounts || []).find((a) => a.key === sel.value);
+  const value = Math.round(Number(document.getElementById('ownerAmount').value) * 100) / 100;
+  const note = document.getElementById('ownerNote').value.trim();
+  if (!account) { setOwnerMessage('Pick the account to send to.', 'error'); return; }
+  if (!(value > 0)) { setOwnerMessage('Enter the amount to send.', 'error'); return; }
+  if (ownerInfo.balance != null && value > ownerInfo.balance) { setOwnerMessage(`That's more than the available balance (${peso(ownerInfo.balance)}).`, 'error'); return; }
+
+  const confirmText = `${ownerPendingRetry ? 'Send the SAME withdrawal again' : 'Send'} ${peso(value)} to ${account.label} (${account.channel} ••••${account.accountLast4}, ${account.accountName})?`
+    + (ownerInfo.isTest ? '\n\nTEST mode - no real money.' : '\n\nThis is REAL money and can\'t be pulled back.');
+  if (!window.confirm(confirmText)) return;
+
+  ownerBusy = true;
+  renderOwnerDialog();
+  setOwnerMessage('Sending to Xendit...');
+  try {
+    const { ok, data } = await callOwnerFunction({ action: 'send', requestId: ownerRequestId, accountKey: account.key, amount: value, note });
+    if (data.retrySame) {
+      ownerPendingRetry = true;
+    } else if (data.done || ok) {
+      // Settled one way or the other - the next withdrawal gets a new key.
+      ownerPendingRetry = false;
+      ownerRequestId = newRequestId();
+    }
+    if (ok && !data.error) {
+      document.getElementById('ownerAmount').value = '';
+      document.getElementById('ownerNote').value = '';
+      setOwnerMessage(data.note || `Sent ${peso(data.amount || value)} - ${data.status === 'SUCCEEDED' ? 'paid' : 'Xendit is processing it'}.`, 'ok');
+    } else {
+      setOwnerMessage(data.error || data.note || 'Not sent.', 'error');
+    }
+  } catch (err) {
+    // No answer at all (network): treat as unknown - keep the same request id.
+    ownerPendingRetry = true;
+    setOwnerMessage(`${err.message} - press Refresh Status before trying again.`, 'error');
+  } finally {
+    ownerBusy = false;
+  }
+  try { await loadOwnerInfo(); } catch { renderOwnerDialog(); }
+}
+
+async function refreshOwnerStatus() {
+  if (ownerBusy) return;
+  ownerBusy = true;
+  renderOwnerDialog();
+  setOwnerMessage('Checking with Xendit...');
+  try {
+    const { ok, data } = await callOwnerFunction({ action: 'refresh' });
+    if (!ok) throw new Error(data.error || 'Could not refresh.');
+    ownerBusy = false;
+    await loadOwnerInfo();
+    setOwnerMessage(data.checked ? `Checked ${data.checked}, updated ${data.updated}.` : 'Nothing waiting on Xendit.', 'ok');
+  } catch (err) {
+    setOwnerMessage(err.message, 'error');
+  } finally {
+    ownerBusy = false;
+    renderOwnerDialog();
+  }
+}
+
 // ---------------------------------------------------------------- init
 
 (async function init() {
@@ -553,6 +745,16 @@ function downloadCsv() {
   document.getElementById('xlPayLinkBtn').addEventListener('click', () => {
     const r = selectedRow();
     if (canShowOrder(r)) window.open(`pay.html?order=${encodeURIComponent(r.ours.order_ref)}`, '_blank', 'noopener');
+  });
+
+  document.getElementById('xlOwnerBtn').addEventListener('click', openOwnerDialog);
+  document.querySelectorAll('[data-close-owner]').forEach((btn) => btn.addEventListener('click', closeOwnerDialog));
+  document.getElementById('ownerSendBtn').addEventListener('click', sendOwnerWithdrawal);
+  document.getElementById('ownerRefreshBtn').addEventListener('click', refreshOwnerStatus);
+  document.getElementById('ownerAllBtn').addEventListener('click', () => {
+    if (ownerInfo?.balance == null) return;
+    const cap = ownerInfo.maxPerSend ? Math.min(ownerInfo.balance, ownerInfo.maxPerSend) : ownerInfo.balance;
+    document.getElementById('ownerAmount').value = Math.floor(cap * 100) / 100;
   });
 
   let resizeTimer = null;
