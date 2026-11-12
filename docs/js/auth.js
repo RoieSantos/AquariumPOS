@@ -239,7 +239,9 @@ function canOpenProductionPage(session, page) {
 // role lockdown below would otherwise confine them to (makers, Delivery Team, Online Order Staff,
 // plain no-permission accounts). The Aquarium Calculator only shows selling prices now (its cost
 // breakdown was removed), so it's safe for everyone.
-const ALL_STAFF_PAGES = ['aquarium-calculator.html'];
+// payout-receipt.html: an employee's own Xendit salary / cash advance receipt (my_get_payout_receipt only
+// returns their own unless they're a payroll officer / super user - sql/supabase_xendit_payout_receipts.sql).
+const ALL_STAFF_PAGES = ['aquarium-calculator.html', 'payout-receipt.html'];
 
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });

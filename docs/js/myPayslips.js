@@ -19,13 +19,34 @@ function formatCycleLabel(cycle) {
   return cycle === 'SemiMonthly' ? 'Semi-Monthly' : cycle === 'Weekly' ? 'Weekly' : cycle || '';
 }
 
-function renderRows(rows) {
+// Xendit payout receipts (my_list_payout_receipts, sql/supabase_xendit_payout_receipts.sql) - a Receipt button on
+// each salary paid via Xendit, plus the cash advances sent via Xendit in their own list. Empty if that SQL isn't run.
+function receiptButton(payoutId) {
+  return `<a class="btn btn-secondary btn-sm" href="payout-receipt.html?id=${encodeURIComponent(payoutId)}">Receipt</a>`;
+}
+
+function renderAdvanceReceipts(receipts) {
+  const advances = receipts.filter((p) => p.kind === 'Advance');
+  document.getElementById('advanceReceiptsSection').classList.toggle('hidden', advances.length === 0);
+  document.getElementById('advanceReceiptsBody').innerHTML = advances.map((p) => `
+    <tr>
+      <td>${formatDate(p.advance_date)}</td>
+      <td>${p.paid_at ? new Date(p.paid_at).toLocaleDateString() : '-'}</td>
+      <td>${p.channel_name || ''} ${p.account_masked || ''}</td>
+      <td style="text-align:right;"><strong>${formatCurrency(p.amount)}</strong></td>
+      <td>${receiptButton(p.payout_id)}</td>
+    </tr>
+  `).join('');
+}
+
+function renderRows(rows, receipts) {
   const tbody = document.getElementById('payslipTableBody');
   if (!rows || rows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" class="muted">No finalized payslips yet.</td></tr>';
     return;
   }
 
+  const salaryReceipt = new Map((receipts || []).filter((p) => p.kind === 'Salary' && p.line_id).map((p) => [p.line_id, p.payout_id]));
   tbody.innerHTML = rows.map((r) => `
     <tr>
       <td>${formatCycleLabel(r.pay_cycle)}</td>
@@ -35,7 +56,7 @@ function renderRows(rows) {
       <td style="text-align:right;">${formatCurrency(r.additions_total)}</td>
       <td style="text-align:right;">${formatCurrency(r.deductions_total)}</td>
       <td style="text-align:right;"><strong>${formatCurrency(r.net_pay)}</strong></td>
-      <td><a class="btn btn-secondary btn-sm" href="my-payslip-print.html?line=${r.line_id}">View / Print</a></td>
+      <td style="white-space:nowrap;"><a class="btn btn-secondary btn-sm" href="my-payslip-print.html?line=${r.line_id}">View / Print</a>${salaryReceipt.has(r.line_id) ? ' ' + receiptButton(salaryReceipt.get(r.line_id)) : ''}</td>
     </tr>
   `).join('');
 }
@@ -52,6 +73,13 @@ async function loadPayslips() {
   errorEl.classList.add('hidden');
   const tbody = document.getElementById('payslipTableBody');
   tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading...</td></tr>';
+
+  // Receipts load alongside; a failure there (e.g. SQL not run yet) just means no Receipt buttons.
+  const receiptsPromise = supabaseClient.rpc('my_list_payout_receipts', {
+    p_username: currentSession.username,
+    p_password: currentSession.password,
+    p_unseen_only: false
+  }).then(({ data: rows, error: err }) => (err ? [] : rows || [])).catch(() => []);
 
   let data = null;
   let error = null;
@@ -80,7 +108,9 @@ async function loadPayslips() {
     return;
   }
 
-  renderRows(data || []);
+  const receipts = await receiptsPromise;
+  renderRows(data || [], receipts);
+  renderAdvanceReceipts(receipts);
 }
 
 (async function init() {

@@ -269,7 +269,8 @@ function advancePayoutStatusHtml(p) {
   const test = p.is_test ? ' <strong style="color:#b45309;">TEST</strong>' : '';
   if (!p.status) return '<span class="muted">Not sent</span>';
   if (p.status === 'SUCCEEDED') {
-    return `<span style="color:var(--success);">Paid</span>${p.paid_at ? ` <span class="muted">${new Date(p.paid_at).toLocaleDateString()}</span>` : ''}${test}`;
+    return `<span style="color:var(--success);">Paid</span>${p.paid_at ? ` <span class="muted">${new Date(p.paid_at).toLocaleDateString()}</span>` : ''}${test}`
+      + (p.payout_id ? ` <a href="payout-receipt.html?id=${encodeURIComponent(p.payout_id)}" target="_blank" rel="noopener">Receipt</a>` : '');
   }
   if (ADVANCE_PAYOUT_GOING.includes(p.status)) return `<span style="color:#a6720a;">Sending...</span>${test}`;
   const label = p.status === 'Error' ? 'Not sent' : p.status.charAt(0) + p.status.slice(1).toLowerCase();

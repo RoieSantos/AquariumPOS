@@ -45,14 +45,33 @@
         </tbody>
       </table>
     </div>
+
+    <div id="advanceReceiptsSection" class="hidden" style="margin-top:24px;">
+      <h2 style="margin-bottom:4px;">Cash Advances Sent via Xendit</h2>
+      <p class="muted">Each one is deducted from your next payroll run.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Advance Date</th>
+              <th>Paid</th>
+              <th>Sent To</th>
+              <th style="text-align:right;">Amount</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="advanceReceiptsBody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
-  <script src="js/auth.js?v=tenderdeposit1"></script>
-  <script src="js/nav.js?v=navgroups2"></script>
-  <script src="js/myPayslips.js?v=2"></script>
+  <script src="js/auth.js?v=payoutreceipt1"></script>
+  <script src="js/nav.js?v=payoutnotice1"></script>
+  <script src="js/myPayslips.js?v=receipt1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

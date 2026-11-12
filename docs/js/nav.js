@@ -38,6 +38,103 @@ function allStaffLinks(activeLabel) {
 function renderTopNav(activeLabel) {
   renderTopNavLinks(activeLabel);
   mountTellMe();
+  mountPayoutNotice(getPortalSession());
+}
+
+// "You've been paid" notice - per "notice can be on the portal". When Xendit confirms a salary / cash advance
+// payout, the employee sees a banner under the top nav on every page until they open the receipt or Dismiss
+// (my_list_payout_receipts / my_dismiss_payout_notices, sql/supabase_xendit_payout_receipts.sql). The answer is
+// cached per tab for 5 minutes so moving between pages doesn't call the server every time; it never blocks the page.
+const PAYOUT_NOTICE_CACHE_KEY = 'payoutNoticeCache';
+const PAYOUT_NOTICE_SKIP_PAGES = ['payout-receipt.html', 'change-password.html', 'staff-login.html'];
+
+function payoutNoticeEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function clearPayoutNoticeCache() {
+  try { sessionStorage.removeItem(PAYOUT_NOTICE_CACHE_KEY); } catch (e) { /* storage blocked */ }
+}
+
+async function mountPayoutNotice(session) {
+  if (!session?.username || typeof supabaseClient === 'undefined') return;
+  const page = (location.pathname.split('/').pop() || '').toLowerCase();
+  if (page.includes('print') || PAYOUT_NOTICE_SKIP_PAGES.includes(page)) return;
+
+  let rows = null;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(PAYOUT_NOTICE_CACHE_KEY) || 'null');
+    if (cached && cached.user === session.username && Date.now() - cached.at < 5 * 60 * 1000) rows = cached.rows;
+  } catch (e) { /* storage blocked / bad JSON - just ask the server */ }
+
+  if (!rows) {
+    try {
+      const { data, error } = await supabaseClient.rpc('my_list_payout_receipts', {
+        p_username: session.username,
+        p_password: session.password,
+        p_unseen_only: true
+      });
+      if (error) return; // e.g. the SQL isn't run yet - no notice, nothing else breaks
+      rows = data || [];
+    } catch (e) {
+      return;
+    }
+    try {
+      sessionStorage.setItem(PAYOUT_NOTICE_CACHE_KEY, JSON.stringify({ user: session.username, at: Date.now(), rows }));
+    } catch (e) { /* storage blocked */ }
+  }
+
+  if (rows.length) renderPayoutNotice(session, rows);
+}
+
+function renderPayoutNotice(session, rows) {
+  document.getElementById('payoutNotice')?.remove();
+  const peso = (n) => '₱' + (Number(n) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const day = (d) => (d ? new Date(String(d).length === 10 ? d + 'T00:00:00' : d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : '');
+  const what = (p) => (p.kind === 'Salary'
+    ? `Your salary for ${day(p.period_start)} - ${day(p.period_end)}`
+    : `Your cash advance${p.advance_date ? ' of ' + day(p.advance_date) : ''}`);
+
+  const box = document.createElement('div');
+  box.id = 'payoutNotice';
+  box.className = 'no-print';
+  box.setAttribute('role', 'status');
+  box.style.cssText = 'max-width:1200px;margin:10px auto 0;padding:10px 14px;border-radius:8px;'
+    + 'border:1px solid var(--success);background:var(--panel-bg);color:var(--text-main);'
+    + 'box-shadow:var(--shadow);display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;font-size:14px;'
+    + 'width:calc(100% - 32px);box-sizing:border-box;';
+  box.innerHTML = `
+    <div style="flex:1 1 260px;min-width:0;">
+      ${rows.map((p) => `<div style="margin:2px 0;">
+        <strong style="color:var(--success);">Paid:</strong> ${payoutNoticeEscape(what(p))} -
+        <strong>${peso(p.amount)}</strong> was sent to your ${payoutNoticeEscape(p.channel_name || '')} ${payoutNoticeEscape(p.account_masked || '')}${p.paid_at ? ' on ' + day(p.paid_at) : ''}.
+        <a href="payout-receipt.html?id=${encodeURIComponent(p.payout_id)}" data-payout-receipt>View receipt</a>
+      </div>`).join('')}
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm" data-payout-dismiss>Dismiss</button>`;
+
+  box.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-payout-receipt]')) {
+      clearPayoutNoticeCache(); // opening the receipt clears this one server-side
+      return;
+    }
+    if (!e.target.closest('[data-payout-dismiss]')) return;
+    box.remove();
+    clearPayoutNoticeCache();
+    try {
+      await supabaseClient.rpc('my_dismiss_payout_notices', {
+        p_username: session.username,
+        p_password: session.password,
+        p_payout_ids: rows.map((p) => p.payout_id)
+      });
+    } catch (err) {
+      console.error('Payout notice: dismiss failed', err);
+    }
+  });
+
+  const nav = document.getElementById('topnav');
+  if (nav && nav.parentNode) nav.insertAdjacentElement('afterend', box);
+  else document.body.prepend(box);
 }
 
 function renderTopNavLinks(activeLabel) {

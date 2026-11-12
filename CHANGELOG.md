@@ -2,6 +2,15 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-12
+
+- **Xendit payout receipts + "you've been paid" notice.** New `payout-receipt.html` (`payoutReceipt.js`) shows one salary / cash advance payout (reference, Xendit payout ID, paid date, masked account, sent by); employees see only their own, payroll officers / super users see any. My Payslips gets a Receipt button per Xendit-paid salary and a "Cash Advances Sent via Xendit" list; Payroll Run / Timesheets get a Receipt link on Paid payouts.
+- Employees see a banner under the top nav on every portal page when a payout succeeds (last 14 days), until they open the receipt or Dismiss ([supabase_xendit_payout_receipts.sql](sql/supabase_xendit_payout_receipts.sql), `nav.js` ?v=payoutnotice1, `auth.js` ?v=payoutreceipt1 on all pages).
+- Fix: opening a payout receipt failed with "structure of query does not match function result type" - every column the receipt functions return is now cast to its declared type (same SQL file, re-run it).
+- New read-only check [supabase_check_xendit_payout_channel_reference.sql](sql/supabase_check_xendit_payout_channel_reference.sql): shows what Xendit sent back for paid payouts, to see if it includes the GCash / bank's own Ref No. for the receipt.
+- Result: it doesn't (GCash makes its own Ref No.). Payout receipt now has "How to find it in GCash" - from Union Bank of the Philippines, the amount and the Philippine date/time - and moves our reference / Xendit payout ID under "For RS Pet Stop / Xendit support" (`payoutReceipt.js` ?v=2). Then softened: Union Bank is shown only as an example sender, since Xendit doesn't guarantee its partner bank (?v=3).
+- Per Xendit support's reply: the receipt also shows the payout description sent to Xendit (from the saved reply) - re-run [supabase_xendit_payout_receipts.sql](sql/supabase_xendit_payout_receipts.sql), `payoutReceipt.js` ?v=4.
+
 ## 2026-11-11
 
 - **Payroll officers can set up Xendit payout accounts.** Payroll Setup > Edit > Salary Payout (Xendit) is now open to payroll officers, not just super users; sending money stays super users only. A payroll officer's change sends a Telegram alert (old vs new, masked), and they can't reuse another employee's account number ([supabase_xendit_payout_account_payroll_officer.sql](sql/supabase_xendit_payout_account_payroll_officer.sql), `payrollSetup.js` ?v=payoutofficer1).
