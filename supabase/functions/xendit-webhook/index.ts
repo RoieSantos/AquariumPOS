@@ -21,7 +21,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getPageAccessToken } from '../_shared/page-tokens.ts';
 import { callbackTokenFor, payoutKeyFor, secretKeyFor } from '../_shared/xendit-keys.ts';
 import { getPayout, recordArgs } from '../_shared/xendit-payouts.ts';
-import { readPaymentRequest, toRecordedInvoice } from '../_shared/xendit-qrph.ts';
+import { readPaymentRequestOrNotFound, toRecordedInvoice } from '../_shared/xendit-qrph.ts';
 import { readSession, toRecordedSession } from '../_shared/xendit-session.ts';
 
 const DEFAULT_GRAPH_VERSION = 'v21.0';
@@ -200,14 +200,46 @@ Deno.serve(async (req) => {
   if (typeof payload?.event === 'string') {
     const paymentRequestId = String(payload?.data?.payment_request_id ?? '').trim();
     if (!paymentRequestId) return jsonResponse({ ok: true, note: `Event ${payload.event} ignored.` });
-    const request = await readPaymentRequest(secretKey, paymentRequestId);
+    const { notFound, request } = await readPaymentRequestOrNotFound(secretKey, paymentRequestId);
+    // The dashboard's "Test and save" posts a made-up payment request - acknowledge it so the test passes.
+    if (notFound) return jsonResponse({ ok: true, note: `Payment request ${paymentRequestId} is not on this Xendit account (dashboard test callback?) - ignored.` });
     if (!request) return jsonResponse({ error: 'Could not read the payment request from Xendit.' }, 502); // Xendit retries
-    // A pay page session's attempts land here too. Skip them: a failed attempt must not close a session the
-    // customer can still retry, and its payment_session.* event covers the outcome.
+    // A pay page session's attempts land here too. Skip a failed one: it must not close a session the customer
+    // can still retry, and its payment_session.* event covers the outcome. A SUCCEEDED one is recorded (below).
     // Delivery QRs (xendit-delivery-payment, 'RSPS-DLV-') are recorded the same way; recording one Paid saves
     // the driver's collection (sql/supabase_xendit_delivery_collect.sql).
     const referenceId = String(request.reference_id ?? '');
-    if (!referenceId.startsWith('RSPS-POS-') && !referenceId.startsWith('RSPS-DLV-')) {
+    const isPosOrDelivery = referenceId.startsWith('RSPS-POS-') || referenceId.startsWith('RSPS-DLV-');
+    // Pay page attempt that SUCCEEDED: record it here too (AO-00237). The customer had a QR on screen, opened the
+    // pay link again (which cancels the old session - xendit-create-invoice), then paid the old QR anyway. Xendit
+    // took the money but sends no payment_session.completed for a cancelled session, so this event is the only
+    // notice. Recording is once-only, so it's harmless when payment_session.completed also arrives.
+    if (!isPosOrDelivery && referenceId.startsWith('RSPS-') && String(request.status ?? '').toUpperCase() === 'SUCCEEDED') {
+      const recorded = toRecordedInvoice(request);
+      const channel = request.channel_code === 'CARDS' ? 'CREDIT_CARD' : (request.channel_code ?? 'QRPH');
+      recorded.payment_method = channel;
+      recorded.payment_channel = channel;
+      const supabase = createClient(supabaseUrl, serviceRoleKey);
+      const { data, error } = await supabase.rpc('_xendit_record_invoice_status', { p_invoice: recorded, p_webhook: payload });
+      if (error) {
+        console.error('xendit-webhook: pay page payment record failed', error.message);
+        return jsonResponse({ error: error.message }, 500); // Xendit retries
+      }
+      if (data?.status === 'Paid' && data?.apply_status === 'Applied') {
+        try {
+          await sendReceiptMessage(supabase, data.payment_id);
+        } catch (err) {
+          console.error('xendit-webhook: receipt message failed', err);
+        }
+        try {
+          await autoConfirmOrder(supabase, data.payment_id);
+        } catch (err) {
+          console.error('xendit-webhook: auto-confirm failed', err);
+        }
+      }
+      return jsonResponse(data ?? { ok: true });
+    }
+    if (!isPosOrDelivery) {
       return jsonResponse({ ok: true, note: `Event ${payload.event} is not a POS or delivery payment - ignored.` });
     }
     const supabase = createClient(supabaseUrl, serviceRoleKey);

@@ -42,6 +42,15 @@ export async function readPaymentRequest(secretKey: string, paymentRequestId: st
   return response?.ok && body?.status ? body : null;
 }
 
+// Same read, but also says when Xendit answered 404 (no such payment request on this account - e.g. the
+// dashboard's "Test and save" sample), so the webhook can acknowledge it instead of asking Xendit to retry.
+export async function readPaymentRequestOrNotFound(secretKey: string, paymentRequestId: string): Promise<{ notFound: boolean; request: any | null }> {
+  const response = await fetch(url(paymentRequestId), { headers: headers(secretKey) }).catch(() => null);
+  if (response?.status === 404) return { notFound: true, request: null };
+  const body = await response?.json().catch(() => null);
+  return { notFound: false, request: response?.ok && body?.status ? body : null };
+}
+
 export async function cancelPaymentRequest(secretKey: string, paymentRequestId: string): Promise<any | null> {
   const response = await fetch(url(paymentRequestId, '/cancel'), { method: 'POST', headers: headers(secretKey) }).catch(() => null);
   const body = await response?.json().catch(() => null);
