@@ -56,6 +56,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 import {
   DEFAULT_GRAPH_VERSION, ORDER_POLICY_NOTE, REVIEW_GUIDE_IMAGE_URL, buildCurrentTimeLine, buildFacebookPageLine, buildOnlinePaymentLine, buildSystemPrompt,
   containsReviewLink, logBotImage, runChatbotTurn, sendMessengerImage
@@ -1644,7 +1645,7 @@ async function handlePost(req: Request): Promise<Response> {
   // Internal cron task, not a Facebook event - no signature. Safe to expose: it only ever acts on
   // conversations whose auto-resume timer has already run out, exactly what the cron would do.
   if (new URL(req.url).searchParams.get('task') === 'auto-resume') {
-    const work = handleAutoResume(createClient(supabaseUrl, serviceRoleKey), new Anthropic({ apiKey: anthropicApiKey }), model, graphVersion)
+    const work = handleAutoResume(createClient(supabaseUrl, serviceRoleKey), trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'facebook-messenger-webhook'), model, graphVersion)
       .catch((err) => console.error('Auto-resume task failed:', err instanceof Error ? err.message : err));
     if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
     else await work;
@@ -1656,7 +1657,7 @@ async function handlePost(req: Request): Promise<Response> {
   // per submitted pin, within 5 minutes of it, so this can't be used to make the bot talk otherwise.
   const pinToken = new URL(req.url).searchParams.get('task') === 'pin-submitted' ? new URL(req.url).searchParams.get('token') : null;
   if (pinToken !== null) {
-    const work = handlePinSubmitted(createClient(supabaseUrl, serviceRoleKey), new Anthropic({ apiKey: anthropicApiKey }), model, graphVersion, pinToken)
+    const work = handlePinSubmitted(createClient(supabaseUrl, serviceRoleKey), trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'facebook-messenger-webhook'), model, graphVersion, pinToken)
       .catch((err) => console.error('Pin-submitted task failed:', err instanceof Error ? err.message : err));
     if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime) EdgeRuntime.waitUntil(work);
     else await work;
@@ -1680,7 +1681,7 @@ async function handlePost(req: Request): Promise<Response> {
 
   try {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
-    const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+    const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'facebook-messenger-webhook');
 
     for (const entry of body.entry ?? []) {
       // entry.id is the Page this event belongs to - reply with THAT Page's token.

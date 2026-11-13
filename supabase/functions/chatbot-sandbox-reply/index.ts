@@ -20,6 +20,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 import {
   buildBotOrderLines,
   buildCurrentTimeLine,
@@ -156,7 +157,7 @@ Deno.serve(async (req) => {
   ];
 
   const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;
-  const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+  const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'chatbot-sandbox-reply');
 
   let finalText: string;
   try {

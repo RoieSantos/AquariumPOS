@@ -52,6 +52,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 // Small, cheap model for pulling just the city out of a delivery address (deliveryCity).
@@ -299,7 +300,7 @@ async function writeCaption(
   // Last, so neither the example caption nor the standing directions can override it.
   systemPrompt += `\n\nREQUIRED angle for this post, based on who took the photo (this overrides the example caption and any opening line above):\n${angle.instruction}${items && /\[Repair\]/.test(items) ? '\nThis order is a REPAIR: keep this angle\'s opening and framing, but describe the work as a repair of the customer\'s tank - never as new or freshly built.' : ''}`;
 
-  const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+  const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'facebook-page-post');
   const response = await anthropic.messages.create({
     model,
     max_tokens: 1024,
@@ -356,7 +357,7 @@ async function deliveryCity(supabase: SupabaseClient, stop: Record<string, unkno
   if (!address || !anthropicApiKey) return null;
 
   try {
-    const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+    const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'facebook-page-post');
     const response = await anthropic.messages.create({
       model: CITY_MODEL,
       max_tokens: 20,

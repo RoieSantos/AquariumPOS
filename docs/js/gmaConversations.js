@@ -2047,6 +2047,7 @@ async function loadConversationOrders(conv) {
   // follow-up request replacing the old editable status select), so it can't wait for a card to be
   // expanded the way lines/payments do - fetch every synced order's live status up front instead.
   fetchLivePancakeStatuses(orders);
+  fetchOrderCodFlags(orders);
 
   if (pendingDetectedPayment) {
     const target = orders[0];
@@ -2112,6 +2113,9 @@ let orderPaymentsCache = new Map();
 // hits Pancake's API directly instead, so it works for a freshly-pushed, not-yet-confirmed order
 // too - the exact state a GMA order starts in.
 let orderPancakeStatusCache = new Map();
+// Cash on delivery flag per order_no ({ is_cod, cod_set_by }) - admin_list_automated_order_cod
+// (sql/supabase_automated_order_cod.sql); the card list RPC doesn't return it.
+let orderCodCache = new Map();
 
 // order_no currently showing the "Payment to confirm" badge (the target of the auto/manual
 // detected-payment prefill above) and the ChatbotMessages.Id it came from - cleared once staff
@@ -2165,9 +2169,15 @@ function pancakeLiveStatusHtml(o) {
   // AI bot orders are saved as 'Not Pushed' drafts - staff review them here, then Confirm Order puts
   // them straight into Online Orders, no Pancake (sql/supabase_bot_orders_portal_confirm.sql).
   if (o.pancake_sync_status === 'Not Pushed') {
+    const cod = orderCodCache.get(o.order_no);
+    const codTitle = cod?.is_cod && cod.cod_set_by ? `Marked COD by ${cod.cod_set_by}` : 'Customer pays cash on delivery - lets this order be confirmed with no payment';
     return `
     <div class="inbox-order-pancake-row">
       <button type="button" class="btn btn-primary btn-sm inbox-confirm-bot-order-btn" data-order="${escapeHtml(o.order_no)}">Confirm Order</button>
+      <label class="inbox-order-cod-toggle" title="${escapeHtml(codTitle)}">
+        <input type="checkbox" class="inbox-order-cod-input" data-order="${escapeHtml(o.order_no)}"${cod?.is_cod ? ' checked' : ''}${cod ? '' : ' disabled'}>
+        Cash on delivery (COD)
+      </label>
     </div>
   `;
   }
@@ -2273,6 +2283,7 @@ function renderConversationOrderCards() {
         <div class="inbox-order-badges">
           ${orderBranchBadgeHtml(o.location)}
           ${pancakeStatusBadgeHtml(o)}
+          ${orderCodCache.get(o.order_no)?.is_cod ? '<span class="badge badge-warning" title="Cash on delivery">COD</span>' : ''}
           ${o.awaiting_online_payment ? '<span class="badge badge-warning">Waiting for online payment</span>' : ''}
           ${o.order_no === flaggedOrderNo ? '<span class="badge badge-danger">Payment to confirm</span>' : ''}
           ${o.status === 'New' && o.receipt_confirmed_at_utc ? '<span class="badge badge-success">Customer confirmed - ready for Order ID</span>' : ''}
@@ -2400,6 +2411,49 @@ function renderConversationOrderCards() {
   listEl.querySelectorAll('.inbox-confirm-bot-order-btn').forEach((btn) => {
     btn.addEventListener('click', () => confirmBotOrder(btn.dataset.order, btn));
   });
+  listEl.querySelectorAll('.inbox-order-cod-input').forEach((input) => {
+    input.addEventListener('change', () => setOrderCod(input.dataset.order, input));
+  });
+}
+
+// One call for every order on the card list, then re-render so the COD badge / switch show.
+async function fetchOrderCodFlags(orders) {
+  const orderNos = orders.map((o) => o.order_no);
+  if (orderNos.length === 0) return;
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_order_cod', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_nos: orderNos
+  });
+  if (error) {
+    console.warn('COD flags could not be loaded:', error.message);
+    return;
+  }
+  (data || []).forEach((r) => orderCodCache.set(r.order_no, { is_cod: !!r.is_cod, cod_set_by: r.cod_set_by }));
+  if (conversationOrders === orders) renderConversationOrderCards();
+}
+
+async function setOrderCod(orderNo, input) {
+  const on = input.checked;
+  if (on && !confirm(`Mark order ${orderNo} as cash on delivery? It can then be confirmed with no payment - the rider collects the full amount on delivery.`)) {
+    input.checked = false;
+    return;
+  }
+  input.disabled = true;
+  const { error } = await supabaseClient.rpc('admin_set_automated_order_cod', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo,
+    p_is_cod: on
+  });
+  input.disabled = false;
+  if (error) {
+    alert(`Could not change cash on delivery: ${error.message}`);
+    input.checked = !on;
+    return;
+  }
+  orderCodCache.set(orderNo, { is_cod: on, cod_set_by: currentSession.username });
+  renderConversationOrderCards();
 }
 
 function toggleOrderCardExpanded(orderNo) {

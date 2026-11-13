@@ -2,6 +2,20 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-13
+
+- **Cash on delivery (COD) on Conversations orders.** Unconfirmed orders get a "Cash on delivery (COD)" switch next to Confirm Order, and a COD badge on the card. A COD order can be confirmed with no payment by any staff (before, only super users could). Who set it and when is saved; a non-super user turning it on sends a Telegram alert. Can't be changed once confirmed ([supabase_automated_order_cod.sql](sql/supabase_automated_order_cod.sql), [gmaConversations.js](docs/js/gmaConversations.js) `?v=cod1`).
+- COD follow-up: Online Orders shows a COD badge on the New tab and on confirmed orders (list, phone cards, order card, Payment FactBox), and the New tab's order dialog has the same COD switch ([onlineOrders.js](docs/js/onlineOrders.js) / [onlineNewOrders.js](docs/js/onlineNewOrders.js) `?v=cod1`, new `staff_list_online_order_cod`). Turning COD on also stops the unpaid reminder / 48h auto-cancel.
+- Alice: `create_order` takes `cash_on_delivery` - only when the customer asks for COD (she never offers it), never for custom builds (refused server-side too). Saves the order as COD with no pay link, sends a Telegram alert, and she tells the customer staff will review it ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts), not deployed yet).
+
+- Added a read-only check of how much the portal chat bubble is used: staff-to-staff messages vs. chats with Alice, per conversation, with no message text shown ([supabase_portal_chat_usage_check.sql](sql/supabase_portal_chat_usage_check.sql)).
+- Added a read-only list of portal chat messages with their text, filterable by a pair of people, 1-on-1 chats only (on by default, even with no names set), Alice (hidden by default) and number of days ([supabase_portal_chat_read_messages.sql](sql/supabase_portal_chat_read_messages.sql)).
+
+- **Claude spend tracking.** Anthropic receipts (API credit top-ups and the Claude Pro subscription) now log to the Expense Journal automatically in PHP and USD: a Gmail Apps Script ([gmail-claude-receipts.gs](tools/gmail-claude-receipts.gs)) reads each receipt email and posts it to the new `claude-receipt-log` Edge Function, which looks up the day's USD to PHP rate and calls `service_log_claude_receipt`. Duplicates are blocked by Anthropic's receipt number. New categories: `AI-CLAUDE-API`, `AI-CLAUDE-SUB` ([supabase_claude_spend_tracking.sql](sql/supabase_claude_spend_tracking.sql)).
+- Every Claude call from the Edge Functions now records its token usage in `AIUsageLog` ([ai-usage.ts](supabase/functions/_shared/ai-usage.ts), wrapped in all 10 functions that call Claude). New **AI Spend** page ([ai-spend.html](docs/ai-spend.html), [aiSpend.js](docs/js/aiSpend.js), Finance → Spending) shows receipts, usage by feature, model and day, editable model prices, and an estimated credit balance (Console balance you enter + top-ups - usage). `nav.js` ?v=aispend1 on all pages.
+- Gmail script's `START_DATE` now defaults to 2026-11-01, so this month's Claude Pro receipt (Nov 4) gets logged.
+- Deployed `claude-receipt-log` (new, `--no-verify-jwt`) and the 10 Claude-calling functions with their `verify_jwt` settings kept; set the `CLAUDE_RECEIPT_SECRET` secret.
+
 ## 2026-11-12
 
 - **Xendit payout receipts + "you've been paid" notice.** New `payout-receipt.html` (`payoutReceipt.js`) shows one salary / cash advance payout (reference, Xendit payout ID, paid date, masked account, sent by); employees see only their own, payroll officers / super users see any. My Payslips gets a Receipt button per Xendit-paid salary and a "Cash Advances Sent via Xendit" list; Payroll Run / Timesheets get a Receipt link on Paid payouts.

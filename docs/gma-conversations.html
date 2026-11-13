@@ -487,6 +487,15 @@
     .inbox-order-pancake-row a {
       font-size: 11.5px;
     }
+    /* Cash on delivery switch next to Confirm Order (setOrderCod in gmaConversations.js). */
+    .inbox-order-cod-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11.5px;
+      cursor: pointer;
+      user-select: none;
+    }
     /* Key/value rows used inside a subsection box (Delivery/Pickup details) - same row shape as
        .inbox-customer-id's own rows, but without that class's own box chrome (background/border),
        since the parent .inbox-order-subsection already supplies that here. */
@@ -4570,12 +4579,12 @@ Message: ..."></textarea>
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=payoutnotice1"></script>
+  <script src="js/nav.js?v=aispend1"></script>
   <script src="WebAquariumCalculator/custom-aquarium-calculator.js?v=sumpsticker3"></script>
   <script src="js/pullToRefresh.js?v=inner1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/gmaConversations.js?v=locationqr1"></script>
+  <script src="js/gmaConversations.js?v=cod1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

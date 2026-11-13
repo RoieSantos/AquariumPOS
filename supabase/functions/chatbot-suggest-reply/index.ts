@@ -15,6 +15,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 import { READ_ONLY_TOOL_NAMES, buildCurrentTimeLine, buildOnlinePaymentLine, buildFacebookPageLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
@@ -121,7 +122,7 @@ Deno.serve(async (req) => {
   try {
     const suggestion = await runChatbotTurn({
       supabase,
-      anthropic: new Anthropic({ apiKey: anthropicApiKey }),
+      anthropic: trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'chatbot-suggest-reply'),
       model,
       psid,
       pageId: (conv.PageId as string | null) ?? undefined,

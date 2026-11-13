@@ -27,6 +27,66 @@ let newOrderVariantResults = [];
 let newOrderCreating = false;
 // Action-bar buttons hidden while the New tab is showing, restored when leaving it.
 let newOrdersHiddenCmds = [];
+// Cash on delivery per order_no ({ is_cod, cod_set_by }) - admin_list_automated_order_cod /
+// admin_set_automated_order_cod (sql/supabase_automated_order_cod.sql). A COD order can be confirmed with
+// no payment.
+let newOrderCod = new Map();
+
+function newOrderCodBadgeHtml(orderNo) {
+  const c = newOrderCod.get(orderNo);
+  return c?.is_cod ? ` <span class="badge badge-warning" title="Cash on delivery${c.cod_set_by ? ` - marked by ${escapeHtml(c.cod_set_by)}` : ''}">COD</span>` : '';
+}
+
+async function loadNewOrderCodFlags(orderNos, myGeneration) {
+  if (!orderNos.length) return;
+  const { data, error } = await supabaseClient.rpc('admin_list_automated_order_cod', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_nos: orderNos
+  });
+  if (error) { console.warn('admin_list_automated_order_cod:', error.message); return; }
+  if (myGeneration !== newOrdersGeneration) return;
+  (data || []).forEach((r) => newOrderCod.set(r.order_no, { is_cod: !!r.is_cod, cod_set_by: r.cod_set_by }));
+  document.querySelectorAll('[data-cod-slot]').forEach((el) => { el.innerHTML = newOrderCodBadgeHtml(el.dataset.codSlot); });
+  if (selectedNewOrderNo) showNewOrderFactbox(selectedNewOrderNo);
+  if (openNewOrderNo) renderNewOrderCodToggle(openNewOrderNo);
+}
+
+// "Cash on delivery (COD)" switch in the order dialog's info block.
+function renderNewOrderCodToggle(orderNo) {
+  const slot = document.getElementById('newOrderCodSlot');
+  if (!slot) return;
+  const c = newOrderCod.get(orderNo);
+  slot.innerHTML = `<label class="no-cod-toggle" title="Customer pays cash on delivery - lets this order be confirmed with no payment">
+      <input type="checkbox" id="newOrderCodInput"${c?.is_cod ? ' checked' : ''}${c ? '' : ' disabled'}> Cash on delivery (COD)
+    </label>${c?.is_cod && c.cod_set_by ? ` <span class="muted">by ${escapeHtml(c.cod_set_by)}</span>` : ''}`;
+  document.getElementById('newOrderCodInput').addEventListener('change', (e) => setNewOrderCod(orderNo, e.target));
+}
+
+async function setNewOrderCod(orderNo, input) {
+  const on = input.checked;
+  if (on && !confirm(`Mark order ${orderNo} as cash on delivery? It can then be confirmed with no payment - the rider collects the full amount on delivery.`)) {
+    input.checked = false;
+    return;
+  }
+  input.disabled = true;
+  const { error } = await supabaseClient.rpc('admin_set_automated_order_cod', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_no: orderNo,
+    p_is_cod: on
+  });
+  input.disabled = false;
+  if (error) {
+    input.checked = !on;
+    newOrderActionError(`Could not change cash on delivery: ${error.message}`);
+    return;
+  }
+  newOrderCod.set(orderNo, { is_cod: on, cod_set_by: currentSession.username });
+  document.querySelectorAll(`[data-cod-slot="${CSS.escape(orderNo)}"]`).forEach((el) => { el.innerHTML = newOrderCodBadgeHtml(orderNo); });
+  if (selectedNewOrderNo === orderNo) showNewOrderFactbox(orderNo);
+  renderNewOrderCodToggle(orderNo);
+}
 
 function newOrderMoney(value) {
   return Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -205,7 +265,7 @@ async function loadNewOrders() {
       const balance = Number(o.estimated_total || 0) - Number(o.amount_paid || 0);
       return `
         <tr class="clickable-row${o.order_no === selectedNewOrderNo ? ' selected' : ''}" data-new-order="${escapeHtml(o.order_no)}">
-          <td><a class="bc-doc-no" href="#" data-open-new="${escapeHtml(o.order_no)}" title="Open this order">${escapeHtml(o.order_no)}</a></td>
+          <td><a class="bc-doc-no" href="#" data-open-new="${escapeHtml(o.order_no)}" title="Open this order">${escapeHtml(o.order_no)}</a><span data-cod-slot="${escapeHtml(o.order_no)}">${newOrderCodBadgeHtml(o.order_no)}</span></td>
           <td>${newOrderDate(o.created_at_utc)}</td>
           <td>${escapeHtml(o.created_by || '')}</td>
           <td>${escapeHtml(o.customer_name || '')}</td>
@@ -222,6 +282,7 @@ async function loadNewOrders() {
     ? '<div class="oo-mc-empty">No new orders waiting to be confirmed.</div>'
     : newOrderPhoneCardsHtml(rows);
   updateNewOrderActions();
+  loadNewOrderCodFlags(rows.map((o) => o.order_no), myGeneration);
 
   renderPaginationBar(
     document.getElementById('newOrdersPaginationBar'),
@@ -245,7 +306,7 @@ function newOrderPhoneCardsHtml(rows) {
       <article class="oo-pc tone-todo" data-open-new="${no}" role="button" tabindex="0" aria-label="Open order ${no}">
         <header class="oo-pc-head">
           <span class="oo-pc-id">${no}</span>
-          <span class="oo-pc-status">New</span>
+          <span class="oo-pc-status">New</span><span data-cod-slot="${no}">${newOrderCodBadgeHtml(o.order_no)}</span>
           <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         <div class="oo-pc-customer">${escapeHtml(o.customer_name || 'No name on order')}</div>
@@ -355,7 +416,8 @@ function showNewOrderFactbox(orderNo) {
     fee > 0 ? newFactRow('Delivery Fee', peso(fee)) : '',
     newFactRow('Total', peso(total)),
     newFactRow('Amount Paid', peso(paid)),
-    newFactRow('Balance', balance > 0 ? peso(balance) : balance < 0 ? `${peso(balance)} <span class="muted">(over)</span>` : peso(0), balance > 0 ? 'oc-fact-balance-due' : '')
+    newFactRow('Balance', balance > 0 ? peso(balance) : balance < 0 ? `${peso(balance)} <span class="muted">(over)</span>` : peso(0), balance > 0 ? 'oc-fact-balance-due' : ''),
+    newOrderCod.get(o.order_no)?.is_cod ? newFactRow('Payment', '<span class="badge badge-warning">COD</span> collect on delivery') : ''
   ].join('')}</dl>
   <dl class="bc-facts" id="newOrderFactPaidVia" style="margin-top:8px;">${keepPaidVia || (paid > 0 ? newFactRow('Paid Via', '<span class="muted">...</span>') : '')}</dl>`;
 
@@ -432,11 +494,13 @@ async function openNewOrderDialog(orderNo) {
   if (order.customer_email) info.push(['Email', escapeHtml(order.customer_email)]);
   if (delivery) info.push(['Delivery Address', escapeHtml(order.delivery_address || '(no address)'), true]);
   if (order.notes) info.push(['Notes', escapeHtml(order.notes), true]);
+  info.push(['Payment', '<span id="newOrderCodSlot"></span>', true]);
   setNewOrderEditMode(false);
   openNewOrderLines = [];
   document.getElementById('newOrderEditBtn').disabled = true;
   document.getElementById('newOrderInfo').innerHTML = `<div class="no-info-grid">${info.map(([label, value, wide]) =>
     `<div class="no-info-item${wide ? ' no-edit-wide' : ''}"><span class="no-info-label">${label}</span><span class="no-info-value">${value}</span></div>`).join('')}</div>`;
+  renderNewOrderCodToggle(orderNo);
   document.getElementById('newOrderLines').innerHTML = '<tr><td colspan="4" class="cell-msg">Loading...</td></tr>';
   document.getElementById('newOrderFoot').innerHTML = '';
   dialog.classList.remove('hidden');

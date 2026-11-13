@@ -1327,7 +1327,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: 'create_order',
     description:
-      'Saves a REAL order for the customer in the store\'s system, right now (staff then review and confirm it - it is not sent to the order system until they do). Only ever call this after ALL of the following are true: (1) EITHER (only while ONLINE PAYMENT STATUS is OFF) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), OR check_online_payment said online payment is available and the customer chose to pay online (then pass pay_online: true - no proof needed), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. See the PLACING ORDERS system prompt rules for whether this is a second/new order for a conversation that already has one. After a successful call, follow the PLACING ORDERS receipt rule (order number, recap, receiptUrl, confirmation ask) and say staff will review and confirm it shortly.',
+      'Saves a REAL order for the customer in the store\'s system, right now (staff then review and confirm it - it is not sent to the order system until they do). Only ever call this after ALL of the following are true: (1) EITHER (only while ONLINE PAYMENT STATUS is OFF) the customer has ALREADY sent proof of a downpayment or full payment (a payment screenshot - check the conversation for a prior message acknowledging one; never on a verbal promise to pay later), OR check_online_payment said online payment is available and the customer chose to pay online (then pass pay_online: true - no proof needed), OR the customer themselves asked to pay cash on delivery (then pass cash_on_delivery: true - see the CASH ON DELIVERY rule), (2) you know exactly which items and quantities they want, using ONLY item_code values returned by a prior search_items or list_items_in_category call - never invent, guess, or reuse a code from a different conversation, (3) you have a name for them (offer to use CUSTOMER\'S FACEBOOK NAME if it\'s known - see the system prompt - rather than always asking them to type it), a valid PH mobile number, and their address (never ask "pickup or delivery" - just ask for the address to save; always pass fulfillment_type as Delivery). Ask for whatever is still missing before calling this, do not guess it. See the PLACING ORDERS system prompt rules for whether this is a second/new order for a conversation that already has one. After a successful call, follow the PLACING ORDERS receipt rule (order number, recap, receiptUrl, confirmation ask) and say staff will review and confirm it shortly.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1355,6 +1355,7 @@ export const TOOLS: Anthropic.Tool[] = [
         },
         notes: { type: 'string', description: 'Optional - anything else staff should know about this order as a whole (not item-specific - use each item\'s own notes for that).' },
         pay_online: { type: 'boolean', description: 'true ONLY when check_online_payment said online payment is available and the customer chose to pay online. Saves the order unpaid and returns its payLink. Leave out when they already sent payment proof.' },
+        cash_on_delivery: { type: 'boolean', description: 'true ONLY when the customer themselves asked to pay cash on delivery (COD) - never offer it. Saves the order unpaid, with no pay link, marked COD for staff to review. Not allowed with a custom build (CUSTOM-* line). Don't pass pay_online with it.' },
         pricing: { type: 'string', enum: ['retail', 'wholesale'], description: 'retail (default) or wholesale - wholesale ONLY when the customer chose wholesale pricing (WHOLESALE PRICING rule). The server prices each eligible item at its wholesale price and refuses if the wholesale items total under the PHP 5,000 minimum - never pass a price yourself.' }
       },
       required: ['customer_name', 'customer_phone', 'fulfillment_type', 'location', 'items']
@@ -1600,7 +1601,8 @@ export function buildSystemPrompt(
     '- Name: if CUSTOMER\'S FACEBOOK NAME is given below, ask the customer if you can just use that name for the order (e.g. "Can I use your Facebook name, {name}, for this order?") - if they say yes, use it as customer_name without asking them to type it out. If they say no, or no Facebook name is known, ask what name to use instead.',
     '- Variant / color: many products come in options - aquariums and sumps in Black Sealant or Clear Sealant, stands in Black Paint or White Paint. Before ordering one, make sure you know which option the customer wants (ask if they haven\'t said), and pass it in that item\'s variant field (e.g. variant: "Black Sealant") - NOT only in notes, since notes don\'t change which variant gets tagged. If create_order replies that an item needs a variant, ask the customer to choose from the options it lists, then call it again. This is for items bought on their own - for a part INSIDE a set (its stand, its tank), the choice goes in the set line\'s notes, never as an extra item line (see COMPLETE SETUP (c)).',
     '- Address: never ask the customer whether this is "pickup or delivery" - just ask for their address so it can be saved on the order, then always pass fulfillment_type as Delivery.',
-    '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation (only while online payment is OFF), or under PAYING ONLINE (pay_online: true, while it is LIVE).',
+    '- Never call create_order on a verbal promise to pay "later" or "after" - only once payment proof has actually been sent and acknowledged earlier in this same conversation (only while online payment is OFF), or under PAYING ONLINE (pay_online: true, while it is LIVE), or under CASH ON DELIVERY (cash_on_delivery: true).',
+    '- CASH ON DELIVERY: never offer or suggest cash on delivery (COD) yourself - the normal way to pay is the pay link (or, while online payment is OFF, the usual payment methods). Only when the customer themselves asks to pay cash on delivery: it is not available for a custom-built aquarium / stand / sump / sticker (those need at least a 50% down payment first - explain that kindly). For ready-made items, once the items, name, number and address are settled, call create_order with cash_on_delivery: true (and no pay_online). Never promise that COD is accepted: say the order is saved as cash on delivery, our team will review it and confirm it with them, and they pay the full amount in cash to the rider when it arrives. Follow the receipt rule below as usual, but share no pay link and don't say it will be cancelled for not paying.',
     '- PAYING ONLINE: the ONLINE PAYMENT STATUS line (given with every message) says whether online payment is live right now - follow it from the very first time you talk about paying or list what you need for an order, without waiting to call check_online_payment. If it is OFF, don\'t mention online payment and use the usual payment methods in STORE INFO with a payment screenshot. If it is LIVE, the pay link is the ONLY way to pay: never ask for a payment screenshot or proof, never offer "pay by the usual methods and send a screenshot", and never give bank / GCash details - once the items, name, number and address are settled, call create_order with pay_online: true. (If a customer sends a payment screenshot anyway, don\'t ask for another - say our team will check it, and escalate_to_staff so staff can verify it.) Then follow the receipt rule below, but instead of saying the team will review it: share the result\'s payLink, exact and unchanged, and say they can pay the downPayment (at least 50%) or the full total, and that cards add a fee shown on the pay page. If requiresStaffReview is false, say the order is confirmed automatically once at least 50% is paid. If it is true, say our team will review and confirm it after payment. Also say an unpaid order is cancelled automatically after 2 days. Until a payment shows in get_order_status, never say the order is paid or confirmed. If this chat already has an unpaid order for the same items, send its payLink from get_order_status instead of creating another order. If their order was auto-cancelled and they still want it, create a new one.',
     // Per "since Gcash is not yet live.. the customers can use QR PH instead" - GCash isn't activated on the live
     // Xendit account, so the checkout has no GCash button; GCash pays the QR Ph code instead. Drop this rule (and
@@ -3681,9 +3683,12 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       }
       if (items.length === 0) return 'Cannot place the order - at least one item is required.';
 
-      const payOnline = input.pay_online === true;
+      // Cash on delivery (sql/supabase_automated_order_cod.sql): saved unpaid, no pay link, so it is never
+      // auto-cancelled for not paying; staff can confirm it with no payment.
+      const cashOnDelivery = input.cash_on_delivery === true;
+      const payOnline = input.pay_online === true && !cashOnDelivery;
       if (simulate) {
-        return `SANDBOX MODE - no real order was created. If this were live, an order for ${customerName} with ${items.length} item(s) would be saved ${payOnline ? 'unpaid and the result would include its payLink, downPayment and requiresStaffReview' : 'for staff to review and confirm'}.`;
+        return `SANDBOX MODE - no real order was created. If this were live, an order for ${customerName} with ${items.length} item(s) would be saved ${cashOnDelivery ? 'as cash on delivery (unpaid, no pay link) for staff to review and confirm' : payOnline ? 'unpaid and the result would include its payLink, downPayment and requiresStaffReview' : 'for staff to review and confirm'}.`;
       }
       if (!pageId) return 'Cannot place the order right now - missing conversation context. Let the customer know staff will place it manually.';
       if (payOnline) {
@@ -3704,6 +3709,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const built = await buildBotOrderLines(supabase, items, { wholesale });
       if (typeof built === 'string') return built;
       const { orderLines, estimatedTotal, wholesaleTotal } = built;
+      if (cashOnDelivery && orderLines.some((l) => l.ItemCode === null)) {
+        return 'Cannot place the order as cash on delivery - custom builds need at least a 50% down payment first, and no order was saved. Explain that kindly, and offer the usual way to pay.';
+      }
 
       const { data: orderNoData, error: orderNoError } = await supabase.rpc('_next_no_series_number', {
         p_series_code: 'AUTOMATED-ORDER',
@@ -3722,6 +3730,9 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         Notes: [wholesale ? `[WHOLESALE pricing - wholesale items PHP ${wholesaleTotal.toFixed(2)}, min PHP ${WHOLESALE_MIN_TOTAL}]` : '', notes]
           .filter(Boolean).join('\n') || null,
         IsWholesale: wholesale,
+        IsCOD: cashOnDelivery,
+        CodSetBy: cashOnDelivery ? botStaffName(psid) : null,
+        CodSetAtUtc: cashOnDelivery ? new Date().toISOString() : null,
         Status: 'New',
         EstimatedTotal: estimatedTotal,
         Location: location,
@@ -3736,6 +3747,14 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         AwaitingOnlinePaymentSinceUtc: payOnline ? new Date().toISOString() : null
       });
       if (insertOrderError) return `Could not place the order: ${insertOrderError.message}`;
+      if (cashOnDelivery) {
+        // Same alert as a non-super user ticking COD on the order card. Never blocks the order.
+        try {
+          await supabase.rpc('_telegram_send_message', {
+            p_text: `💵 COD order\n${botStaffName(psid)} saved order ${orderNo} (${customerName}) as cash on delivery - the customer asked for it. Staff review needed.\nTotal: PHP ${estimatedTotal.toFixed(2)}`
+          });
+        } catch (_) { /* alert only */ }
+      }
 
       // Feeds the CRM too - a customer who goes straight to ordering without an earlier
       // save_customer_info call still ends up on file for next time. Never raises past this
@@ -3773,7 +3792,8 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
         estimatedTotal,
         pricing: wholesale ? 'wholesale' : 'retail',
         lines: orderLines.map((l) => ({ item: l.ItemName, quantity: l.Quantity, price: l.Price })),
-        status: payLink ? 'Saved unpaid - waiting for online payment' : 'Saved - waiting for staff to review and confirm',
+        status: cashOnDelivery ? 'Saved as cash on delivery - waiting for staff to review and confirm' : payLink ? 'Saved unpaid - waiting for online payment' : 'Saved - waiting for staff to review and confirm',
+        ...(cashOnDelivery ? { cashOnDelivery: true } : {}),
         ...(payLink ? {
           payLink,
           downPayment: Math.ceil(estimatedTotal / 2),

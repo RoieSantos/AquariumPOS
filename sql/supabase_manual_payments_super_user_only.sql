@@ -20,6 +20,8 @@
 -- Run AFTER supabase_xendit_auto_confirm.sql, supabase_bot_orders_portal_confirm.sql and
 -- supabase_ao_order_payment_edit.sql. Safe to re-run. If supabase_xendit_auto_confirm.sql is ever re-run,
 -- run this one again afterwards (it redefines admin_confirm_bot_order without the payment check).
+-- NOTE: supabase_automated_order_cod.sql redefines admin_confirm_bot_order again with a COD exception - if
+-- you re-run THIS file, run that one again afterwards too.
 
 -- ---------------------------------------------------------------------------
 -- Helpers

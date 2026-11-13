@@ -22,6 +22,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 
 const DEFAULT_MODEL = 'claude-opus-5-5';
 const MEDIA_BUCKET = 'video-ad-media';
@@ -280,7 +281,7 @@ Deno.serve(async (req) => {
   const system = `${SYSTEM_PROMPT}\n\nAbout the business (real facts - use the ones that fit; never contradict them or invent others):\n${await businessFacts(supabase)}`;
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content }];
   const products = new Map<string, ProductHit>();
-  const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+  const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'video-ad-generate');
   const model = Deno.env.get('VIDEO_AD_MODEL') || DEFAULT_MODEL;
 
   let plan: Record<string, unknown> | null = null;

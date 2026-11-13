@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Spend - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>AI Spend</h1>
+    <p class="muted">
+      What Claude (Alice and the other AI features) costs. Top-ups and the Claude subscription are
+      logged automatically from the Anthropic receipt emails into the Expense Journal. Usage is
+      recorded on every AI reply and priced from the table at the bottom, so it's an estimate - the
+      Claude Console stays the exact figure. Only visible to super users.
+    </p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label for="fromInput">From</label>
+          <input type="date" id="fromInput" />
+          <label for="toInput">To</label>
+          <input type="date" id="toInput" />
+          <button class="btn btn-secondary btn-sm" type="button" data-range="today">Today</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-range="7d">Last 7 days</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-range="month">This month</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-range="lastmonth">Last month</button>
+        </div>
+      </div>
+      <div id="loadError" class="error-text hidden"></div>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label">Estimated credit left</div>
+          <div class="stat-value" id="balanceValue">-</div>
+          <div class="muted" id="balanceNote"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Usage in range</div>
+          <div class="stat-value" id="usageValue">-</div>
+          <div class="muted" id="usageNote"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Paid to Anthropic in range</div>
+          <div class="stat-value" id="paidValue">-</div>
+          <div class="muted" id="paidNote"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Average per day (last 7 days)</div>
+          <div class="stat-value" id="avgValue">-</div>
+          <div class="muted" id="avgNote"></div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-group-title">Set Console Balance</div>
+        <p class="muted" style="margin-top:0;">
+          Open the Claude Console's Billing page and type the credit balance it shows. The estimate
+          above then counts from this moment: plus each API top-up (excluding VAT), minus usage.
+          Re-enter it now and then to correct any drift.
+        </p>
+        <div id="balanceError" class="error-text hidden"></div>
+        <form id="balanceForm" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label for="balanceInput">Balance (USD)</label>
+          <input type="number" id="balanceInput" min="0" step="0.01" placeholder="0.00" required style="max-width:160px;" />
+          <button class="btn btn-primary" id="balanceBtn" type="submit">Save</button>
+        </form>
+      </div>
+
+      <h2>Receipts (Top-ups &amp; Subscription)</h2>
+      <p class="muted">
+        Peso amount uses that day's USD rate. If your bank or card charged a different peso amount,
+        click Fix PHP to change it (the Expense Journal entry follows).
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date Paid</th>
+              <th>Type</th>
+              <th>Anthropic Receipt</th>
+              <th>Credits / Item (USD)</th>
+              <th>VAT (USD)</th>
+              <th>Total (USD)</th>
+              <th>Rate</th>
+              <th>Total (PHP)</th>
+              <th>Expense No</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="receiptTableBody"><tr><td colspan="10" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2>Usage by Feature</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Feature</th><th>AI Calls</th><th>Cost (USD)</th><th>Share</th></tr></thead>
+          <tbody id="sourceTableBody"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2>Usage by Model</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Model</th><th>AI Calls</th><th>Cost (USD)</th></tr></thead>
+          <tbody id="modelTableBody"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2>Usage by Day</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>AI Calls</th><th>Cost (USD)</th></tr></thead>
+          <tbody id="dayTableBody"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2>Model Prices (USD per million tokens)</h2>
+      <p class="muted">
+        Used to price the usage above. Check Anthropic's pricing page if a cost looks off, and update
+        the row here.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Model</th><th>Input</th><th>Output</th><th>Cache Write</th><th>Cache Read</th><th></th></tr></thead>
+          <tbody id="pricingTableBody"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=payoutreceipt1"></script>
+  <script src="js/nav.js?v=aispend1"></script>
+  <script src="js/aiSpend.js?v=1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

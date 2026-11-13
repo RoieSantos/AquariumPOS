@@ -357,7 +357,32 @@ function releaseBadgeHtml(order) {
 }
 
 function orderBadgesHtml(order) {
-  return `${otherBranchBadgeHtml(order)} ${glassBadgeHtml(order)} ${customBadgeHtml(order)} ${gmaBadgeHtml(order)} ${prodOrderBadgeHtml(order)} ${releaseBadgeHtml(order)}`;
+  return `${codBadgeHtml(order)} ${otherBranchBadgeHtml(order)} ${glassBadgeHtml(order)} ${customBadgeHtml(order)} ${gmaBadgeHtml(order)} ${prodOrderBadgeHtml(order)} ${releaseBadgeHtml(order)}`;
+}
+
+// Cash on delivery (attachCod, sql/supabase_automated_order_cod.sql) - the rider collects the balance.
+function codBadgeHtml(order) {
+  if (!order.is_cod) return '';
+  return `<span class="badge badge-warning" title="Cash on delivery - collect the balance on delivery${order.cod_set_by ? ` (marked by ${escapeHtml(order.cod_set_by)})` : ''}">COD</span>`;
+}
+
+async function attachCod(rows) {
+  rows.forEach((o) => { o.is_cod = false; o.cod_set_by = null; });
+  const ids = rows.filter((o) => /^AO-/i.test(String(o.order_id))).map((o) => String(o.order_id));
+  if (!ids.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_list_online_order_cod', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_ids: ids
+  });
+  if (error) {
+    console.warn('staff_list_online_order_cod:', error.message);
+    return;
+  }
+  const byOrder = new Map((data || []).map((r) => [String(r.order_id), r.cod_set_by]));
+  rows.forEach((o) => {
+    if (byOrder.has(String(o.order_id))) { o.is_cod = true; o.cod_set_by = byOrder.get(String(o.order_id)); }
+  });
 }
 
 // "Assigned To" dropdown(s) - per "maybe each order can be assign a tank maker and a stand maker.
@@ -2604,7 +2629,7 @@ function orderRowsHtml(orders) {
         <td>${makerCellHtml(o, 'tank', o.has_aquarium_line, o.assigned_tank_maker, o.assigned_tank_maker_name)}</td>
         <td>${makerCellHtml(o, 'stand', o.has_stand_line, o.assigned_stand_maker, o.assigned_stand_maker_name)}</td>
         <td>${assigneeCellHtml(o, true, o.assigned_dispatcher, o.assigned_dispatcher_name)}${productionDoneTickHtml(o, 'dispatcher')}</td>
-        <td>${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
+        <td>${codBadgeHtml(o)} ${otherBranchBadgeHtml(o)} ${glassBadgeHtml(o)} ${customBadgeHtml(o)} ${gmaBadgeHtml(o)}</td>
         <td>${prodOrderBadgeHtml(o)}</td>
         <td>${noteCellHtml(o)}</td>
         ${posFieldCellsHtml(o, walkin ? 'rest' : 'all')}
@@ -2665,7 +2690,7 @@ function orderPhoneCardsHtml(orders) {
           <div><span>Paid</span><b>${phonePeso(o.amount_paid)}</b></div>
           <div class="${balance > 0.005 && tone !== 'cancel' ? 'due' : 'clear'}"><span>Balance</span><b>${balance > 0.005 ? phonePeso(balance) : 'Paid'}</b></div>
         </div>`;
-    const badges = [otherBranchBadgeHtml(o), glassBadgeHtml(o), customBadgeHtml(o), gmaBadgeHtml(o), prodOrderBadgeHtml(o), releaseBadgeHtml(o)].filter((b) => b && b.trim()).join(' ');
+    const badges = [codBadgeHtml(o), otherBranchBadgeHtml(o), glassBadgeHtml(o), customBadgeHtml(o), gmaBadgeHtml(o), prodOrderBadgeHtml(o), releaseBadgeHtml(o)].filter((b) => b && b.trim()).join(' ');
     const note = noteCellHtml(o);
     return `
       <article class="oo-pc tone-${tone}" data-open-order="${id}" role="button" tabindex="0" aria-label="Open order ${id}">
@@ -3165,7 +3190,7 @@ function showListPayment(kind, id) {
   body.innerHTML = `<dl class="bc-facts">${rows.map(([label, v]) => {
     const text = v === null || v === undefined || v === '' ? '<span class="muted">-</span>' : `₱${Number(v).toFixed(2)}`;
     return `<dt>${label}</dt><dd${label === 'Balance' && balance > 0 ? ' class="oc-fact-balance-due"' : ''}>${text}</dd>`;
-  }).join('')}</dl>`;
+  }).join('')}${kind === 'online' && o.is_cod ? '<dt>Payment</dt><dd><span class="badge badge-warning">COD</span> collect on delivery</dd>' : ''}</dl>`;
   if (kind === 'online' && !hidePrices() && Number(o.amount_paid) > 0) {
     body.insertAdjacentHTML('beforeend', '<dl class="bc-facts" id="orderListPaidVia"><dt>Paid Via</dt><dd class="muted">...</dd></dl>');
     showListPaidVia(o);
@@ -7730,7 +7755,8 @@ async function loadOrders(search, status) {
     attachProductionOrders(rows),
     attachProductionRequests(rows),
     attachReleaseSummary(rows),
-    attachGmaPages(rows)
+    attachGmaPages(rows),
+    attachCod(rows)
   ]);
   if (myGeneration !== loadGeneration) return;
 

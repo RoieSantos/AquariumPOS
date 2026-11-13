@@ -17,6 +17,7 @@
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 import { getPageAccessToken, hasAnyPageAccessToken } from '../_shared/page-tokens.ts';
 import { isWithinBotSchedule } from '../_shared/bot-schedule.ts';
 
@@ -288,7 +289,7 @@ Deno.serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+  const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'chatbot-followup-dispatcher');
 
   try {
     // Not tied to the follow-up settings or bot hours: unpaid pay-link orders still need to expire.

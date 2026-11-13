@@ -15,6 +15,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 
 const DEFAULT_MODEL = 'claude-opus-5-5';
 const MAX_BASE64_LENGTH = 7_000_000;
@@ -59,7 +60,7 @@ const UNREAD: SlipRead = { readable: false, amount: null, deposit_date: null, re
 
 async function readSlip(anthropicApiKey: string, imageBase64: string): Promise<SlipRead> {
   try {
-    const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+    const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'tender-deposit-read-slip');
     const response = await anthropic.beta.messages.create({
       model: Deno.env.get('TENDER_SLIP_MODEL') || DEFAULT_MODEL,
       max_tokens: 16000,

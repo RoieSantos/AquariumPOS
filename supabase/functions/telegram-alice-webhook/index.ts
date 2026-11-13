@@ -36,6 +36,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
+import { trackAiUsage } from '../_shared/ai-usage.ts';
 import { buildCurrentTimeLine, buildOnlinePaymentLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
@@ -211,7 +212,7 @@ Deno.serve(async (req) => {
   ];
 
   const effectiveModel = (aiSettings?.AiModel as string | undefined)?.trim() || model;
-  const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+  const anthropic = trackAiUsage(new Anthropic({ apiKey: anthropicApiKey }), 'telegram-alice-webhook');
 
   let finalText: string;
   try {
