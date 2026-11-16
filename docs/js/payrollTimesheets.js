@@ -85,17 +85,23 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
   const headerCells = dates
     .map((d, i) => `<th class="num">${WEEKDAY_LABELS[i]} <span class="muted" style="font-weight:normal;">${d.getMonth() + 1}/${d.getDate()}</span></th>`)
     .join('');
-  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th class="num">Total</th><th class="num" title="Weekly-cycle employees only: gross pay for this week assuming perfect attendance (standard hours every day, no overtime, plus paid rest day), before the cash advance is deducted">Weekly Pay</th><th class="num">Cash Advance</th><th>Method</th></tr>`;
+  thead.innerHTML = `<tr><th>Employee</th>${headerCells}<th class="num">Total</th><th class="num" title="Weekly-cycle employees only: gross pay for this week assuming perfect attendance (standard hours every day, no overtime, plus paid rest day), before the cash advance is deducted">Weekly Pay</th><th class="num">Cash Advance</th><th>Method</th><th class="num" title="Approx. still to pay on payday: Weekly Pay minus this week's Cash Advance (weekly-cycle employees only)">To Pay</th></tr>`;
 
   document.getElementById('bulkEntryTableFoot').innerHTML = employeeOptions.length === 0 ? '' : `
     <tr style="font-weight:600;">
-      <td colspan="${dates.length + 3}" class="num">Total Cash Advance for the week</td>
+      <td colspan="${dates.length + 2}" class="num">Total for the week</td>
+      <td id="weeklyPayTotalCell" class="num">0.00</td>
       <td id="caTotalCell" class="num">0.00</td>
       <td id="caTotalByMethodCell" class="muted" style="font-weight:normal; white-space:nowrap;"></td>
+      <td id="toPayTotalCell" class="num">0.00</td>
+    </tr>
+    <tr style="font-weight:700;">
+      <td colspan="${dates.length + 5}" class="num" title="Perfect-attendance Weekly Pay of every weekly-cycle employee, minus the cash advances given this week. Semi-monthly employees and other deductions are not included.">Approx. budget needed to close the week (Weekly Pay - Cash Advances)</td>
+      <td id="budgetToCloseCell" class="num">0.00</td>
     </tr>`;
 
   if (employeeOptions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="${dates.length + 5}" class="cell-msg">No active employees found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${dates.length + 6}" class="cell-msg">No active employees found.</td></tr>`;
     return;
   }
 
@@ -121,13 +127,14 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
       const caApplied = advance?.status === 'Applied' ? 'data-applied="1" title="Already deducted in a payroll run"'
         : advancePayoutLocked(payout) ? 'data-applied="1" title="Already sent through Xendit"' : '';
       const showXendit = flags.has_account || caMethod === 'Xendit';
+      const weeklyPay = e.pay_cycle === 'Weekly' ? perfectAttendanceWeeklyPay(e, dates) : null;
       return `
-        <tr data-username="${e.username}">
+        <tr data-username="${e.username}"${weeklyPay != null ? ` data-weekly-pay="${weeklyPay}"` : ''}>
           <td>${e.display_name || e.username}</td>
           ${cells}
           <td class="row-total num" style="font-weight:600;">0.00</td>
-          <td class="row-weekly-pay num">${e.pay_cycle === 'Weekly'
-            ? perfectAttendanceWeeklyPay(e, dates).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          <td class="row-weekly-pay num">${weeklyPay != null
+            ? weeklyPay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             : '<span class="muted">-</span>'}</td>
           <td class="qty-cell-wrap num"><input type="number" class="bulk-ca bc-qty-cell" min="0" step="0.01" value="${caValue}" style="width:90px;" placeholder="0.00" ${caLocked ? 'disabled' : ''} ${caApplied} /></td>
           <td class="qty-cell-wrap">
@@ -138,6 +145,7 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
             </select>
             ${advance && advance.method === 'Xendit' ? `<div style="font-size:11px; margin-top:2px;">${advanceStatusHtml(payout || {})}</div>` : ''}
           </td>
+          <td class="row-to-pay num">${weeklyPay != null ? '' : '<span class="muted">-</span>'}</td>
         </tr>
       `;
     })
@@ -148,7 +156,8 @@ function renderWeekGrid(dates, existingByKey, advanceByUsername) {
 }
 
 // Footer: total Cash Advance for the week (saved + typed-but-unsaved cells), split by method so the
-// officer knows how much cash and GCash to have on hand.
+// officer knows how much cash and GCash to have on hand. Also fills each weekly employee's To Pay
+// (Weekly Pay - Cash Advance, never below 0) and the approx. budget needed to close the week.
 function updateCashAdvanceTotal() {
   const totalCell = document.getElementById('caTotalCell');
   if (!totalCell) return;
@@ -156,15 +165,29 @@ function updateCashAdvanceTotal() {
   let cash = 0;
   let digital = 0;
   let xendit = 0;
+  let weeklyPayTotal = 0;
+  let toPayTotal = 0;
+  const fmt = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   document.querySelectorAll('#bulkEntryTableBody tr[data-username]').forEach((row) => {
     const amount = Number(row.querySelector('.bulk-ca')?.value) || 0;
     const method = row.querySelector('.bulk-ca-method')?.value;
     if (method === 'Digital') digital += amount;
     else if (method === 'Xendit') xendit += amount;
     else cash += amount;
+
+    if (row.dataset.weeklyPay != null) {
+      const weeklyPay = Number(row.dataset.weeklyPay) || 0;
+      const toPay = Math.max(Math.round((weeklyPay - amount) * 100) / 100, 0);
+      weeklyPayTotal += weeklyPay;
+      toPayTotal += toPay;
+      const cell = row.querySelector('.row-to-pay');
+      if (cell) cell.textContent = fmt(toPay);
+    }
   });
 
-  const fmt = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  document.getElementById('weeklyPayTotalCell').textContent = fmt(weeklyPayTotal);
+  document.getElementById('toPayTotalCell').textContent = fmt(toPayTotal);
+  document.getElementById('budgetToCloseCell').textContent = fmt(toPayTotal);
   totalCell.textContent = fmt(cash + digital + xendit);
   document.getElementById('caTotalByMethodCell').textContent = `Cash ${fmt(cash)} / GCash ${fmt(digital)}${xendit ? ` / Xendit ${fmt(xendit)}` : ''}`;
 }

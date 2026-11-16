@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Online Orders - RS Pet Stop Portal</title>
   <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
-  <link rel="stylesheet" href="css/bc-list.css?v=redqty5" />
+  <link rel="stylesheet" href="css/bc-list.css?v=fordeliv1" />
   <script src="js/theme.js?v=auto1"></script>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#1d4f91" />
@@ -155,6 +155,8 @@
         <button type="button" class="bc-tab status-summary-pill" data-status="Production Done" title="Every part marked done by the makers">Production Done <span class="status-summary-count" id="statusCountProductionDone">-</span></button>
         <button type="button" class="bc-tab status-summary-pill walkin-pill hidden" data-status="Completed" title="Walk-ins built and picked up by the customer">Completed <span class="status-summary-count" id="statusCountCompleted">-</span></button>
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="To Ship">To Ship <span class="status-summary-count" id="statusCountToShip">-</span></button>
+        <!-- To Ship + on the delivery calendar (sql/supabase_online_order_for_delivery_status.sql) -->
+        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="For Delivery" title="Built and scheduled on the delivery calendar">For Delivery <span class="status-summary-count" id="statusCountForDelivery">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Delivered" title="Marked Done by the Delivery Team (portal only - Pancake still says Shipped)">Delivered <span class="status-summary-count" id="statusCountDelivered">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
@@ -1681,7 +1683,7 @@
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/onlineOrders.js?v=cod1"></script>
+  <script src="js/onlineOrders.js?v=fordeliv1"></script>
   <script src="js/onlineNewOrders.js?v=cod1"></script>
   <script src="js/pwa.js"></script>
 </body>

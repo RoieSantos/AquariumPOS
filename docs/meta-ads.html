@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meta Ads - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Meta Ads</h1>
+    <p class="muted">
+      Facebook/Instagram ad wallet for each store, synced from Meta every morning at 7:00. Each wallet
+      load is logged to the Expense Journal (META-ADS) automatically. Daily charges are what Meta took
+      from the wallet and are shown here to reconcile. Only visible to super users.
+    </p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="unlockBox" class="hidden">
+      <p class="error-text" id="unlockError"></p>
+      <button class="btn btn-primary" id="unlockBtn" type="button">Log Out and Log Back In</button>
+    </div>
+
+    <div id="setupContent" class="hidden">
+      <div class="toolbar">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label for="fromInput">From</label>
+          <input type="date" id="fromInput" />
+          <label for="toInput">To</label>
+          <input type="date" id="toInput" />
+          <button class="btn btn-secondary btn-sm" type="button" data-range="7d">Last 7 days</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-range="month">This month</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-range="lastmonth">Last month</button>
+          <button class="btn btn-primary btn-sm" type="button" id="refreshBtn">Refresh from Meta</button>
+        </div>
+      </div>
+      <div id="loadError" class="error-text hidden"></div>
+      <div id="refreshNote" class="muted hidden"></div>
+
+      <h2>Wallet Balance</h2>
+      <div class="stat-card-grid" id="balanceCards">
+        <div class="stat-card"><div class="muted">Loading...</div></div>
+      </div>
+
+      <h2>In Range</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Store</th>
+              <th>Loads</th>
+              <th>Loaded (expense)</th>
+              <th>Charged by Meta</th>
+            </tr>
+          </thead>
+          <tbody id="summaryTableBody"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+
+      <h2>Loads &amp; Charges</h2>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+        <label for="storeFilter">Store</label>
+        <select id="storeFilter"><option value="">All</option></select>
+        <label for="kindFilter">Type</label>
+        <select id="kindFilter">
+          <option value="">All</option>
+          <option value="funding">Loads only</option>
+          <option value="charge">Charges only</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Store</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>PHP</th>
+              <th>Method / Meta Ref</th>
+              <th>Expense No</th>
+            </tr>
+          </thead>
+          <tbody id="eventTableBody"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=payoutreceipt1"></script>
+  <script src="js/nav.js?v=metaads1"></script>
+  <script src="js/metaAds.js?v=2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

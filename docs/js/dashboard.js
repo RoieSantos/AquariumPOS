@@ -626,7 +626,9 @@ async function loadStatusSummary(session) {
   });
 
   setStatValue('statConfirmed', countsByLabel['Confirmed']);
-  setStatValue('statToShip', countsByLabel['To Ship']);
+  // For Delivery (supabase_online_order_for_delivery_status.sql) is still To Ship - just scheduled.
+  setStatValue('statToShip', countsByLabel['To Ship'] === undefined ? undefined
+    : (countsByLabel['To Ship'] || 0) + (countsByLabel['For Delivery'] || 0));
   setStatValue('statShipped', countsByLabel['Shipped']);
   setStatValue('statCancelled', countsByLabel['Cancelled']);
 }

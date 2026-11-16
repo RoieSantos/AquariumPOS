@@ -27,7 +27,9 @@
 -- deposit_total / deposit_count per row, total_deposited, and a p_deposit filter.
 --
 -- Run AFTER supabase_tender_declaration_tables.sql and supabase_phys_journal_store_manager_access.sql.
--- Safe to re-run. Needs js/tenderDeclarations.js ?v=todeposit2 and js/auth.js / js/nav.js ?v=tenderdeposit1.
+-- Super users can also log the cash as SENT instead of banked (staff_add_tender_cash_sent, no photo).
+--
+-- Safe to re-run. Needs js/tenderDeclarations.js ?v=cashsent1 and js/auth.js / js/nav.js ?v=tenderdeposit1.
 
 -- ============================================================================
 -- 1. Storage bucket, table
@@ -103,6 +105,16 @@ create unique index if not exists "UX_TenderDeclarationDeposits_ImageSha256" on 
   where "ImageSha256" is not null and "DuplicateAllowedBy" is null;
 create unique index if not exists "UX_TenderDeclarationDeposits_ReadId" on public."TenderDeclarationDeposits" ("ReadId")
   where "ReadId" is not null;
+
+-- "Cash sent" instead of a bank deposit, per "put an option there for super user to log if the cash has
+-- been sent instead of doing bank deposit": Method = 'CashSent', no slip photo, SentTo = who it went
+-- to / with. Super users only (staff_add_tender_cash_sent). Counts toward the deposited total like a slip.
+alter table public."TenderDeclarationDeposits" add column if not exists "Method" varchar(20) not null default 'Bank';
+alter table public."TenderDeclarationDeposits" add column if not exists "SentTo" varchar(200);
+alter table public."TenderDeclarationDeposits" alter column "PhotoPath" drop not null;
+alter table public."TenderDeclarationDeposits" drop constraint if exists "CK_TenderDeclarationDeposits_Method";
+alter table public."TenderDeclarationDeposits" add constraint "CK_TenderDeclarationDeposits_Method"
+  check ("Method" in ('Bank', 'CashSent') and ("Method" = 'CashSent' or "PhotoPath" is not null));
 
 -- ============================================================================
 -- 2. Who is calling
@@ -327,6 +339,62 @@ $$;
 
 grant execute on function public.staff_add_tender_deposit(text, text, text, text, numeric, date, text, text, uuid, boolean) to anon;
 
+-- Super user logs that the declared cash was SENT (e.g. handed to the owner / sent with a driver)
+-- instead of deposited at the bank. No slip photo; p_sent_to is required.
+drop function if exists public.staff_add_tender_cash_sent(text, text, text, text, numeric, date, text, text);
+
+create or replace function public.staff_add_tender_cash_sent(
+  p_admin_username text,
+  p_admin_password text,
+  p_warehouse text,
+  p_eod_id text,
+  p_amount numeric,
+  p_sent_date date,
+  p_sent_to text,
+  p_note text
+)
+returns int
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_id int;
+  v_is_super boolean;
+begin
+  perform public._tender_decl_check_access(p_admin_username, p_admin_password, p_warehouse, p_eod_id);
+  select c.is_super into v_is_super from public._tender_decl_caller(p_admin_username, p_admin_password) c;
+  if not v_is_super then
+    raise exception 'Only a super user can log cash as sent.';
+  end if;
+  perform public._tender_decl_require_latest(p_warehouse, p_eod_id);
+
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Amount must be more than zero.';
+  end if;
+  if p_sent_date is null then
+    raise exception 'Date Sent is required.';
+  end if;
+  if p_sent_date > (now() at time zone 'Asia/Manila')::date then
+    raise exception 'Date Sent can''t be in the future.';
+  end if;
+  if nullif(trim(coalesce(p_sent_to, '')), '') is null then
+    raise exception 'Enter who the cash was sent to / with.';
+  end if;
+
+  insert into public."TenderDeclarationDeposits"
+    ("Warehouse", "EODID", "DepositAmount", "DepositDate", "Note", "PhotoPath", "UploadedBy", "Method", "SentTo")
+  values (p_warehouse, p_eod_id, round(p_amount, 2), p_sent_date,
+          left(nullif(trim(coalesce(p_note, '')), ''), 500),
+          null, p_admin_username, 'CashSent', left(trim(p_sent_to), 200))
+  returning "Id" into v_id;
+
+  return v_id;
+end;
+$$;
+
+grant execute on function public.staff_add_tender_cash_sent(text, text, text, text, numeric, date, text, text) to anon;
+
 -- One declaration's deposits, each with a signed photo URL good for an hour.
 drop function if exists public.staff_list_tender_deposits(text, text, text, text);
 
@@ -347,7 +415,9 @@ returns table(
   uploaded_at_utc timestamptz,
   can_delete boolean,
   slip_not_read boolean,
-  duplicate_allowed_by text
+  duplicate_allowed_by text,
+  method text,
+  sent_to text
 )
 language plpgsql
 security definer
@@ -379,7 +449,7 @@ begin
      order by d."DepositDate", d."Id"
   loop
     photo_url := null;
-    if coalesce(trim(v_service_role_key), '') <> '' then
+    if r."PhotoPath" is not null and coalesce(trim(v_service_role_key), '') <> '' then
       begin
         select * into v_response from extensions.http((
           'POST',
@@ -411,8 +481,10 @@ begin
     uploaded_by := r."UploadedBy";
     uploaded_at_utc := r."UploadedAtUtc";
     can_delete := v_is_super or r."UploadedBy" = p_admin_username;
-    slip_not_read := r."SlipKey" is null;
+    slip_not_read := r."SlipKey" is null and r."Method" = 'Bank';
     duplicate_allowed_by := r."DuplicateAllowedBy";
+    method := r."Method";
+    sent_to := r."SentTo";
     return next;
   end loop;
 end;
@@ -457,6 +529,9 @@ begin
   limit 1;
 
   begin
+    if d."PhotoPath" is null then
+      raise exception using errcode = 'P0002'; -- cash sent: no photo to remove
+    end if;
     perform extensions.http_set_curlopt('CURLOPT_TIMEOUT_MS', '15000');
     perform extensions.http((
       'POST',
@@ -538,7 +613,8 @@ returns table(
   total_deposited numeric,
   is_counted boolean,
   total_to_deposit numeric,
-  before_deposit_tracking boolean
+  before_deposit_tracking boolean,
+  cash_sent_count int
 )
 language plpgsql
 security definer
@@ -572,12 +648,14 @@ begin
     ),
     deposits as (
       select p."Warehouse", p."EODID", sum(p."DepositAmount") as amt, count(*)::int as cnt,
-             (count(*) filter (where p."SlipKey" is null))::int as unread
+             (count(*) filter (where p."SlipKey" is null and p."Method" = 'Bank'))::int as unread,
+             (count(*) filter (where p."Method" = 'CashSent'))::int as sent
         from public."TenderDeclarationDeposits" p
        group by p."Warehouse", p."EODID"
     ),
     joined as (
-      select h.*, coalesce(dp.amt, 0) as dep_amt, coalesce(dp.cnt, 0) as dep_cnt, coalesce(dp.unread, 0) as dep_unread
+      select h.*, coalesce(dp.amt, 0) as dep_amt, coalesce(dp.cnt, 0) as dep_cnt, coalesce(dp.unread, 0) as dep_unread,
+             coalesce(dp.sent, 0) as dep_sent
         from ranked h
         left join deposits dp on dp."Warehouse" = h."Warehouse" and dp."EODID" = h."EODID"
     )
@@ -596,7 +674,8 @@ begin
       -- "On latest declaration" one), after the cut-off, with no deposit attached at all.
       coalesce(sum(h."DeclaredCash")
                  filter (where h.counted and h.dep_cnt = 0 and h."DeclDate" > v_deposited_through) over(), 0),
-      coalesce(h."DeclDate" <= v_deposited_through, false)
+      coalesce(h."DeclDate" <= v_deposited_through, false),
+      h.dep_sent
     from joined h
     where (v_warehouse is null or lower(trim(h."Warehouse")) = lower(v_warehouse))
       and (p_from is null or h."DeclDate" >= p_from)

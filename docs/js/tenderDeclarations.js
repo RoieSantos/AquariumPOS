@@ -46,7 +46,8 @@ function depositBadge(row) {
   if (count === 0) return '<span class="badge badge-neutral">No deposit</span>';
   const diff = Number(row.deposit_total || 0) - Number(row.declared_cash || 0);
   const amount = `<div>${formatMoney(row.deposit_total)}</div>`;
-  const unread = Number(row.deposit_unread_count || 0) > 0 ? slipNotReadBadge() : '';
+  const unread = (Number(row.deposit_unread_count || 0) > 0 ? slipNotReadBadge() : '')
+    + (Number(row.cash_sent_count || 0) > 0 ? cashSentBadge() : '');
   if (Math.abs(diff) < 0.005) return amount + '<span class="badge badge-success">Matches</span>' + unread;
   return amount + (diff < 0
     ? `<span class="badge badge-danger">${formatMoney(-diff)} less</span>`
@@ -56,6 +57,11 @@ function depositBadge(row) {
 // The slip's ID couldn't be read, so the duplicate check only covers the exact same photo file.
 function slipNotReadBadge() {
   return '<div><span class="badge badge-warning" title="The slip could not be read, so check this photo by hand">Slip not read</span></div>';
+}
+
+// Logged by a super user as sent (not banked) - no slip photo.
+function cashSentBadge() {
+  return '<div><span class="badge badge-neutral" title="Cash was sent instead of deposited at the bank">Cash sent</span></div>';
 }
 
 function todayManila() {
@@ -260,13 +266,15 @@ async function loadDeposits() {
   } else {
     body.innerHTML = deposits.map((d) => `
       <tr>
-        <td>${d.photo_url
+        <td>${d.method === 'CashSent'
+          ? cashSentBadge()
+          : d.photo_url
           ? `<a href="${escapeHtml(d.photo_url)}" target="_blank" rel="noopener"><img class="deposit-thumb" src="${escapeHtml(d.photo_url)}" alt="Deposit receipt" loading="lazy" /></a>`
           : '<span class="muted">Photo unavailable</span>'}</td>
         <td>${escapeHtml(d.deposit_date)}</td>
         <td style="text-align:right;">${formatMoney(d.deposit_amount)}${d.slip_not_read ? slipNotReadBadge() : ''}${d.duplicate_allowed_by
           ? `<div><span class="badge badge-warning">Duplicate allowed by ${escapeHtml(d.duplicate_allowed_by)}</span></div>` : ''}</td>
-        <td>${escapeHtml(d.reference_no || '')}${d.note ? `<div class="muted" style="font-size:12px;">${escapeHtml(d.note)}</div>` : ''}</td>
+        <td>${d.sent_to ? `Sent to: ${escapeHtml(d.sent_to)}` : ''}${escapeHtml(d.reference_no || '')}${d.note ? `<div class="muted" style="font-size:12px;">${escapeHtml(d.note)}</div>` : ''}</td>
         <td>${escapeHtml(d.uploaded_by)}<div class="muted" style="font-size:12px;">${escapeHtml(new Date(d.uploaded_at_utc).toLocaleString('en-PH'))}</div></td>
         <td>${d.can_delete ? `<button class="btn btn-sm" type="button" data-deposit-id="${d.id}">Remove</button>` : ''}</td>
       </tr>
@@ -302,7 +310,71 @@ function hideDepositForm() {
   setSlipReadStatus('');
   // Re-declared earlier that day: the deposit goes on the latest declaration (the server refuses too).
   document.getElementById('showDepositFormBtn').classList.toggle('hidden', detailRow?.is_counted === false);
+  hideCashSentForm();
   showDepositFormError('');
+}
+
+// ---------------------------------------------------------------- cash sent (super users)
+
+function hideCashSentForm() {
+  document.getElementById('cashSentFormBox').classList.add('hidden');
+  document.getElementById('showCashSentFormBtn').classList.toggle('hidden',
+    !currentSession?.isSuperUser || detailRow?.is_counted === false);
+  showCashSentFormError('');
+}
+
+function showCashSentFormError(message) {
+  const el = document.getElementById('cashSentFormError');
+  el.textContent = message || '';
+  el.classList.toggle('hidden', !message);
+}
+
+function showCashSentForm() {
+  hideDepositForm();
+  const remaining = Number(detailRow?.declared_cash || 0) - Number(detailRow?.deposit_total || 0);
+  document.getElementById('cashSentAmountInput').value = remaining > 0 ? remaining.toFixed(2) : '';
+  document.getElementById('cashSentDateInput').value = todayManila();
+  document.getElementById('cashSentDateInput').max = todayManila();
+  document.getElementById('cashSentToInput').value = '';
+  document.getElementById('cashSentNoteInput').value = '';
+  document.getElementById('cashSentFormBox').classList.remove('hidden');
+  document.getElementById('showCashSentFormBtn').classList.add('hidden');
+  document.getElementById('showDepositFormBtn').classList.add('hidden');
+}
+
+async function saveCashSent() {
+  showCashSentFormError('');
+  const row = detailRow;
+  const amount = Number(document.getElementById('cashSentAmountInput').value);
+  const sentDate = document.getElementById('cashSentDateInput').value;
+  const sentTo = document.getElementById('cashSentToInput').value.trim();
+  if (!(amount > 0)) return showCashSentFormError('Enter the Amount Sent.');
+  if (!sentDate) return showCashSentFormError('Enter the Date Sent.');
+  if (!sentTo) return showCashSentFormError('Enter who the cash was sent to / with.');
+
+  const btn = document.getElementById('saveCashSentBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  try {
+    const { error } = await supabaseClient.rpc('staff_add_tender_cash_sent', {
+      ...creds(),
+      p_warehouse: row.warehouse,
+      p_eod_id: row.eod_id,
+      p_amount: amount,
+      p_sent_date: sentDate,
+      p_sent_to: sentTo,
+      p_note: document.getElementById('cashSentNoteInput').value.trim() || null
+    });
+    if (error) throw new Error(error.message);
+    hideDepositForm();
+    if (row === detailRow) await loadDeposits();
+    loadDeclarations();
+  } catch (err) {
+    showCashSentFormError(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save cash sent';
+  }
 }
 
 function showDepositForm() {
@@ -322,6 +394,8 @@ function showDepositForm() {
   showDepositFormError('');
   document.getElementById('depositFormBox').classList.remove('hidden');
   document.getElementById('showDepositFormBtn').classList.add('hidden');
+  document.getElementById('cashSentFormBox').classList.add('hidden');
+  document.getElementById('showCashSentFormBtn').classList.add('hidden');
 }
 
 // Phone photos are several MB; shrunk to at most 1600px on the long side and re-encoded as JPEG -
@@ -481,7 +555,7 @@ async function saveDeposit() {
 }
 
 async function deleteDeposit(depositId) {
-  if (!confirm('Remove this deposit receipt? The photo is deleted too.')) return;
+  if (!confirm('Remove this deposit / cash sent entry? A receipt photo is deleted too.')) return;
   const { error } = await supabaseClient.rpc('staff_delete_tender_deposit', { ...creds(), p_deposit_id: depositId });
   if (error) {
     alert(error.message);
@@ -508,6 +582,9 @@ function wireFilters() {
   document.getElementById('cancelDepositBtn').addEventListener('click', hideDepositForm);
   document.getElementById('saveDepositBtn').addEventListener('click', saveDeposit);
   document.getElementById('depositPhotoInput').addEventListener('change', onDepositPhotoChosen);
+  document.getElementById('showCashSentFormBtn').addEventListener('click', showCashSentForm);
+  document.getElementById('cancelCashSentBtn').addEventListener('click', hideDepositForm);
+  document.getElementById('saveCashSentBtn').addEventListener('click', saveCashSent);
 }
 
 (async function init() {

@@ -2,6 +2,24 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-16
+
+- **Tender Declarations: "Log cash sent" option for super users** - record that a declaration's cash was sent (to / with someone) instead of deposited at the bank, no slip photo needed. Counts toward Deposited like a slip and shows a "Cash sent" tag. New `Method` / `SentTo` columns and `staff_add_tender_cash_sent` in [supabase_tender_deposit_receipts.sql](sql/supabase_tender_deposit_receipts.sql); page + [tenderDeclarations.js](docs/js/tenderDeclarations.js) (?v=cashsent1).
+
+- **Fix: Meta Ads "Refresh from Meta" failed** with "Failed to send a request to the Edge Function". [meta-ads-sync](supabase/functions/meta-ads-sync/index.ts) now sends CORS headers and answers the browser's OPTIONS preflight. Needs redeploy.
+
+- **Removed the duplicated Meta Ads backfill entries.** The Nov 1-16 backfill duplicated loads already entered by hand as META-ADS-EXPENSE. [supabase_meta_ads_remove_auto_expenses.sql](sql/supabase_meta_ads_remove_auto_expenses.sql) deletes those auto entries, keeping any already posted to the G/L. The sync still logs new loads from here on and won't re-create the deleted ones. The Meta Ads page shows a blank Expense No for them (`metaAds.js?v=2`).
+
+- **Meta Ads page** ([meta-ads.html](docs/meta-ads.html), [metaAds.js](docs/js/metaAds.js), [supabase_meta_ads_page.sql](sql/supabase_meta_ads_page.sql), Finance → Spending in [nav.js](docs/js/nav.js)). Shows each store's ad wallet balance (EUR shown with ≈ PHP) and days left at the last 7 days' pace, warning when under 2 days. Also shows loads vs Meta charges for the date range, a filterable list of loads and charges, and a "Refresh from Meta" button. [meta-ads-sync](supabase/functions/meta-ads-sync/index.ts) now saves the store name (GMA/Amaya) on the snapshot.
+
+- **Meta Ads billing sync** ([supabase_meta_ads_billing_sync.sql](sql/supabase_meta_ads_billing_sync.sql), [meta-ads-sync/index.ts](supabase/functions/meta-ads-sync/index.ts), check: [supabase_check_meta_ads_sync.sql](sql/supabase_check_meta_ads_sync.sql)). A daily cron pulls the RSpetstop Gma ad account's activity log. Each wallet load (GCash/card) becomes a META-ADS Expense Journal entry. Daily billing charges (net + 12% VAT) and the wallet balance are stored for reconciliation. Supports several ad accounts (`META_AD_ACCOUNTS` = `id:Store,...`, default Gma → GMA), so Amaya's and GMA's loads are each booked to their own store. Amaya's ad account is in EUR, so its loads are converted to PHP at the ECB rate for that day. The rate and original EUR amount are saved with each row. Each ad account can have its own token (`META_ADS_ACCESS_TOKEN_<accountId>`), since GMA and Amaya are in different Business Managers.
+
+## 2026-11-15
+
+- **Timesheets: approx. budget to close the week.** The weekly grid has a new To Pay column (Weekly Pay minus this week's Cash Advance, weekly-cycle employees only) and footer totals for Weekly Pay, To Pay and "Approx. budget needed to close the week" ([payrollTimesheets.js](docs/js/payrollTimesheets.js) `?v=budget1`, [payroll-timesheets.html](docs/payroll-timesheets.html)).
+- **Online Orders: "For Delivery" status + delivery tag** ([supabase_online_order_for_delivery_status.sql](sql/supabase_online_order_for_delivery_status.sql), [onlineOrders.js](docs/js/onlineOrders.js), [online-orders.html](docs/online-orders.html), [bc-list.css](docs/css/bc-list.css)). Every order on the delivery calendar gets a 📅 date · route tag beside its status. The tag turns red when the order is still Confirmed/Assigned within 2 days of the date, or when the date has passed. A new For Delivery tab/count shows To Ship orders that are scheduled; those drop out of To Ship. Everything is worked out from the calendar, so the real status and Pancake are unchanged.
+- Dashboard To Ship card ([dashboard.js](docs/js/dashboard.js)) = To Ship + For Delivery, so its number doesn't drop.
+
 ## 2026-11-13
 
 - One-off [supabase_xendit_record_ao00237_payment.sql](sql/supabase_xendit_record_ao00237_payment.sql): records AO-00237's ₱535 QR Ph down payment (paid on a cancelled session; the Payment Requests V3 "Payment Status" webhook URL wasn't set in Xendit, so it never reached us).

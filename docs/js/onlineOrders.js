@@ -248,6 +248,8 @@ const STATUS_SUMMARY_ELEMENT_IDS = {
   'To Assign': 'statusCountToAssign',
   'Completed': 'statusCountCompleted',
   'To Ship': 'statusCountToShip',
+  // To Ship + on the delivery calendar (supabase_online_order_for_delivery_status.sql).
+  'For Delivery': 'statusCountForDelivery',
   'Shipped': 'statusCountShipped',
   // Portal-only, set by Mark Done on the Delivery route view (supabase_delivery_stop_done_post.sql).
   'Delivered': 'statusCountDelivered',
@@ -452,7 +454,37 @@ function canChangeProduction(o) {
 // real status stays Assigned until the Production Manager / POS moves it on).
 function listDisplayStatus(o) {
   if (o?.walkin_stage) return o.walkin_stage;
-  return isProductionDone(o) && canChangeProduction(o) ? 'Production Done' : orderDisplayStatus(o);
+  if (isProductionDone(o) && canChangeProduction(o)) return 'Production Done';
+  const status = orderDisplayStatus(o);
+  // For Delivery (sql/supabase_online_order_for_delivery_status.sql): built (To Ship) and on the
+  // delivery calendar with a stop not Marked Done yet. Display only - the real status stays To Ship.
+  if (o?.delivery_date && ['to ship', 'packing', 'packed'].includes(String(status).trim().toLowerCase())) return 'For Delivery';
+  return status;
+}
+
+// How many days a scheduled order that isn't built yet gets flagged before its delivery date.
+const DELIVERY_NOT_BUILT_WARN_DAYS = 2;
+
+// Delivery tag shown beside the status on every order that's on the delivery calendar
+// (delivery_date / delivery_route from admin_list_online_orders - its next stop not Marked Done).
+// The status keeps showing production; the tag shows when it goes out. Red when the date is close
+// (or past) and the order is still in production, or when the date has passed.
+function deliveryTagHtml(o) {
+  if (!o?.delivery_date) return '';
+  const [y, m, d] = String(o.delivery_date).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const due = new Date(y, m - 1, d);
+  const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' }));
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((due - today) / 86400000);
+  const label = due.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const status = String(listDisplayStatus(o) || '').trim().toLowerCase();
+  const notBuilt = ['confirmed', 'assigned', 'to assign', 'printed'].includes(status);
+  const warn = (notBuilt && days <= DELIVERY_NOT_BUILT_WARN_DAYS) || days < 0;
+  const suffix = notBuilt && warn ? ' – not built' : days < 0 ? ' – overdue' : '';
+  const route = o.delivery_route ? ` · ${o.delivery_route}` : '';
+  const title = `On the delivery calendar for ${label}${route}${notBuilt ? ' - still in production' : ''}`;
+  return ` <span class="oo-deliv-tag${warn ? ' warn' : ''}" title="${escapeHtml(title)}">${warn ? '&#9888;' : '&#128197;'} ${escapeHtml(label + route + suffix)}</span>`;
 }
 
 // Open "send back for rework" notes (supabase_online_order_production_rework.sql) - one per part,
@@ -655,7 +687,7 @@ function renderMyAssignmentCards(rows) {
       <article class="oo-mc is-clickable" data-order-id="${escapeHtml(o.order_id)}" data-open-order="${escapeHtml(o.order_id)}" role="button" tabindex="0" aria-label="Open order ${escapeHtml(o.order_id)}">
         <header class="oo-mc-head">
           <span class="oo-mc-id">#${escapeHtml(o.order_id)}</span>
-          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)} ${prodOrderBadgeHtml(o)} ${releaseBadgeHtml(o)}
+          <span class="oo-mc-status ${status === 'Production Done' ? 'done' : ''}">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}${deliveryTagHtml(o)} ${prodOrderBadgeHtml(o)} ${releaseBadgeHtml(o)}
           <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         <div class="oo-mc-customer">${escapeHtml(o.customer_name || '')}</div>
@@ -2621,7 +2653,7 @@ function orderRowsHtml(orders) {
         <td>${formatTime12(o.order_time)}</td>
         <td>${escapeHtml(o.customer_name)}</td>
         <td>${escapeHtml(o.warehouse_name || o.location_id)}</td>
-        <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}</td>
+        <td>${escapeHtml(listDisplayStatus(o))}${reworkCountBadgeHtml(o)}${deliveryTagHtml(o)}</td>
         ${walkin ? posFieldCellsHtml(o, 'desc') : `
         <td>${escapeHtml(o.confirmed_by)}</td>
         <td>${dispatchDateHtml(o.confirmed_at_utc)}</td>
@@ -2656,7 +2688,7 @@ function phoneStatusTone(status) {
   if (s === 'cancelled' || s === 'canceled' || s === 'returned' || s === 'voided') return 'cancel';
   if (s === 'delivered' || s === 'completed') return 'done';
   if (s === 'shipped') return 'shipped';
-  if (s === 'to ship') return 'ship';
+  if (s === 'to ship' || s === 'for delivery') return 'ship';
   if (s === 'production done') return 'pdone';
   if (s === 'assigned') return 'assigned';
   if (s === 'to assign') return 'todo';
@@ -2696,7 +2728,7 @@ function orderPhoneCardsHtml(orders) {
       <article class="oo-pc tone-${tone}" data-open-order="${id}" role="button" tabindex="0" aria-label="Open order ${id}">
         <header class="oo-pc-head">
           <span class="oo-pc-id">#${id}</span>
-          <span class="oo-pc-status">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}
+          <span class="oo-pc-status">${escapeHtml(status)}</span>${reworkCountBadgeHtml(o)}${deliveryTagHtml(o)}
           <span class="oo-mc-chevron" aria-hidden="true">&rsaquo;</span>
         </header>
         <div class="oo-pc-customer">${escapeHtml(o.customer_name || 'No name on order')}</div>
@@ -5572,6 +5604,8 @@ function fillOrderCardHeader(o) {
     delivered: (o.status || '').trim().toLowerCase() === 'delivered'
   });
   setCardText('ocForDelivery', o.for_delivery ? 'Yes' : 'No');
+  // Scheduled on the delivery calendar: the date / route tag after Yes.
+  if (o.delivery_date) document.getElementById('ocForDelivery').insertAdjacentHTML('beforeend', deliveryTagHtml(o));
   setCardText('ocEstDelivery', o.estimated_delivery_date);
   setCardText('ocDeliveryFee', o.delivery_fee ? Number(o.delivery_fee).toFixed(2) : '');
   setCardText('ocPrintNote', o.note_print);
@@ -5602,7 +5636,8 @@ function fillOrderCardHeader(o) {
   document.getElementById('orderCardGeneralSummary').textContent =
     [o.customer_name, displayStatus, o.warehouse_name || o.location_id].filter(Boolean).join(' · ');
   document.getElementById('orderCardDeliverySummary').textContent =
-    o.for_delivery ? `For delivery${o.estimated_delivery_date ? ' · ' + o.estimated_delivery_date : ''}` : 'Pickup';
+    o.delivery_date ? `Scheduled ${o.delivery_date}${o.delivery_route ? ' · ' + o.delivery_route : ''}`
+      : o.for_delivery ? `For delivery${o.estimated_delivery_date ? ' · ' + o.estimated_delivery_date : ''}` : 'Pickup';
 
   setToShipButtonState(document.getElementById('cardToShipBtn'), o);
   updateProductionDoneButton('cardProductionDoneBtn', o);

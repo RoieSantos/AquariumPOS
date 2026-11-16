@@ -2836,6 +2836,17 @@ a.bc-cue:hover {
 :root[data-theme="dark"] .oo-eta.soon i { color: #f0b54a; }
 :root[data-theme="dark"] .oo-eta.late b, :root[data-theme="dark"] .oo-eta.late i { color: #f28b82; }
 
+/* Delivery tag beside the status (js/onlineOrders.js deliveryTagHtml): on the delivery calendar.
+   .warn = close to / past the date and still in production, or overdue. */
+.oo-deliv-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; background: #e4e9fb; color: #2a429a; }
+.oo-deliv-tag.warn { background: #fbe4e1; color: #b42318; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .oo-deliv-tag { background: #1f2a4d; color: #a9bbf5; }
+  :root:not([data-theme="light"]) .oo-deliv-tag.warn { background: #4a1f1c; color: #f28b82; }
+}
+:root[data-theme="dark"] .oo-deliv-tag { background: #1f2a4d; color: #a9bbf5; }
+:root[data-theme="dark"] .oo-deliv-tag.warn { background: #4a1f1c; color: #f28b82; }
+
 /* Ready to Ship serial picker: "+ New serial" next to the search; new placeholders look distinct. */
 .serial-tag-row { display: flex; gap: 8px; align-items: stretch; }
 .serial-tag-row .serial-tag-search { flex: 1 1 auto; min-width: 0; }

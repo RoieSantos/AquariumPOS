@@ -374,6 +374,7 @@ function renderTopNavLinks(activeLabel) {
     finance.push({ section: 'Spending', href: 'expense-journal.html', label: 'Expense Journal' });
     finance.push({ section: 'Spending', href: 'business-bills.html', label: 'Bills & Dues' });
     finance.push({ section: 'Spending', href: 'ai-spend.html', label: 'AI Spend (Claude)' });
+    finance.push({ section: 'Spending', href: 'meta-ads.html', label: 'Meta Ads' });
     finance.push({ section: 'Spending', href: 'spending-report.html', label: 'Purchases & Expenses' });
     finance.push({ section: 'Spending', href: 'owner-funds.html', label: 'Owner Funds' });
     finance.push({ section: 'Accounting', href: 'gl-entries.html', label: 'General Ledger' });
@@ -589,6 +590,7 @@ const TELL_ME_KEYWORDS = {
   'expense-entries.html': 'spending costs',
   'expense-journal.html': 'spending costs post',
   'ai-spend.html': 'claude anthropic alice bot tokens credits top-up usage',
+  'meta-ads.html': 'facebook instagram ads boost wallet balance top-up gcash amaya gma advertising',
   'tender-declarations.html': 'cash count eod short over drawer cashier',
   'business-bills.html': 'rent utilities bir sss dues',
   'owner-funds.html': 'capital drawings loan',
