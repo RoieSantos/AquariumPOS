@@ -1300,7 +1300,12 @@
         <button class="bc-iconbtn" id="closeChangeItemBtn" type="button" aria-label="Close">&times;</button>
       </div>
       <div class="bc-dialog-body">
-        <p class="bc-lede">Now: <b id="changeItemCurrent"></b><br />Pick what was actually ordered. Quantity, price and discount stay the same.</p>
+        <p class="bc-lede">Now: <b id="changeItemCurrent"></b><br /><span id="changeItemLede">Pick what was actually ordered. Quantity, price and discount stay the same.</span></p>
+        <!-- Advance orders with more than 1 unit: change only some of them (splits the line). -->
+        <div class="bc-field hidden" id="changeItemQtyField">
+          <label for="changeItemQty">How many to change? <span class="muted" id="changeItemQtyOf"></span></label>
+          <input type="number" id="changeItemQty" min="1" step="1" inputmode="numeric" style="max-width:120px;" />
+        </div>
         <div class="bc-field">
           <label for="changeItemSearch">Search another product (leave empty for this item's variants)</label>
           <input type="text" id="changeItemSearch" autocomplete="off" placeholder="e.g. white paint, AST-003" />
@@ -1683,7 +1688,7 @@
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/onlineOrders.js?v=advchgpm1"></script>
+  <script src="js/onlineOrders.js?v=advchgqty1"></script>
   <script src="js/onlineNewOrders.js?v=cod1"></script>
   <script src="js/pwa.js"></script>
 </body>

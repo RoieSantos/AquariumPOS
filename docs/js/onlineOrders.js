@@ -6103,6 +6103,18 @@ function openChangeItemDialog(ctx) {
   document.getElementById('changeItemCurrent').textContent = ctx.description || ctx.itemCode || '-';
   document.getElementById('changeItemSearch').value = '';
   document.getElementById('changeItemError').classList.add('hidden');
+  // Advance orders: change part of the line's quantity - the server splits it into a new "-X" line
+  // (sql/supabase_advance_order_change_item_quantity.sql).
+  const lineQty = Math.abs(Number(ctx.quantity) || 0);
+  const canSplit = ctx.kind === 'advance' && lineQty > 1;
+  document.getElementById('changeItemQtyField').classList.toggle('hidden', !canSplit);
+  const qtyInput = document.getElementById('changeItemQty');
+  qtyInput.max = String(lineQty || 1);
+  qtyInput.value = String(lineQty || 1);
+  document.getElementById('changeItemQtyOf').textContent = canSplit ? `(of ${lineQty})` : '';
+  document.getElementById('changeItemLede').textContent = canSplit
+    ? 'Pick what it should be. Changing fewer than all splits the line - the rest keep the current item. Price per unit stays.'
+    : 'Pick what was actually ordered. Quantity, price and discount stay the same.';
   document.getElementById('changeItemDialog').classList.remove('hidden');
   loadChangeItemOptions();
 }
@@ -6151,11 +6163,25 @@ async function saveChangeItem() {
     errorEl.classList.remove('hidden');
     return;
   }
+  const lineQty = Math.abs(Number(ctx.quantity) || 0);
+  let changeQty = null;
+  if (ctx.kind === 'advance' && lineQty > 1) {
+    changeQty = Number(document.getElementById('changeItemQty').value);
+    if (!Number.isInteger(changeQty) || changeQty < 1 || changeQty > lineQty) {
+      errorEl.textContent = `Enter how many to change - 1 to ${lineQty}.`;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (changeQty === lineQty) changeQty = null; // the whole line
+  }
   const btn = document.getElementById('saveChangeItemBtn');
   btn.disabled = true;
   errorEl.classList.add('hidden');
   const { data, error } = ctx.kind === 'advance'
-    ? await advanceRpc('staff_change_advance_order_line_variant', { p_no: ctx.orderNo, p_line_no: String(ctx.lineId), p_variation_id: picked.value })
+    ? await advanceRpc('staff_change_advance_order_line_variant', {
+      p_no: ctx.orderNo, p_line_no: String(ctx.lineId), p_variation_id: picked.value,
+      ...(changeQty ? { p_quantity: changeQty } : {})
+    })
     : await supabaseClient.rpc('admin_change_online_order_line_variant', {
       p_admin_username: currentSession.username,
       p_admin_password: currentSession.password,
@@ -6176,7 +6202,8 @@ async function saveChangeItem() {
     loadOrderCardLines(ctx.orderNo);
   }
   const note = data?.resynced === false ? '\n\nPancake has the change, but the portal could not re-read the order yet - Refresh in a minute.' : '';
-  alert(`Changed:\n${data?.old_description || '-'}\n→ ${data?.new_description || '-'}${note}`);
+  const split = data?.new_line_no ? `\n\n${data.quantity} moved to new line ${data.new_line_no}; the rest stay on line ${ctx.lineId}.` : '';
+  alert(`Changed:\n${data?.old_description || '-'}\n→ ${data?.new_description || '-'}${split}${note}`);
 }
 
 function wireChangeItemDialog() {
@@ -6195,7 +6222,7 @@ function wireChangeItemDialog() {
     const btn = e.target.closest('[data-change-line]');
     const l = btn && advanceCardLines.find((x) => String(x.line_no) === btn.dataset.changeLine);
     if (!l || !openAdvanceNo) return;
-    openChangeItemDialog({ kind: 'advance', orderNo: openAdvanceNo, lineId: l.line_no, description: l.description });
+    openChangeItemDialog({ kind: 'advance', orderNo: openAdvanceNo, lineId: l.line_no, description: l.description, quantity: l.quantity });
   });
   let debounce = null;
   document.getElementById('changeItemSearch').addEventListener('input', () => {

@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-17
 
+- **Advance orders: Change Item for part of a line's quantity.** The Change Item dialog asks "How many to change?" when the line has more than 1 unit. Fewer than all splits the line: the rest keep the old item and a new "-X1" line gets the new item. Discount and amounts are split by quantity, so the total stays the same. A quantity override keeps the split through the POS sync ([supabase_advance_order_change_item_quantity.sql](sql/supabase_advance_order_change_item_quantity.sql), `onlineOrders.js?v=advchgqty1`).
 - **Advance orders: Production Managers can Change Item, and Undo Stage from To Ship frees the serials.** Change Item (and its product search) on advance orders now also allows a Production Manager. Undo Stage from To Ship puts the serials Ready to Ship sold to the order back as Reserved for that order, so Change Item isn't blocked and the next Ready to Ship picks them again (unused ones are freed then). POS receipt-only serials are left alone ([supabase_advance_order_change_item_production_manager.sql](sql/supabase_advance_order_change_item_production_manager.sql), `onlineOrders.js?v=advchgpm1`).
 
 ## 2026-11-16
