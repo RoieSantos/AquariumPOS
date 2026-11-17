@@ -6088,8 +6088,9 @@ function canChangeOnlineOrderLineItem(o) {
     && !CHANGE_ITEM_LOCKED_STATUSES.includes((o.status || '').trim().toLowerCase());
 }
 
+// Production Managers too, on advance orders only (sql/supabase_advance_order_change_item_production_manager.sql).
 function canChangeAdvanceOrderLineItem(o) {
-  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser) && !!o && !['To Ship', 'Shipped', 'Delivered'].includes(advanceStatus(o));
+  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser || currentSession?.isProductionManager) && !!o && !['To Ship', 'Shipped', 'Delivered'].includes(advanceStatus(o));
 }
 
 function changeItemLinkHtml(lineId) {
@@ -9709,7 +9710,8 @@ async function setAdvanceStage(no, stage, btn) {
     ? { caption: 'MARK SHIPPED', message: 'Mark this advance order Shipped (released to the customer)?', confirmLabel: 'Yes, Mark Shipped', tone: 'is-done' }
     : stage === 'To Ship'
       ? { caption: 'READY TO SHIP', message: status === 'New' ? 'No makers are assigned. Mark it Ready to Ship anyway?' : 'Production is done. Mark it Ready to Ship?', confirmLabel: 'Yes, Ready to Ship', tone: 'is-done' }
-      : { caption: 'UNDO STAGE', message: `Step this order back from ${status}?`, confirmLabel: 'Yes, Undo', tone: '' };
+      : { caption: 'UNDO STAGE', message: `Step this order back from ${status}?${status === 'To Ship'
+          ? '\n\nIts serials go back to Reserved for this order - Ready to Ship will pick them again.' : ''}`, confirmLabel: 'Yes, Undo', tone: '' };
   const title = `${o.transaction_no}${o.customer_name ? ' · ' + o.customer_name : ''}`;
 
   // Mark Shipped / Undo Stage - no serials (they're asked once, at Ready to Ship).

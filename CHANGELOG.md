@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-17
+
+- **Advance orders: Production Managers can Change Item, and Undo Stage from To Ship frees the serials.** Change Item (and its product search) on advance orders now also allows a Production Manager. Undo Stage from To Ship puts the serials Ready to Ship sold to the order back as Reserved for that order, so Change Item isn't blocked and the next Ready to Ship picks them again (unused ones are freed then). POS receipt-only serials are left alone ([supabase_advance_order_change_item_production_manager.sql](sql/supabase_advance_order_change_item_production_manager.sql), `onlineOrders.js?v=advchgpm1`).
+
 ## 2026-11-16
 
 - **Tender Declarations: "Log cash sent" option for super users** - record that a declaration's cash was sent (to / with someone) instead of deposited at the bank, no slip photo needed. Counts toward Deposited like a slip and shows a "Cash sent" tag. New `Method` / `SentTo` columns and `staff_add_tender_cash_sent` in [supabase_tender_deposit_receipts.sql](sql/supabase_tender_deposit_receipts.sql); page + [tenderDeclarations.js](docs/js/tenderDeclarations.js) (?v=cashsent1).
