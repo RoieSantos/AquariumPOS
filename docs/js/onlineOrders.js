@@ -9527,9 +9527,12 @@ async function loadAdvanceCardLines(transactionNo) {
   tfoot.innerHTML = '';
   ItemStockFactbox.clear(document.getElementById('advanceCardStockPart'), 'Loading...');
 
-  const [{ data, error }, serialStatus] = await Promise.all([
+  const [{ data, error }, serialStatus, lineChanges] = await Promise.all([
     advanceRpc('staff_list_advance_order_lines', { p_no: transactionNo }),
-    advanceRpc('staff_get_advance_order_line_serial_status', { p_no: transactionNo })
+    advanceRpc('staff_get_advance_order_line_serial_status', { p_no: transactionNo }),
+    // Change Item history -> "Changed" badge (sql/supabase_advance_order_change_item_description_fix.sql;
+    // quiet until it's run).
+    advanceRpc('staff_list_advance_order_line_changes', { p_no: transactionNo })
   ]);
   if (myGeneration !== advanceCardLoadGeneration) return; // closed or another order opened meanwhile
 
@@ -9564,6 +9567,19 @@ async function loadAdvanceCardLines(transactionNo) {
     const qty = Number(s.quantity) || 0;
     return ` <span class="badge badge-warning" title="Not in stock / not released yet - tag at Ready to Ship">${untagged < qty ? `${untagged}/${qty} ` : ''}No serial yet</span>`;
   };
+  const changesByLine = new Map();
+  for (const c of (lineChanges.error ? [] : lineChanges.data || [])) {
+    const key = String(c.line_no);
+    if (!changesByLine.has(key)) changesByLine.set(key, []);
+    changesByLine.get(key).push(c);
+  }
+  const changedTagHtml = (lineNo) => {
+    const list = changesByLine.get(String(lineNo));
+    if (!list?.length) return '';
+    const title = list.map((c) => `Was: ${c.old_description || '-'}\nNow: ${c.new_description || '-'}\nBy ${c.changed_by || '-'}, ${
+      c.changed_at ? new Date(c.changed_at).toLocaleString() : ''}`).join('\n\n');
+    return ` <span class="badge badge-neutral" style="cursor:help;" title="${escapeHtml(title)}">Changed${list.length > 1 ? ` ×${list.length}` : ''}</span>`;
+  };
   const lines = data || [];
   advanceCardLines = lines;
   if (!lines.length) {
@@ -9577,7 +9593,7 @@ async function loadAdvanceCardLines(transactionNo) {
       <td>${escapeHtml(l.line_no ?? '')}</td>
       <td>${escapeHtml(l.type || '')}</td>
       <td${l.category && l.category !== l.item_no ? ` title="POS category: ${escapeHtml(l.category)}"` : ''}>${escapeHtml(l.item_no || '')}</td>
-      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}${serialTagHtml(l.line_no)}${canChange && (l.type || '').toUpperCase() === 'ITEM' ? changeItemLinkHtml(l.line_no) : ''}</td>
+      <td style="white-space:normal;">${escapeHtml(l.description || '')}${l.part ? ` <span class="badge badge-neutral" title="Suggested maker">${l.part === 'tank' ? 'Tank' : 'Stand'}</span>` : ''}${serialTagHtml(l.line_no)}${changedTagHtml(l.line_no)}${canChange && (l.type || '').toUpperCase() === 'ITEM' ? changeItemLinkHtml(l.line_no) : ''}</td>
       <td class="num">${l.quantity ?? ''}</td>
       <td class="num">${formatAdvanceMoney(l.price)}</td>
       <td class="num">${formatAdvanceMoney(l.discount)}</td>
