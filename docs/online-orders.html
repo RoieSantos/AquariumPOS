@@ -452,6 +452,9 @@
       <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
         <button class="bc-cmd" id="cardSendPhotoBtn" type="button"><svg class="bc-ico"><use href="#ico-camera"/></svg>Send Photo</button>
         <button class="bc-cmd" id="cardSendMessageBtn" type="button"><svg class="bc-ico"><use href="#ico-message"/></svg>To-Ship Message</button>
+        <!-- Customer status page link (order-status.html?t=) - copied to paste in Messenger
+             (js/onlineOrders.js copyOrderStatusLink, sql/supabase_order_status_page.sql). -->
+        <button class="bc-cmd" id="cardStatusLinkBtn" type="button" title="Copy a link the customer can open any time to see their order's progress"><svg class="bc-ico"><use href="#ico-attach"/></svg>Status Link</button>
         <button class="bc-cmd" id="cardToShipBtn" type="button" title="Only a Printed or Assigned order can be marked To Ship"><svg class="bc-ico"><use href="#ico-ship"/></svg>To Ship</button>
         <button class="bc-cmd hidden" id="cardNextStepBtn" type="button"></button>
         <button class="bc-cmd hidden" id="cardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
@@ -752,6 +755,7 @@
            Super User / Production Manager only (js/onlineOrders.js updateAdvanceCardActions). -->
       <div class="bc-cmdbar" role="toolbar" aria-label="Actions">
         <button class="bc-cmd" id="advanceCardAssignBtn" type="button" title="Assign the Tank Maker / Stand Maker"><svg class="bc-ico"><use href="#ico-assign"/></svg>Assign</button>
+        <button class="bc-cmd" id="advanceCardStatusLinkBtn" type="button" title="Copy a link the customer can open any time to see their order's progress"><svg class="bc-ico"><use href="#ico-attach"/></svg>Status Link</button>
         <button class="bc-cmd hidden" id="advanceCardNextBtn" type="button"></button>
         <button class="bc-cmd hidden" id="advanceCardSendBackBtn" type="button"><svg class="bc-ico"><use href="#ico-sendback"/></svg>Send Back</button>
         <button class="bc-cmd hidden" id="advanceCardStepBackBtn" type="button" title="Undo the last stage (Shipped -> To Ship -> production)">Undo Stage</button>
@@ -1688,7 +1692,7 @@
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/onlineOrders.js?v=advchgfix1"></script>
+  <script src="js/onlineOrders.js?v=statuslink1"></script>
   <script src="js/onlineNewOrders.js?v=cod1"></script>
   <script src="js/pwa.js"></script>
 </body>

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Status - RS Pet Stop</title>
+  <meta name="description" content="See the latest progress of your RS Pet Stop order." />
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/landing.css?v=3" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#060a14" />
+  <!-- Customer-facing, no login: opened from the link staff (Online Orders "Status Link") or Alice send.
+       ?t= is a random token, never the order number (sql/supabase_order_status_page.sql). Read-only. -->
+  <style>
+    .st-wrap { max-width: 620px; margin: 0 auto; padding: 32px 16px 80px; line-height: 1.55; }
+    .st-wrap h1 { font-size: 1.6rem; margin: 0 0 2px; }
+    .st-sub { color: var(--land-ink-muted); margin: 0 0 20px; }
+    .st-card { background: var(--land-surface); border: 1px solid var(--land-border); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+    .st-card h2 { font-size: 1rem; margin: 0 0 12px; }
+    .st-msg { padding: 14px 16px; border-radius: 12px; margin-bottom: 16px; }
+    .st-msg.warn { background: rgba(255, 180, 0, 0.12); border: 1px solid rgba(255, 180, 0, 0.4); }
+    .st-msg.err { background: rgba(255, 79, 120, 0.12); border: 1px solid rgba(255, 79, 120, 0.45); }
+    .st-msg.ok { background: rgba(22, 224, 189, 0.12); border: 1px solid rgba(22, 224, 189, 0.4); }
+    .st-now { font-size: 0.85rem; color: var(--land-ink-muted); text-transform: uppercase; letter-spacing: .06em; }
+    .st-now-label { font-size: 1.5rem; font-weight: 700; margin: 2px 0 6px; }
+    .st-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--land-ink-muted); font-size: 0.9rem; }
+    .st-meta strong { color: var(--land-ink); font-weight: 600; }
+
+    .st-steps { list-style: none; margin: 0; padding: 0; }
+    .st-step { position: relative; padding: 0 0 18px 34px; }
+    .st-step:last-child { padding-bottom: 0; }
+    .st-step::before { /* the line down to the next step */
+      content: ""; position: absolute; left: 10px; top: 22px; bottom: -2px; width: 2px; background: var(--land-border);
+    }
+    .st-step:last-child::before { display: none; }
+    .st-step.done::before { background: var(--land-teal); }
+    .st-dot {
+      position: absolute; left: 0; top: 1px; width: 22px; height: 22px; border-radius: 50%;
+      border: 2px solid var(--land-border); background: var(--land-bg-alt);
+      display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--land-bg);
+    }
+    .st-step.done .st-dot { background: var(--land-teal); border-color: var(--land-teal); }
+    .st-step.current .st-dot { border-color: var(--land-teal); box-shadow: 0 0 0 4px rgba(22, 224, 189, 0.18); }
+    .st-step.current .st-dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--land-teal); }
+    .st-step-label { font-weight: 600; }
+    .st-step.upcoming .st-step-label { color: var(--land-ink-muted); font-weight: 500; }
+    .st-step-at { color: var(--land-ink-muted); font-size: 0.85rem; }
+    .st-step-note { font-size: 0.9rem; margin-top: 2px; }
+    .st-step.cancelled .st-dot { background: #ff4f78; border-color: #ff4f78; }
+
+    .st-parts { display: grid; gap: 8px; margin-top: 10px; }
+    .st-part { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 10px; background: var(--land-bg-alt); font-size: 0.92rem; }
+    .st-tag { font-size: 0.8rem; padding: 2px 10px; border-radius: 999px; white-space: nowrap; align-self: center; }
+    .st-tag.done { background: rgba(22, 224, 189, 0.15); color: var(--land-teal); }
+    .st-tag.building { background: rgba(139, 92, 246, 0.18); color: #c4b5fd; }
+    .st-tag.waiting { background: rgba(147, 160, 194, 0.15); color: var(--land-ink-muted); }
+
+    .st-row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+    .st-row.total { border-top: 1px solid var(--land-border); margin-top: 6px; padding-top: 10px; font-weight: 700; }
+    .st-items { margin: 0; padding-left: 18px; color: var(--land-ink-muted); font-size: 0.92rem; }
+    .st-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+    .st-photos a { display: block; border-radius: 10px; overflow: hidden; border: 1px solid var(--land-border); aspect-ratio: 1; background: var(--land-bg-alt); }
+    .st-photos img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .st-foot { color: var(--land-ink-muted); font-size: 0.85rem; text-align: center; }
+    .st-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="land-topbar land-wrap">
+    <div class="land-brand">
+      <img src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+      <span>RS Pet Stop</span>
+    </div>
+    <nav class="land-nav-actions">
+      <a class="land-staff-link" href="index.html">Home</a>
+      <a class="land-btn land-btn-primary land-btn-sm" href="contact-us.html">Contact Us</a>
+    </nav>
+  </header>
+
+  <main class="st-wrap">
+    <h1>Order Status</h1>
+    <p class="st-sub" id="greeting">The latest progress on your order, updated as our team works on it.</p>
+
+    <div id="loadMsg" class="st-msg">Loading your order...</div>
+
+    <div id="content" class="hidden">
+      <div id="cancelMsg" class="st-msg err hidden">This order was cancelled. Message us on Facebook if you have any questions.</div>
+      <div id="doneMsg" class="st-msg ok hidden"></div>
+      <div id="deliveryMsg" class="st-msg ok hidden"></div>
+
+      <section class="st-card">
+        <div class="st-now">Current status</div>
+        <div class="st-now-label" id="nowLabel"></div>
+        <div class="st-meta" id="meta"></div>
+      </section>
+
+      <section class="st-card">
+        <h2>Progress</h2>
+        <ol class="st-steps" id="steps"></ol>
+      </section>
+
+      <section class="st-card hidden" id="partsCard">
+        <h2>Build progress</h2>
+        <div class="st-parts" id="parts"></div>
+      </section>
+
+      <section class="st-card hidden" id="photosCard">
+        <h2>Photos from our team</h2>
+        <div class="st-photos" id="photos"></div>
+      </section>
+
+      <section class="st-card hidden" id="paymentCard">
+        <h2>Payment</h2>
+        <div class="st-row"><span>Order total</span><span id="payTotal"></span></div>
+        <div class="st-row"><span>Paid so far</span><span id="payPaid"></span></div>
+        <div class="st-row total"><span>Balance</span><span id="payBalance"></span></div>
+        <div class="st-actions hidden" id="payActions">
+          <a class="land-btn land-btn-primary" id="payLink" href="#">Pay balance online</a>
+        </div>
+      </section>
+
+      <section class="st-card hidden" id="itemsCard">
+        <h2>Items</h2>
+        <ul class="st-items" id="items"></ul>
+      </section>
+
+      <p class="st-foot">
+        Last checked <span id="checkedAt"></span> &middot; <a href="#" id="refreshLink">Refresh</a><br />
+        Questions about your order? Message us on our Facebook page.
+      </p>
+    </div>
+  </main>
+
+  <footer class="land-footer land-wrap">
+    <p>&copy; <span id="landingYear"></span> RSPETSTOP PET STORE. All rights reserved.</p>
+    <p><a href="index.html">&larr; Back to home</a> &middot; <a href="contact-us.html">Contact Us</a> &middot; <a href="privacy-policy.html">Privacy Policy</a> &middot; <a href="terms-and-conditions.html">Terms &amp; Conditions</a></p>
+  </footer>
+
+  <script>document.getElementById('landingYear').textContent = new Date().getFullYear();</script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script>
+    const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const manila = { timeZone: 'Asia/Manila' };
+    // A plain date ("2026-11-17") is a calendar day - show it without a time; a timestamp gets the time too.
+    function fmtWhen(value) {
+      if (!value) return '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const [y, m, d] = value.split('-').map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+      return new Date(value).toLocaleString('en-PH', { ...manila, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+    const show = (id, on = true) => document.getElementById(id).classList.toggle('hidden', !on);
+
+    const PART_TAG = { done: 'Done', building: 'Being built', waiting: 'Waiting to start' };
+
+    async function load() {
+      const token = new URLSearchParams(location.search).get('t');
+      const msg = document.getElementById('loadMsg');
+      if (!token) {
+        msg.className = 'st-msg warn';
+        msg.textContent = 'This link is missing its order code. Please open the exact link we sent you.';
+        return;
+      }
+      const { data, error } = await supabaseClient.rpc('public_get_order_status_page', { p_token: token });
+      if (error) {
+        msg.className = 'st-msg err';
+        msg.textContent = "We couldn't load your order right now. Please try again in a moment.";
+        return;
+      }
+      if (!data) {
+        msg.className = 'st-msg warn';
+        msg.textContent = "We couldn't find this order. Please open the exact link we sent you, or message us on Facebook.";
+        return;
+      }
+      render(data);
+      show('loadMsg', false);
+      show('content');
+    }
+
+    function render(d) {
+      if (d.customer_first_name) {
+        document.getElementById('greeting').textContent = `Hi ${d.customer_first_name}! Here's the latest on your order.`;
+      }
+      document.getElementById('nowLabel').textContent = d.cancelled ? 'Cancelled' : (d.completed ? d.steps[d.steps.length - 1].label : d.current_label || '');
+
+      const meta = document.getElementById('meta');
+      meta.replaceChildren();
+      const addMeta = (label, value) => {
+        if (!value) return;
+        const span = el('span', null, `${label} `);
+        span.appendChild(el('strong', null, value));
+        meta.appendChild(span);
+      };
+      addMeta(d.order_type === 'Advance Order' ? 'Receipt' : 'Order', d.order_type === 'Advance Order' ? (d.receipt_no || d.order_no) : d.order_no);
+      addMeta('Ordered', fmtWhen(d.order_date));
+      addMeta('Branch', d.branch);
+      if (d.target_ready_date && !d.completed) addMeta('Target ready date', fmtWhen(d.target_ready_date));
+
+      show('cancelMsg', !!d.cancelled);
+      const doneMsg = document.getElementById('doneMsg');
+      const last = d.steps[d.steps.length - 1];
+      doneMsg.textContent = `${last.label}${last.at ? ' on ' + fmtWhen(last.at) : ''}. Thank you for ordering from RS Pet Stop!`;
+      show('doneMsg', !d.cancelled && d.completed);
+      const delMsg = document.getElementById('deliveryMsg');
+      delMsg.textContent = d.delivery_is_today
+        ? 'Your order is scheduled for delivery today.'
+        : `Your delivery is scheduled for ${fmtWhen(d.delivery_date)}.`;
+      show('deliveryMsg', !d.cancelled && !d.completed && !!d.delivery_date);
+
+      const steps = document.getElementById('steps');
+      steps.replaceChildren();
+      d.steps.forEach((s) => {
+        const state = d.cancelled && s.state !== 'done' ? 'upcoming' : s.state;
+        const li = el('li', `st-step ${state}`);
+        const dot = el('span', 'st-dot', state === 'done' ? '✓' : '');
+        li.appendChild(dot);
+        li.appendChild(el('div', 'st-step-label', s.label));
+        if (s.at && state === 'done') li.appendChild(el('div', 'st-step-at', fmtWhen(s.at)));
+        if (s.note && state === 'current') li.appendChild(el('div', 'st-step-note', s.note));
+        steps.appendChild(li);
+      });
+
+      const parts = document.getElementById('parts');
+      parts.replaceChildren();
+      (d.parts || []).forEach((p) => {
+        const row = el('div', 'st-part');
+        let name = p.part;
+        if (p.qty != null && Number(p.qty) > 1) name += ` (${Number(p.qty_built || 0)} of ${Number(p.qty)} built)`;
+        row.appendChild(el('span', null, name));
+        row.appendChild(el('span', `st-tag ${p.state}`, PART_TAG[p.state] || p.state));
+        parts.appendChild(row);
+      });
+      // Only worth showing while it's being built - once ready, the timeline says it all.
+      const buildStep = d.steps.find((s) => s.key === 'building');
+      show('partsCard', !d.cancelled && (d.parts || []).length > 0 && buildStep && buildStep.state !== 'done');
+
+      const photos = document.getElementById('photos');
+      photos.replaceChildren();
+      (d.photos || []).forEach((ph) => {
+        const a = el('a');
+        a.href = ph.url; a.target = '_blank'; a.rel = 'noopener';
+        a.title = fmtWhen(ph.at);
+        const img = el('img');
+        img.src = ph.url; img.loading = 'lazy'; img.alt = 'Order photo ' + fmtWhen(ph.at);
+        a.appendChild(img);
+        photos.appendChild(a);
+      });
+      show('photosCard', (d.photos || []).length > 0);
+
+      if (d.payment && d.payment.total != null && !d.cancelled) {
+        document.getElementById('payTotal').textContent = peso(d.payment.total);
+        document.getElementById('payPaid').textContent = peso(d.payment.paid);
+        document.getElementById('payBalance').textContent = Number(d.payment.balance) > 0 ? peso(d.payment.balance) : 'Fully paid';
+        document.getElementById('payLink').href = d.payment.pay_url || '#';
+        show('payActions', !!d.payment.pay_url);
+        show('paymentCard');
+      } else {
+        show('paymentCard', false);
+      }
+
+      const items = document.getElementById('items');
+      items.replaceChildren();
+      (d.items || []).forEach((it) => items.appendChild(el('li', null, `${Number(it.qty)} × ${it.name}`)));
+      show('itemsCard', (d.items || []).length > 0);
+
+      document.getElementById('checkedAt').textContent = fmtWhen(d.checked_at);
+    }
+
+    document.getElementById('refreshLink').addEventListener('click', (e) => { e.preventDefault(); load(); });
+    load();
+  </script>
+</body>
+</html>

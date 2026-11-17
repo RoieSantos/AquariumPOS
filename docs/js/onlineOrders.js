@@ -7591,6 +7591,8 @@ function wireOrderCard() {
   document.getElementById('orderCardModal').addEventListener('change', handleAssignProductionMemberChange);
   document.getElementById('cardSendPhotoBtn').addEventListener('click', (e) => openCardOrderId && handleSendPhotoClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardSendMessageBtn').addEventListener('click', () => openCardOrderId && openSendMessageModal(openCardOrderId));
+  document.getElementById('cardStatusLinkBtn').addEventListener('click', (e) => openCardOrderId && copyOrderStatusLink('online', openCardOrderId, e.currentTarget));
+  document.getElementById('advanceCardStatusLinkBtn').addEventListener('click', (e) => openAdvanceNo && copyOrderStatusLink('advance', openAdvanceNo, e.currentTarget));
   document.getElementById('cardToShipBtn').addEventListener('click', (e) => openCardOrderId && handleToShipClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardProductionDoneBtn').addEventListener('click', (e) => openCardOrderId && handleProductionDoneClick(openCardOrderId, e.currentTarget));
   document.getElementById('cardShowSerialsBtn').addEventListener('click', (e) => openCardOrderId && showOrderSerials(openCardOrderId, e.currentTarget));
@@ -8322,6 +8324,37 @@ function formatAdvanceMoney(value) {
   return value === null || value === undefined ? '' : Number(value).toFixed(2);
 }
 
+// Customer status page (order-status.html) - per "when the customer ask for update or status we just send the
+// link". The link carries a random token, not the order number (sql/supabase_order_status_page.sql), and stays
+// the same for the order, so it's fine to send it again. Copied to paste into Messenger.
+async function copyOrderStatusLink(kind, orderRef, btn) {
+  const label = btn.lastChild;
+  const original = label.textContent;
+  btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.rpc('staff_get_order_status_link', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_kind: kind,
+      p_order_ref: String(orderRef)
+    });
+    if (error) throw error;
+    const link = `https://rspetstop.com/order-status.html?t=${encodeURIComponent(data)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      label.textContent = 'Link copied ✓';
+      setTimeout(() => { label.textContent = original; }, 2500);
+    } catch {
+      window.prompt('Copy this status link and send it to the customer:', link);
+    }
+  } catch (err) {
+    const missing = /staff_get_order_status_link/.test(err?.message || '');
+    alert(missing ? 'Status links aren\'t set up yet - run sql/supabase_order_status_page.sql.' : `Could not get the status link: ${err?.message || err}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function advanceRpc(name, params) {
   return supabaseClient.rpc(name, {
     p_admin_username: currentSession.username,
@@ -8862,6 +8895,7 @@ function updateAdvanceCardActions(o) {
   const voided = advanceStatus(o) === 'Voided';
   document.getElementById('advanceCardPrintSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
   document.getElementById('advanceCardShowSerialsBtn').classList.toggle('hidden', !canAssignOrders() || voided);
+  document.getElementById('advanceCardStatusLinkBtn').classList.toggle('hidden', !!currentSession && isOrderMakerOnly(currentSession));
   document.getElementById('advanceCardMarkPaidBtn').classList.toggle('hidden',
     !currentSession?.isSuperUser || voided || o.fully_paid || !(Number(o.balance) > 0));
   document.getElementById('advanceCardAddCodBtn').classList.toggle('hidden', !canAddAdvanceCodItems(o));
@@ -10415,7 +10449,7 @@ async function initAdvanceOrdersView() {
     document.getElementById('filterPaneBtn').classList.add('hidden');
     // Read-only: Open and Refresh only, on the list and on the order card.
     ['listSendPhotoBtn', 'listSendMessageBtn', 'listToShipBtn', 'listAssignBtn', 'exportExcelBtn',
-      'cardSendPhotoBtn', 'cardSendMessageBtn', 'cardToShipBtn', 'cardAssignBtn']
+      'cardSendPhotoBtn', 'cardSendMessageBtn', 'cardStatusLinkBtn', 'cardToShipBtn', 'cardAssignBtn']
       .forEach((id) => document.getElementById(id).classList.add('hidden'));
     document.querySelectorAll('#orderCmdbar .bc-cmd-sep').forEach((sep) => sep.classList.add('hidden'));
   }

@@ -2326,6 +2326,7 @@ function renderConversationOrderCards() {
             <span>Send to customer:</span>
             <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="confirmation">Order Confirmation</button>
             <button type="button" class="btn-text inbox-send-receipt-btn" data-order="${escapeHtml(o.order_no)}" data-kind="invoice">Invoice</button>
+            ${o.status !== 'Cancelled' ? `<button type="button" class="btn-text inbox-send-statuslink-btn" data-order="${escapeHtml(o.order_no)}" title="A link the customer can open any time to see their order's progress">📦 Status link</button>` : ''}
             ${canSendPayLink(o, balance) ? `<button type="button" class="btn-text inbox-send-paylink-btn" data-order="${escapeHtml(o.order_no)}">💳 Pay link${xenditEnabled ? '' : ' (test)'}</button>` : ''}
           </div>
         </div>
@@ -2394,6 +2395,9 @@ function renderConversationOrderCards() {
   });
   listEl.querySelectorAll('.inbox-send-receipt-btn').forEach((btn) => {
     btn.addEventListener('click', () => sendReceiptToCustomer(btn.dataset.order, btn.dataset.kind, btn));
+  });
+  listEl.querySelectorAll('.inbox-send-statuslink-btn').forEach((btn) => {
+    btn.addEventListener('click', () => sendStatusLinkToCustomer(btn.dataset.order, btn));
   });
   listEl.querySelectorAll('.inbox-send-paylink-btn').forEach((btn) => {
     const order = conversationOrders.find((o) => o.order_no === btn.dataset.order);
@@ -2741,6 +2745,32 @@ async function sendReceiptToCustomer(orderNo, kind, btn) {
   if (btn) btn.disabled = true;
   await sendMessageToCustomer(message, []);
   if (btn) btn.disabled = false;
+}
+
+// Customer order status page (order-status.html) - per "when the customer ask for update or status we just send
+// the link" / "we want it on the conversation page". The link carries a random token, not the order number
+// (sql/supabase_order_status_page.sql), and is the same every time for the order. Sent like the receipt links.
+async function sendStatusLinkToCustomer(orderNo, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.rpc('staff_get_order_status_link', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_kind: 'online',
+      p_order_ref: orderNo
+    });
+    if (error) {
+      const missing = /staff_get_order_status_link/.test(error.message || '');
+      alert(missing ? 'Status links aren\'t set up yet - run sql/supabase_order_status_page.sql.' : `Could not get the status link: ${error.message}`);
+      return;
+    }
+    const link = `https://rspetstop.com/order-status.html?t=${encodeURIComponent(data)}`;
+    const message = `📦 Here's the status of your order ${orderNo}:\n${link}\n\n`
+      + 'You can open this link any time to see the latest progress of your order - build progress, delivery date, payment and photos from our team.';
+    await sendMessageToCustomer(message, []);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // Xendit online payment link (pay.html, sql/supabase_xendit_payments.sql). While Xendit is switched off
