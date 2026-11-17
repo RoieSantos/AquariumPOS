@@ -684,7 +684,8 @@ async function refreshPayouts() {
   showPayoutMessage('Checking with Xendit...');
   try {
     const result = await callPayoutFunction({ action: 'refresh', runId: currentRunId });
-    showPayoutMessage(result.checked ? `Checked ${result.checked} payout${result.checked === 1 ? '' : 's'} with Xendit.` : 'Nothing waiting on Xendit.');
+    showPayoutMessage((result.checked ? `Checked ${result.checked} payout${result.checked === 1 ? '' : 's'} with Xendit.` : 'Nothing waiting on Xendit.')
+      + (result.note ? ' ' + result.note : ''));
   } catch (err) {
     showPayoutMessage(err.message, true);
   } finally {

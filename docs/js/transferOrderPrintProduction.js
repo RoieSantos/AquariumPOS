@@ -114,6 +114,8 @@ async function loadOrder(docNo) {
   }
 
   document.getElementById('orderContent').classList.remove('hidden');
+  // Copy number / printed-by stamp + print log (js/transferPrintLog.js).
+  setupTransferPrintLog(currentSession, header['No.'], 'Production', document.getElementById('printStamp'));
 }
 
 (async function init() {

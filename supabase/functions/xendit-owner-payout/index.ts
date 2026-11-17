@@ -20,7 +20,9 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { payoutKeyFor, readKeyFor } from '../_shared/xendit-keys.ts';
-import { createPayout, findPayoutByReference, getPayout, recordArgs, xenditMessage } from '../_shared/xendit-payouts.ts';
+import {
+  createPayout, findPayoutByReference, getPayout, payoutApiFor, readPayoutApiSetting, recordArgs, storedPayoutApi, xenditMessage
+} from '../_shared/xendit-payouts.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -164,9 +166,15 @@ Deno.serve(async (req) => {
     }
 
     const description = left(`Owner withdrawal RS Pet Stop${note ? ' - ' + note : ''}`, 100);
+    // v2, or v3 for an e-wallet when XENDIT_PAYOUT_API = 'v3'; a re-send keeps the API of its first try.
+    const api = await payoutApiFor(supabase, row.payout_id, !!row.is_new, row.channel_code, await readPayoutApiSetting(supabase));
+    if (!api) return jsonResponse({ error: 'Could not tell how this withdrawal was first sent - try again in a minute.', retrySame: true }, 502);
     let result;
     try {
       result = await createPayout(key, row.payout_id, {
+        api,
+        relationship: 'OTHER',
+        purpose_code: 'OTHER',
         reference_id: row.reference_id,
         channel_code: row.channel_code,
         account_number: row.account_number,
@@ -206,6 +214,8 @@ Deno.serve(async (req) => {
     for (const p of rows) {
       const key = payoutKeyFor(p.is_test);
       if (!key) continue;
+      // v3 with no Xendit ID can't be looked up by reference - Send again (same requestId) settles it, never pays twice.
+      if (!p.xendit_payout_id && (await storedPayoutApi(supabase, p.payout_id)) !== 'v2') continue;
       const result = p.xendit_payout_id ? await getPayout(key, p.xendit_payout_id) : await findPayoutByReference(key, p.reference_id);
       if (result.ok && result.body?.id) {
         await supabase.rpc('_payroll_payout_record', { p_payout_id: p.payout_id, p_reference_id: null, p_error: null, ...recordArgs(result.body) });

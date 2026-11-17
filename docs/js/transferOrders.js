@@ -484,6 +484,16 @@ function updateManageActionButtons(status, lines) {
     !currentSession?.isSuperUser || !active || currentManageHasAnyShipped
   );
 
+  // Super-user-only "Change To Warehouse" - allowed after shipping (the shipment's ledger entry only
+  // takes from the From Warehouse), but not once anything has been received: receipts post stock
+  // into the To Warehouse at the time, so changing it afterwards would split one order across two.
+  const hasAnyReceived = lines.some((l) => (Number(l['Qty Received']) || 0) > 0);
+  closeToWarehouseEdit();
+  document.getElementById('editToWarehouseBtn').classList.toggle(
+    'hidden',
+    !currentSession?.isSuperUser || !active || hasAnyReceived
+  );
+
   // Super-user-only "Add Item" - same rule as changing Qty To Transfer (renderManageLines).
   document.getElementById('addManageLineBtn').classList.toggle(
     'hidden',
@@ -882,6 +892,45 @@ function wireSerialTagPicker(row, picker) {
   });
 }
 
+// "Printed" field on the Manage modal - how many times the Transfer Order / Production Order printout was
+// printed and by whom (staff_get_transfer_print_log, sql/supabase_transfer_print_log.sql; logged by
+// js/transferPrintLog.js on the print pages). Shows "-" if never printed, "" if the SQL isn't run yet.
+async function loadTransferPrintSummary(docNo) {
+  const el = document.getElementById('viewPrintedSummary');
+  if (!el) return;
+  let rows;
+  try {
+    const { data, error } = await supabaseClient.rpc('staff_get_transfer_print_log', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_document_no: docNo
+    });
+    if (error) { el.textContent = ''; return; }
+    rows = data || [];
+  } catch (e) {
+    el.textContent = '';
+    return;
+  }
+  if (docNo !== currentManageDocNo) return; // another order was opened meanwhile
+
+  const fmt = (d) => new Date(d).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const summaryFor = (type, label) => {
+    const list = rows.filter((r) => r.print_type === type && r.result !== 'Cancelled');
+    if (!list.length) return '';
+    return `<div><strong>${label}:</strong> ${list.length} time${list.length === 1 ? '' : 's'}
+      <span class="muted">(last by ${escapeHtml(list[0].printed_by)}, ${escapeHtml(fmt(list[0].printed_at))})</span></div>`;
+  };
+  const parts = [summaryFor('Transfer', 'Transfer Order'), summaryFor('Production', 'Production Order')].filter(Boolean);
+  if (!rows.length) { el.textContent = '-'; return; }
+
+  // Cancelled prints don't count but stay visible in the history; Unconfirmed = nobody answered "Did it print?" (counted).
+  const resultNote = (r) => (r.result === 'Cancelled' ? ' (cancelled - not counted)' : r.result === 'Unconfirmed' ? ' (not confirmed)' : '');
+  el.innerHTML = (parts.length ? parts.join('') : '<div>Not printed yet</div>') + `
+    <details style="margin-top:2px;"><summary class="muted" style="cursor:pointer;">Print history</summary>
+      ${rows.map((r) => `<div class="muted" style="font-size:12px;${r.result === 'Cancelled' ? 'text-decoration:line-through;' : ''}">${escapeHtml(fmt(r.printed_at))} - ${r.print_type === 'Production' ? 'Production Order' : 'Transfer Order'} - ${escapeHtml(r.printed_by)}${resultNote(r)}</div>`).join('')}
+    </details>`;
+}
+
 async function openManageModal(docNo) {
   currentManageDocNo = docNo;
   document.getElementById('viewLinesTitle').textContent = `Transfer Order ${docNo}`;
@@ -912,6 +961,7 @@ async function openManageModal(docNo) {
   const header = headerRows[0];
   currentManageHeader = header;
   renderManageHeader(header);
+  loadTransferPrintSummary(docNo);
 
   const { data, error } = await supabaseClient
     .from('Transfer_Line')
@@ -2241,6 +2291,87 @@ async function saveFromWarehouseEdit() {
   }
 }
 
+// Super-user-only override of an already-created order's To Warehouse - see the
+// "editToWarehouseBtn" toggle in updateManageActionButtons (offered until anything is received).
+// Any warehouse except the order's From Warehouse.
+async function openToWarehouseEdit() {
+  const select = document.getElementById('viewToWarehouseSelect');
+  select.innerHTML = '<option value="">Loading...</option>';
+  document.getElementById('editToWarehouseBtn').classList.add('hidden');
+  document.getElementById('viewToWarehouseEditRow').classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('staff_search_warehouses', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+
+  if (error || !data) {
+    select.innerHTML = '<option value="">Failed to load warehouses</option>';
+    return;
+  }
+
+  const currentId = currentManageHeader?.['To Warehouse ID'] || '';
+  const fromId = currentManageHeader?.['From Warehouse ID'] || '';
+  select.innerHTML = data
+    .filter((w) => w.id !== fromId)
+    .map((w) => `<option value="${escapeHtml(w.id)}" ${w.id === currentId ? 'selected' : ''}>${escapeHtml(w.name)}</option>`)
+    .join('');
+}
+
+function closeToWarehouseEdit() {
+  document.getElementById('viewToWarehouseEditRow').classList.add('hidden');
+}
+
+async function saveToWarehouseEdit() {
+  const errorEl = document.getElementById('viewLinesError');
+  errorEl.classList.add('hidden');
+
+  const select = document.getElementById('viewToWarehouseSelect');
+  const newId = select.value;
+  const newName = select.options[select.selectedIndex]?.textContent || '';
+  if (!newId) return;
+
+  const fail = (message) => {
+    errorEl.textContent = message;
+    errorEl.classList.remove('hidden');
+  };
+
+  if (!currentSession?.isSuperUser) { fail('Only a super user can change the To Warehouse.'); return; }
+  if (newId === (currentManageHeader?.['To Warehouse ID'] || '')) { closeToWarehouseEdit(); updateManageToWarehouseBtn(); return; }
+  if (newId === (currentManageHeader?.['From Warehouse ID'] || '')) { fail('To Warehouse cannot be the same as From Warehouse.'); return; }
+
+  const saveBtn = document.getElementById('saveToWarehouseBtn');
+  saveBtn.disabled = true;
+  try {
+    // Re-check nothing was received since the modal opened - a receipt already posted stock
+    // into the current To Warehouse.
+    const { data: fresh, error: freshError } = await supabaseClient
+      .from('Transfer_Line')
+      .select('"Qty Received"')
+      .eq('"Document No."', currentManageDocNo);
+    if (freshError) throw freshError;
+    if ((fresh || []).some((l) => (Number(l['Qty Received']) || 0) > 0)) {
+      fail('Something on this order has already been received - the To Warehouse can no longer be changed.');
+      return;
+    }
+
+    await upsertRow('Transfer_Header', { 'No.': currentManageDocNo }, {
+      'To Warehouse ID': newId,
+      'To Warehouse': newName
+    });
+    await openManageModal(currentManageDocNo);
+    await loadHeaders();
+  } catch (err) {
+    fail(describeSupabaseError(err, 'Failed to change To Warehouse.'));
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function updateManageToWarehouseBtn() {
+  document.getElementById('editToWarehouseBtn').classList.toggle('hidden', !currentSession?.isSuperUser);
+}
+
 // "Print Production Order" - just opens the warehouse packing list layout
 // (transfer-order-print-production.html) in a new tab. Locking no longer happens here - every
 // order is locked automatically the moment it's requested (see saveNewTransfer's header payload
@@ -3370,6 +3501,12 @@ async function saveNewTransfer() {
     if (currentManageDocNo) window.open(`transfer-order-print.html?no=${encodeURIComponent(currentManageDocNo)}`, '_blank');
   });
   document.getElementById('printProductionBtn').addEventListener('click', () => printProductionOrder(currentManageDocNo));
+  // Printing happens in another tab - refresh the "Printed" count when coming back to this one.
+  window.addEventListener('focus', () => {
+    if (currentManageDocNo && !document.getElementById('viewLinesModal').classList.contains('hidden')) {
+      loadTransferPrintSummary(currentManageDocNo);
+    }
+  });
   document.getElementById('addLineBtn').addEventListener('click', () => addNewLineRow());
   document.getElementById('addManageLineBtn').addEventListener('click', addManageLineRow);
   document.getElementById('saveManageAddLinesBtn').addEventListener('click', saveManageAddLines);
@@ -3388,6 +3525,9 @@ async function saveNewTransfer() {
   document.getElementById('editFromWarehouseBtn').addEventListener('click', openFromWarehouseEdit);
   document.getElementById('cancelFromWarehouseEditBtn').addEventListener('click', closeFromWarehouseEdit);
   document.getElementById('saveFromWarehouseBtn').addEventListener('click', saveFromWarehouseEdit);
+  document.getElementById('editToWarehouseBtn').addEventListener('click', openToWarehouseEdit);
+  document.getElementById('cancelToWarehouseEditBtn').addEventListener('click', () => { closeToWarehouseEdit(); updateManageToWarehouseBtn(); });
+  document.getElementById('saveToWarehouseBtn').addEventListener('click', saveToWarehouseEdit);
   document.getElementById('newUseProductionCategory').addEventListener('change', (e) =>
     applyPreferredFromWarehouse(e.target.checked)
   );

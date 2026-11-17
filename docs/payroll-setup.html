@@ -427,6 +427,8 @@
             </div>
             <div class="bc-field"><label for="payoutAccountNumber" id="payoutAccountNumberLabel">Account Number</label><input type="text" id="payoutAccountNumber" inputmode="numeric" autocomplete="off" maxlength="30" /></div>
             <div class="bc-field"><label for="payoutAccountName">Account Name<span class="bc-field-hint">Exactly as on the GCash / bank account</span></label><input type="text" id="payoutAccountName" autocomplete="off" maxlength="100" /></div>
+            <!-- sql/supabase_xendit_payout_receipt_email.sql: Xendit emails the transaction proof here for every payout. -->
+            <div class="bc-field"><label for="payoutEmail">Receipt Email<span class="bc-field-hint">Xendit emails the transaction proof here for every salary / cash advance payout (optional)</span></label><input type="email" id="payoutEmail" autocomplete="off" maxlength="200" placeholder="juan@gmail.com" /></div>
             <p class="muted" id="payoutUpdated" style="margin:4px 0 0; font-size:12px;"></p>
           </div>
         </details>
@@ -531,9 +533,9 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=aispend1"></script>
+  <script src="js/nav.js?v=recvlock1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollSetup.js?v=payoutofficer1"></script>
+  <script src="js/payrollSetup.js?v=receiptemail1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

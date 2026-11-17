@@ -86,6 +86,7 @@ function renderReceipt(r) {
     <h3 style="margin:18px 0 6px;font-size:15px;">For RS Pet Stop / Xendit support</h3>
     <dl class="pr-grid" style="margin-top:4px;">
       ${r.payout_description ? `<dt>Description sent</dt><dd>${prEscape(r.payout_description)}</dd>` : ''}
+      ${r.receipt_email_to ? `<dt>Xendit proof emailed to</dt><dd>${prEscape(r.receipt_email_to)}</dd>` : ''}
       <dt>Reference no.</dt><dd>${prEscape(r.reference_id)}</dd>
       <dt>Xendit payout ID</dt><dd>${prEscape(r.xendit_payout_id || '-')}</dd>
     </dl>`;

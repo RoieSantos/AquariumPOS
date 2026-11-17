@@ -8,7 +8,7 @@
 // Secrets: see _shared/xendit-keys.ts. Both modes work whichever way the Xendit Payments page's switch is set, so
 // a payment already started is still recorded after switching.
 //
-// Xendit Dashboard > Settings > Webhooks > Payment Session (completed and expired), Payments and Payouts (v2), in
+// Xendit Dashboard > Settings > Webhooks > Payment Session (completed and expired), Payments, Payouts (v2) and Payouts v3, in
 // both TEST and LIVE mode:  https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/xendit-webhook
 //
 // After a payment is applied, the customer gets a "payment received" message on the order's Messenger
@@ -173,9 +173,11 @@ Deno.serve(async (req) => {
 
   // Payroll payouts (xendit-payroll-payout): payout.succeeded / payout.failed / payout.reversed... Re-read from
   // Xendit with that mode's payout key, then recorded on XenditPayouts (sql/supabase_xendit_payroll_payouts.sql).
-  // Xendit Dashboard > Settings > Webhooks > Payouts (v2), same URL.
-  if (typeof payload?.event === 'string' && payload.event.startsWith('payout.')) {
-    const payoutId = String(payload?.data?.id ?? '').trim();
+  // Xendit Dashboard > Settings > Webhooks > Payouts (v2), same URL. Payouts v3 (XENDIT_PAYOUT_API = 'v3') post
+  // v3_payout.succeeded / failed / reversed / rejected / pending_compliance with data.payout_id ('po-...') - set the
+  // same URL under the v3 PAYOUT webhook too. getPayout reads either API and returns the v2 shape.
+  if (typeof payload?.event === 'string' && (payload.event.startsWith('payout.') || payload.event.startsWith('v3_payout.'))) {
+    const payoutId = String(payload?.data?.id ?? payload?.data?.payout_id ?? '').trim();
     const referenceId = String(payload?.data?.reference_id ?? '').trim();
     if (!referenceId.startsWith('RSPS-PAY-')) return jsonResponse({ ok: true, note: 'Not a payroll payout - ignored.' });
     const payoutKey = payoutKeyFor(!isLive);

@@ -209,7 +209,17 @@
               </div>
               <div class="bc-doc-field">
                 <label>To Warehouse</label>
-                <div id="viewToWarehouse" class="bc-doc-value"></div>
+                <div>
+                  <div id="viewToWarehouse" class="bc-doc-value"></div>
+                  <!-- Super-user-only override - hidden once anything has been received
+                       (updateManageActionButtons): receipts already posted stock into the old To Warehouse. -->
+                  <button class="bc-link hidden" id="editToWarehouseBtn" type="button">Change To Warehouse</button>
+                  <div id="viewToWarehouseEditRow" class="bc-doc-inline-edit hidden">
+                    <select id="viewToWarehouseSelect"></select>
+                    <button class="bc-btn bc-btn-primary" id="saveToWarehouseBtn" type="button">Save</button>
+                    <button class="bc-btn" id="cancelToWarehouseEditBtn" type="button">Cancel</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div>
@@ -224,6 +234,11 @@
               <div class="bc-doc-field">
                 <label>Receive Date</label>
                 <div id="viewReceiveDate" class="bc-doc-value"></div>
+              </div>
+              <!-- Print count / who printed - js/transferOrders.js loadTransferPrintSummary, sql/supabase_transfer_print_log.sql -->
+              <div class="bc-doc-field">
+                <label>Printed</label>
+                <div id="viewPrintedSummary" class="bc-doc-value"></div>
               </div>
               <!-- Production orders created for this transfer (ProductionOrders.SourceTransferNo,
                    sql/supabase_production_order_transfer_link.sql) - js/transferOrders.js loadTransferProductionOrders -->
@@ -477,11 +492,11 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=aispend1"></script>
+  <script src="js/nav.js?v=recvlock1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
-  <script src="js/transferOrders.js?v=addline1"></script>
+  <script src="js/transferOrders.js?v=towh1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

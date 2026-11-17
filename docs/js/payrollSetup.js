@@ -782,6 +782,7 @@ const FALLBACK_PAYOUT_CHANNELS = [
 let payoutChannelsLoaded = false;
 let payoutLoadedFor = null; // username whose saved payout account is in the form - Save only writes it then
 let payoutSnapshot = '';
+let payoutEmailSupported = false; // the SQL that adds Receipt Email has been run
 
 function escapeHtmlPayout(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -838,15 +839,17 @@ function payoutFormState() {
     document.getElementById('payoutViaXendit').checked,
     document.getElementById('payoutChannel').value,
     document.getElementById('payoutAccountNumber').value.trim(),
-    document.getElementById('payoutAccountName').value.trim()
+    document.getElementById('payoutAccountName').value.trim(),
+    document.getElementById('payoutEmail').value.trim().toLowerCase()
   ]);
 }
 
 async function loadPayoutAccount(username) {
   payoutLoadedFor = null;
+  payoutEmailSupported = false;
   document.getElementById('payoutFastTab').classList.toggle('hidden', !canEditPayout());
   if (!canEditPayout()) return;
-  ['payoutAccountNumber', 'payoutAccountName'].forEach((id) => { document.getElementById(id).value = ''; });
+  ['payoutAccountNumber', 'payoutAccountName', 'payoutEmail'].forEach((id) => { document.getElementById(id).value = ''; });
   document.getElementById('payoutViaXendit').checked = false;
   document.getElementById('payoutChannel').value = '';
   document.getElementById('payoutUpdated').textContent = 'Loading...';
@@ -870,6 +873,9 @@ async function loadPayoutAccount(username) {
   sel.value = p.channel_code || '';
   document.getElementById('payoutAccountNumber').value = p.account_number || '';
   document.getElementById('payoutAccountName').value = p.account_name || '';
+  // Receipt Email (sql/supabase_xendit_payout_receipt_email.sql) - undefined until that SQL is run.
+  document.getElementById('payoutEmail').value = p.email || '';
+  payoutEmailSupported = 'email' in p || !data?.length;
   document.getElementById('payoutUpdated').textContent = p.updated_at ? `Last changed by ${p.updated_by} on ${new Date(p.updated_at).toLocaleString()}` : '';
   updatePayoutHints();
   payoutLoadedFor = username;
@@ -882,6 +888,9 @@ async function savePayoutAccountIfChanged(username) {
   const sel = document.getElementById('payoutChannel');
   const code = sel.value;
   const number = document.getElementById('payoutAccountNumber').value.trim();
+  const email = document.getElementById('payoutEmail').value.trim().toLowerCase();
+  if (email && !/^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(email)) return 'Enter one valid receipt email, e.g. juan@gmail.com.';
+  if (email && !payoutEmailSupported) return 'Receipt Email needs sql/supabase_xendit_payout_receipt_email.sql run first.';
   if (code && !confirm(`Save the salary payout account for ${username}?\n\n${sel.options[sel.selectedIndex].textContent} ${number}\n\nSalaries sent through Xendit go to this account.`)) {
     return 'Payout account not saved.';
   }
@@ -893,7 +902,9 @@ async function savePayoutAccountIfChanged(username) {
     p_channel_code: code || null,
     p_channel_name: code ? sel.options[sel.selectedIndex].textContent : null,
     p_account_number: number || null,
-    p_account_name: document.getElementById('payoutAccountName').value.trim() || null
+    p_account_name: document.getElementById('payoutAccountName').value.trim() || null,
+    // '' removes it; left out entirely before the SQL is run (the old function has no p_email).
+    ...(payoutEmailSupported ? { p_email: email } : {})
   });
   const result = Array.isArray(data) ? data[0] : data;
   if (error || !result?.success) return error?.message || result?.message || 'Failed to save the payout account.';

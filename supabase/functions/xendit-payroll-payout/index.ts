@@ -10,12 +10,17 @@
 // the Idempotency-key, so a double click, two tabs or a retry after a timeout can't pay anyone twice. A call that
 // never answers leaves the row at 'Creating' and the next send re-uses the same key. sql/supabase_xendit_payroll_payouts.sql
 //
+// API: v2, or v3 for e-wallets when PortalSettings XENDIT_PAYOUT_API = 'v3' (_shared/xendit-payouts.ts). A re-send
+// always goes to the API the row was first sent with.
 // Key: "Money-out: Write" - see payoutKeyFor in _shared/xendit-keys.ts. Mode: XenditSettings."LiveMode".
 // Deploy: npx supabase functions deploy xendit-payroll-payout --project-ref hymcmesqgpliyyeghpgq --no-verify-jwt
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { payoutKeyFor, readKeyFor } from '../_shared/xendit-keys.ts';
-import { createPayout, findPayoutByReference, getPayout, listPayoutChannels, recordArgs, xenditMessage } from '../_shared/xendit-payouts.ts';
+import {
+  createPayout, findPayoutByReference, getPayout, listPayoutChannels, payoutApiFor, readPayoutApiSetting, recordArgs, storedPayoutApi,
+  xenditMessage
+} from '../_shared/xendit-payouts.ts';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -143,18 +148,39 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Where Xendit emails each payout's proof (employee's Receipt Email, plus the optional records CC) -
+    // sql/supabase_xendit_payout_receipt_email.sql. If that SQL isn't run yet, payouts just go without an email.
+    const receiptEmails = new Map<string, { to: string[]; cc: string[] }>();
+    const splitEmails = (value: unknown) => String(value ?? '').split(/[,;\s]+/).map((e) => e.trim()).filter((e) => e.includes('@'));
+    const emailLookup = await supabase.rpc('_payout_receipt_emails', { p_payout_ids: toSend.map((r) => r.payout_id) });
+    if (emailLookup.error) console.warn('xendit-payroll-payout: no receipt emails', emailLookup.error.message);
+    for (const e of emailLookup.data ?? []) {
+      receiptEmails.set(e.payout_id, { to: splitEmails(e.email_to), cc: splitEmails(e.email_cc) });
+    }
+
+    const apiSetting = await readPayoutApiSetting(supabase);
     let sent = 0;
     const failed: { name: string; error: string }[] = [];
     for (const r of toSend) {
+      // A re-send must go to the same API as its first try (same Idempotency-key there = no double pay).
+      const api = await payoutApiFor(supabase, r.payout_id, !!r.is_new, r.channel_code, apiSetting);
+      if (!api) {
+        failed.push({ name: r.display_name, error: 'Could not tell how this payout was first sent - try again in a minute.' });
+        continue;
+      }
       let result;
       try {
+        const emails = receiptEmails.get(r.payout_id);
         result = await createPayout(key, r.payout_id, {
+          api,
           reference_id: r.reference_id,
           channel_code: r.channel_code,
           account_number: r.account_number,
           account_holder_name: r.account_name,
           amount: Number(r.amount),
-          description: r.description
+          description: r.description,
+          receipt_email_to: emails?.to,
+          receipt_email_cc: emails?.cc
         });
       } catch (err) {
         // No answer: leave it at 'Creating' - Refresh / the next send checks with the same key.
@@ -195,9 +221,16 @@ Deno.serve(async (req) => {
     if (open.error) return jsonResponse({ error: open.error.message }, 500);
     const rows: any[] = open.data ?? [];
     let updated = 0;
+    let waitingSend = 0;
     for (const p of rows) {
       const key = payoutKeyFor(p.is_test);
       if (!key) continue;
+      if (!p.xendit_payout_id && (await storedPayoutApi(supabase, p.payout_id)) !== 'v2') {
+        // v3 (or unknown) with no Xendit ID: v3 can't be looked up by our reference, and freeing the row could pay
+        // twice. A super user's Send re-uses the same Idempotency-key, which returns the payout if it was made.
+        waitingSend++;
+        continue;
+      }
       const result = p.xendit_payout_id ? await getPayout(key, p.xendit_payout_id) : await findPayoutByReference(key, p.reference_id);
       if (result.ok && result.body?.id) {
         await supabase.rpc('_payroll_payout_record', { p_payout_id: p.payout_id, p_reference_id: null, p_error: null, ...recordArgs(result.body) });
@@ -212,7 +245,10 @@ Deno.serve(async (req) => {
         updated++;
       }
     }
-    return jsonResponse({ isTest, checked: rows.length, updated });
+    return jsonResponse({
+      isTest, checked: rows.length, updated,
+      ...(waitingSend ? { note: `${waitingSend} payout(s) got no answer from Xendit - a super user should press Send again (it won't pay twice).` } : {})
+    });
   }
 
   return jsonResponse({ error: 'Unknown action.' }, 400);

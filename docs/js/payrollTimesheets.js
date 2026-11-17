@@ -512,7 +512,8 @@ async function refreshAdvancePayouts() {
   showAdvancePayoutMessage('Checking with Xendit...');
   try {
     const result = await callPayoutFunction({ action: 'refresh_advances' });
-    showAdvancePayoutMessage(result.checked ? `Checked ${result.checked} payout${result.checked === 1 ? '' : 's'} with Xendit.` : 'Nothing waiting on Xendit.');
+    showAdvancePayoutMessage((result.checked ? `Checked ${result.checked} payout${result.checked === 1 ? '' : 's'} with Xendit.` : 'Nothing waiting on Xendit.')
+      + (result.note ? ' ' + result.note : ''));
   } catch (err) {
     showAdvancePayoutMessage(err.message, true);
   } finally {

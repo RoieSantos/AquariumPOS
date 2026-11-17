@@ -39,6 +39,90 @@ function renderTopNav(activeLabel) {
   renderTopNavLinks(activeLabel);
   mountTellMe();
   mountPayoutNotice(getPortalSession());
+  mountTransferReceiveLock(getPortalSession());
+}
+
+// Overdue-receipt lock - per "the time they ship the goods and they did not receive until next day we can
+// lock the portal and force them to go to transfer order and receive it". A transfer shipped to this staff's
+// warehouse on an earlier day (Transfer Date = first ship date, set by shipTransferOrder) that's still
+// In-Transit / Partial Shipped covers every page with a full-screen block until it's received. Transfer
+// Orders itself is left open so they can actually receive. Super users and sales-only users (who can't open
+// Transfer Orders) are never locked. Fails open: any error loading transfers means no lock.
+const TRANSFER_LOCK_SKIP_PAGES = ['transfer-orders.html', 'staff-login.html', 'change-password.html'];
+
+async function mountTransferReceiveLock(session) {
+  if (!session?.username || !session.warehouseName || typeof supabaseClient === 'undefined') return;
+  if (session.isSuperUser || session.isSalesUser) return;
+  const page = (location.pathname.split('/').pop() || '').toLowerCase();
+  if (page.includes('print') || TRANSFER_LOCK_SKIP_PAGES.includes(page)) return;
+
+  let rows;
+  try {
+    const { data, error } = await supabaseClient
+      .from('Transfer_Header')
+      .select('*')
+      .in('"Status"', ['In-Transit', 'Partial Shipped']);
+    if (error) return;
+    rows = data || [];
+  } catch (e) {
+    return;
+  }
+
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const overdue = rows.filter((r) =>
+    (r['To Warehouse'] || '') === session.warehouseName &&
+    r['Transfer Date'] && String(r['Transfer Date']).slice(0, 10) < today
+  ).sort((a, b) => String(a['Transfer Date']).localeCompare(String(b['Transfer Date'])));
+
+  if (overdue.length) renderTransferReceiveLock(overdue);
+}
+
+function renderTransferReceiveLock(rows) {
+  document.getElementById('transferReceiveLock')?.remove();
+  const esc = payoutNoticeEscape;
+  const shippedLabel = (d) => {
+    const date = new Date(String(d).slice(0, 10) + 'T00:00:00');
+    const days = Math.round((new Date().setHours(0, 0, 0, 0) - date.getTime()) / 86400000);
+    return `${date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} (${days} day${days === 1 ? '' : 's'} ago)`;
+  };
+
+  const overlay = document.createElement('div');
+  overlay.id = 'transferReceiveLock';
+  overlay.className = 'no-print';
+  overlay.setAttribute('role', 'alertdialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'transferReceiveLockTitle');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.65);'
+    + 'display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;overflow-y:auto;';
+  overlay.innerHTML = `
+    <div style="background:var(--panel-bg,#fff);color:var(--text-main,#111);border:2px solid var(--danger,#c62828);
+                border-radius:10px;box-shadow:var(--shadow);max-width:560px;width:100%;padding:20px;box-sizing:border-box;">
+      <h2 id="transferReceiveLockTitle" style="margin:0 0 8px;color:var(--danger,#c62828);font-size:20px;">
+        Receive your transfer${rows.length === 1 ? '' : 's'} first
+      </h2>
+      <p style="margin:0 0 14px;font-size:14px;line-height:1.5;">
+        ${rows.length === 1 ? 'This transfer was' : 'These transfers were'} shipped to <strong>${esc(rows[0]['To Warehouse'])}</strong>
+        but ${rows.length === 1 ? 'has' : 'have'} not been received in the system. The portal is locked until you receive
+        ${rows.length === 1 ? 'it' : 'them'}. If something is missing or damaged, receive what arrived - the Receive screen
+        lets you return or write off the rest.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${rows.map((r) => `
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px;border:1px solid var(--input-border,#ccc);border-radius:8px;">
+            <div style="flex:1 1 200px;min-width:0;font-size:14px;">
+              <strong>${esc(r['No.'])}</strong> from ${esc(r['From Warehouse'] || '-')}<br>
+              <span style="opacity:0.75;">Shipped ${esc(shippedLabel(r['Transfer Date']))}${r['Shipped By'] ? ' by ' + esc(r['Shipped By']) : ''}</span>
+            </div>
+            <a class="btn btn-primary btn-sm" href="transfer-orders.html?doc=${encodeURIComponent(r['No.'])}">Receive now</a>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  // Keep keyboard focus / screen readers out of the locked page underneath.
+  Array.from(document.body.children).forEach((el) => { if (el !== overlay) el.inert = true; });
+  overlay.querySelector('a')?.focus();
 }
 
 // "You've been paid" notice - per "notice can be on the portal". When Xendit confirms a salary / cash advance

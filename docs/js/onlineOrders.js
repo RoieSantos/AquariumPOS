@@ -6234,6 +6234,247 @@ function wireChangeItemDialog() {
   document.getElementById('closeChangeItemBtn').addEventListener('click', closeChangeItemDialog);
   wireAddLineDialog();
   wireReturnDialogs();
+  wireExchangeDialog();
+}
+
+// ---------------------------------------------------------------- Exchange (advance orders)
+// Per "what if multiple items will be exchange to a specific item?" / "can we add more products and adjust
+// the price?" - tick the lines (and how many of each) the customer gives up, add one or more items they get
+// with quantity and price each. The new items must add up to the exchange value ("Fit to value" adjusts the
+// prices), so the order total / balance never move (sql/supabase_advance_order_exchange.sql).
+let exchangeOrderNo = null;
+let exchangeSearchGeneration = 0;
+let exchangeOptions = [];
+let exchangeTargets = []; // [{ variation_id, label, list_price, quantity, price }]
+
+function exchangeSourceLines() {
+  return advanceCardLines.filter((l) => (l.type || '').toUpperCase() === 'ITEM' && Math.abs(Number(l.quantity) || 0) > 0);
+}
+
+function exchangeRound2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+// Each ticked line's share of its Net Amount for the quantity given up (same rounding as the server).
+function exchangeValue() {
+  let total = 0;
+  document.querySelectorAll('#exchangeSources [data-exch-line]').forEach((row) => {
+    if (!row.querySelector('input[type="checkbox"]').checked) return;
+    const l = advanceCardLines.find((x) => String(x.line_no) === row.dataset.exchLine);
+    const lineQty = Math.abs(Number(l?.quantity) || 0);
+    const q = Math.min(Number(row.querySelector('input[type="number"]').value) || 0, lineQty);
+    if (!l || lineQty <= 0 || q <= 0) return;
+    total += q === lineQty ? (Number(l.net_amount) || 0) : exchangeRound2((Number(l.net_amount) || 0) * q / lineQty);
+  });
+  return exchangeRound2(total);
+}
+
+function exchangeTargetsTotal() {
+  return exchangeRound2(exchangeTargets.reduce((t, x) => t + (Number(x.quantity) || 0) * (Number(x.price) || 0), 0));
+}
+
+// Server rule: the last line takes the rounding, at most 1 centavo per unit.
+function exchangeBalanced(value) {
+  const last = exchangeTargets[exchangeTargets.length - 1];
+  return !!last && Math.abs(value - exchangeTargetsTotal()) <= 0.01 * (Number(last.quantity) || 0) + 0.001;
+}
+
+function renderExchangeTargets() {
+  const body = document.getElementById('exchangeTargets');
+  body.innerHTML = exchangeTargets.length
+    ? exchangeTargets.map((t, i) => `<tr data-exch-target="${i}">
+        <td style="white-space:normal;">${escapeHtml(t.label)}<div class="muted" style="font-size:11px;">list ${money(t.list_price)}</div></td>
+        <td class="num"><input type="number" data-field="quantity" min="1" step="1" value="${escapeHtml(String(t.quantity))}" style="width:64px;" /></td>
+        <td class="num"><input type="number" data-field="price" min="0" step="0.01" value="${escapeHtml(String(t.price))}" style="width:90px;" /></td>
+        <td class="num" data-amount>${money((Number(t.quantity) || 0) * (Number(t.price) || 0))}</td>
+        <td><button type="button" class="bc-link" data-remove title="Remove">&times;</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="cell-msg muted">No items yet - search above and click one to add it.</td></tr>';
+  updateExchangeSummary();
+}
+
+function updateExchangeSummary() {
+  const value = exchangeValue();
+  const total = exchangeTargetsTotal();
+  document.querySelectorAll('#exchangeTargets [data-exch-target]').forEach((row) => {
+    const t = exchangeTargets[Number(row.dataset.exchTarget)];
+    if (t) row.querySelector('[data-amount]').textContent = money((Number(t.quantity) || 0) * (Number(t.price) || 0));
+  });
+  const parts = [`Exchange value <b>${money(value)}</b> · New items <b>${money(total)}</b>`];
+  if (exchangeTargets.length) {
+    const diff = exchangeRound2(value - total);
+    parts.push(exchangeBalanced(value)
+      ? '<span style="color:var(--success, #1a7f37);">&#10003; Matches - the order total and balance stay the same.</span>'
+      : `<span class="error-text">${diff > 0 ? `${money(diff)} short` : `${money(-diff)} over`} - adjust the prices / quantities, or click Fit to value.</span>`);
+  }
+  document.getElementById('exchangeSummary').innerHTML = parts.join('<br />');
+  document.getElementById('exchangeFitBtn').disabled = !exchangeTargets.length || !value;
+}
+
+// Scale every price so the items add up to the exchange value; the last item's price takes the remainder.
+function fitExchangeToValue() {
+  const value = exchangeValue();
+  const total = exchangeTargetsTotal();
+  if (!exchangeTargets.length || !value) return;
+  const factor = total > 0 ? value / total : 0;
+  let running = 0;
+  exchangeTargets.forEach((t, i) => {
+    const qty = Number(t.quantity) || 1;
+    if (i < exchangeTargets.length - 1) {
+      t.price = factor ? exchangeRound2((Number(t.price) || 0) * factor) : 0;
+      running += qty * t.price;
+    } else {
+      t.price = exchangeRound2(Math.max(0, value - running) / qty);
+    }
+  });
+  renderExchangeTargets();
+}
+
+function addExchangeTarget(option) {
+  if (!option) return;
+  const existing = exchangeTargets.find((t) => t.variation_id === option.variation_id);
+  if (existing) {
+    existing.quantity = (Number(existing.quantity) || 0) + 1;
+  } else {
+    const price = Number(option.price) || 0;
+    // First item: suggest how many the exchange value buys at its list price.
+    const value = exchangeValue();
+    const quantity = !exchangeTargets.length && price > 0 && value > 0 ? Math.max(1, Math.floor(value / price)) : 1;
+    exchangeTargets.push({ variation_id: option.variation_id, label: option.label || option.name, list_price: price, quantity, price });
+  }
+  renderExchangeTargets();
+}
+
+function openExchangeDialog() {
+  const lines = exchangeSourceLines();
+  if (!openAdvanceNo || !lines.length) return;
+  exchangeOrderNo = openAdvanceNo;
+  exchangeOptions = [];
+  exchangeTargets = [];
+  document.getElementById('exchangeTitle').textContent = `Advance order ${exchangeOrderNo}`;
+  document.getElementById('exchangeSources').innerHTML = lines.map((l) => {
+    const qty = Math.abs(Number(l.quantity) || 0);
+    return `<label class="oo-sb-part" data-exch-line="${escapeHtml(String(l.line_no))}">
+      <input type="checkbox" />
+      <span><b>${escapeHtml(l.description || l.item_no || '')}</b>
+        <small>Line ${escapeHtml(String(l.line_no))} · ${qty} on order · net ${money(l.net_amount)}</small></span>
+      <input type="number" min="1" max="${qty}" step="1" value="${qty}" title="How many of this line" style="width:70px; margin-left:auto;" />
+    </label>`;
+  }).join('');
+  document.getElementById('exchangeSearch').value = '';
+  document.getElementById('exchangeOptions').innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+  document.getElementById('exchangeError').classList.add('hidden');
+  renderExchangeTargets();
+  document.getElementById('exchangeDialog').classList.remove('hidden');
+}
+
+function closeExchangeDialog() {
+  exchangeOrderNo = null;
+  document.getElementById('exchangeDialog').classList.add('hidden');
+}
+
+async function loadExchangeOptions() {
+  const query = document.getElementById('exchangeSearch').value.trim();
+  const box = document.getElementById('exchangeOptions');
+  const generation = ++exchangeSearchGeneration;
+  if (!query) {
+    exchangeOptions = [];
+    box.innerHTML = '<div class="muted">Type part of the name, code or SKU above.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="muted">Loading...</div>';
+  const { data, error } = await advanceRpc('staff_search_order_line_variants', {
+    p_query: query, p_advance_no: exchangeOrderNo, p_advance_line_no: null
+  });
+  if (generation !== exchangeSearchGeneration || !exchangeOrderNo) return;
+  if (error) {
+    box.innerHTML = `<div class="error-text">${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  exchangeOptions = (data?.options || []);
+  box.innerHTML = exchangeOptions.length
+    ? exchangeOptions.map((v, i) => `
+      <button type="button" class="oo-sb-part" data-exch-option="${i}" style="width:100%; text-align:left;" title="Add to the new items">
+        <span><b>+ ${escapeHtml(v.label || v.name)}</b>
+        <small>${escapeHtml([v.item_code, v.sku].filter(Boolean).join(' · '))} · list price ${money(v.price)}</small></span></button>`).join('')
+    : '<div class="muted">No matching products.</div>';
+}
+
+async function saveExchange() {
+  const errorEl = document.getElementById('exchangeError');
+  const showError = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+  const sources = [];
+  for (const row of document.querySelectorAll('#exchangeSources [data-exch-line]')) {
+    if (!row.querySelector('input[type="checkbox"]').checked) continue;
+    const l = advanceCardLines.find((x) => String(x.line_no) === row.dataset.exchLine);
+    const max = Math.abs(Number(l?.quantity) || 0);
+    const q = Number(row.querySelector('input[type="number"]').value);
+    if (!Number.isInteger(q) || q < 1 || q > max) return showError(`Line ${row.dataset.exchLine}: enter 1 to ${max}.`);
+    sources.push({ line_no: row.dataset.exchLine, quantity: q });
+  }
+  if (!sources.length) return showError('Tick at least one line the customer is giving up.');
+  if (!exchangeTargets.length) return showError('Add at least one item they get.');
+  for (const t of exchangeTargets) {
+    if (!Number.isInteger(Number(t.quantity)) || Number(t.quantity) < 1) return showError(`${t.label}: enter a quantity of 1 or more.`);
+    if (t.price === '' || !(Number(t.price) >= 0)) return showError(`${t.label}: enter a price.`);
+  }
+  if (!exchangeBalanced(exchangeValue())) return showError('The new items must add up to the exchange value - adjust the prices, or click Fit to value.');
+
+  const no = exchangeOrderNo;
+  const btn = document.getElementById('saveExchangeBtn');
+  btn.disabled = true;
+  errorEl.classList.add('hidden');
+  const { data, error } = await advanceRpc('staff_exchange_advance_order_lines', {
+    p_no: no,
+    p_sources: sources,
+    p_targets: exchangeTargets.map((t) => ({ variation_id: t.variation_id, quantity: Number(t.quantity), price: exchangeRound2(Number(t.price)) }))
+  });
+  btn.disabled = false;
+  if (error) {
+    return showError(/could not find the function|schema cache/i.test(error.message)
+      ? `${error.message} - run sql/supabase_advance_order_exchange.sql.` : error.message);
+  }
+  closeExchangeDialog();
+  if (openAdvanceNo === no) loadAdvanceCardLines(no);
+  alert(`Exchanged:\n${data?.given_up || '-'}\n→ ${data?.got || '-'}\n\nNew lines: ${(data?.new_lines || []).join(', ')}\nValue kept: ${money(data?.exchange_value)}`);
+}
+
+function wireExchangeDialog() {
+  document.getElementById('advanceExchangeBtn').addEventListener('click', openExchangeDialog);
+  const sources = document.getElementById('exchangeSources');
+  sources.addEventListener('change', updateExchangeSummary);
+  sources.addEventListener('input', (e) => {
+    // Typing a quantity ticks its line.
+    if (e.target.type === 'number') e.target.closest('[data-exch-line]').querySelector('input[type="checkbox"]').checked = true;
+    updateExchangeSummary();
+  });
+  let debounce = null;
+  document.getElementById('exchangeSearch').addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(loadExchangeOptions, 300);
+  });
+  document.getElementById('exchangeOptions').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-exch-option]');
+    if (btn) addExchangeTarget(exchangeOptions[Number(btn.dataset.exchOption)]);
+  });
+  const targets = document.getElementById('exchangeTargets');
+  targets.addEventListener('input', (e) => {
+    const row = e.target.closest('[data-exch-target]');
+    const t = row && exchangeTargets[Number(row.dataset.exchTarget)];
+    if (!t || !e.target.dataset.field) return;
+    t[e.target.dataset.field] = e.target.value;
+    updateExchangeSummary();
+  });
+  targets.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-exch-target]');
+    if (!row || !e.target.closest('[data-remove]')) return;
+    exchangeTargets.splice(Number(row.dataset.exchTarget), 1);
+    renderExchangeTargets();
+  });
+  document.getElementById('exchangeFitBtn').addEventListener('click', fitExchangeToValue);
+  document.getElementById('saveExchangeBtn').addEventListener('click', saveExchange);
+  document.getElementById('cancelExchangeBtn').addEventListener('click', closeExchangeDialog);
+  document.getElementById('closeExchangeBtn').addEventListener('click', closeExchangeDialog);
 }
 
 // ---------------------------------------------------------------- Add Item
@@ -9559,6 +9800,7 @@ async function loadAdvanceCardLines(transactionNo) {
   const tfoot = document.getElementById('advanceCardLinesFoot');
   tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading...</td></tr>';
   tfoot.innerHTML = '';
+  document.getElementById('advanceExchangeBtn').classList.add('hidden');
   ItemStockFactbox.clear(document.getElementById('advanceCardStockPart'), 'Loading...');
 
   const [{ data, error }, serialStatus, lineChanges] = await Promise.all([
@@ -9616,6 +9858,8 @@ async function loadAdvanceCardLines(transactionNo) {
   };
   const lines = data || [];
   advanceCardLines = lines;
+  document.getElementById('advanceExchangeBtn').classList.toggle('hidden',
+    !canChangeAdvanceOrderLineItem(advanceRowsByNo.get(String(transactionNo))) || !exchangeSourceLines().length);
   if (!lines.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">No line items found for this order.</td></tr>';
     return;

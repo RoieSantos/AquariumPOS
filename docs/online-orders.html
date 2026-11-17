@@ -892,7 +892,7 @@
         </details>
 
         <div class="bc-doc-part">
-          <div class="bc-doc-part-head">Lines</div>
+          <div class="bc-doc-part-head">Lines <button type="button" class="bc-link hidden" id="advanceExchangeBtn" title="Trade one or more lines for another item, by value (Super User / Sales User / Production Manager)">Exchange</button></div>
           <div class="line-items-wrap">
             <table class="bc-grid bc-doc-lines">
               <thead>
@@ -1325,6 +1325,41 @@
     </div>
   </div>
 
+  <!-- Exchange (js/onlineOrders.js, sql/supabase_advance_order_exchange.sql) - advance orders: lines given up -> one item, by value. -->
+  <div id="exchangeDialog" class="bc-dialog-backdrop hidden">
+    <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="exchangeTitle">
+      <div class="bc-dialog-head">
+        <div>
+          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">EXCHANGE</div>
+          <h2 id="exchangeTitle">Advance order</h2>
+        </div>
+        <button class="bc-iconbtn" id="closeExchangeBtn" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="bc-dialog-body">
+        <p class="bc-lede">1. Tick what the customer is giving up, and how many of each.</p>
+        <div id="exchangeSources" class="oo-sb-parts" style="max-height:220px; overflow:auto;"></div>
+        <p class="bc-lede" style="margin-top:12px;">2. Add the items they get instead (one or more) - set how many and the price each.</p>
+        <div class="bc-field">
+          <label for="exchangeSearch">Search product</label>
+          <input type="text" id="exchangeSearch" autocomplete="off" placeholder="e.g. tiger barb, F-087" />
+        </div>
+        <div id="exchangeOptions" class="oo-sb-parts" style="max-height:160px; overflow:auto;"></div>
+        <table class="bc-grid" style="margin-top:10px; width:100%;">
+          <thead><tr><th>New item</th><th class="num">Qty</th><th class="num">Price each</th><th class="num">Amount</th><th></th></tr></thead>
+          <tbody id="exchangeTargets"></tbody>
+        </table>
+        <p id="exchangeSummary" class="bc-lede" style="margin-top:8px;"></p>
+        <button class="bc-btn" id="exchangeFitBtn" type="button" title="Adjust the prices so the new items add up to the exchange value">Fit to value</button>
+      </div>
+      <div class="bc-dialog-foot">
+        <p id="exchangeError" class="bc-dialog-msg error-text hidden"></p>
+        <span style="flex:1;"></span>
+        <button class="bc-btn bc-btn-primary" id="saveExchangeBtn" type="button">Exchange</button>
+        <button class="bc-btn" id="cancelExchangeBtn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Add Item (js/onlineOrders.js "Add Item", sql/supabase_online_order_add_line.sql) - portal orders. -->
   <div id="addLineDialog" class="bc-dialog-backdrop hidden">
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="addLineTitle">
@@ -1677,7 +1712,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=aispend1"></script>
+  <script src="js/nav.js?v=recvlock1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
