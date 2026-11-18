@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Slow & Fast Moving Items - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=movingitems3" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Slow &amp; Fast Moving Items</h1>
+    <p class="muted">
+      Items ranked by units sold in the selected period (online orders + in-store orders received at the shop; cancelled orders excluded).
+      <strong>Fast</strong> = top 20% of selling items, <strong>Medium</strong> = next 30%, <strong>Slow</strong> = bottom 50%,
+      <strong>Not Moving</strong> = no sales at all in the period. Items in the PRODUCTION ITEM category (build materials) are not listed as Slow or Not Moving. Stock on hand is from the Item Ledger (all warehouses).
+    </p>
+
+    <div class="toolbar">
+      <div id="periodButtons" style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="btn btn-secondary btn-sm" data-days="30" type="button">Last 30 days</button>
+        <button class="btn btn-secondary btn-sm" data-days="60" type="button">60 days</button>
+        <button class="btn btn-primary btn-sm" data-days="90" type="button">90 days</button>
+        <button class="btn btn-secondary btn-sm" data-days="180" type="button">180 days</button>
+        <button class="btn btn-secondary btn-sm" data-days="365" type="button">1 year</button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="search" id="searchInput" placeholder="Search item or code..." style="min-width:180px;" />
+        <select id="categorySelect"><option value="">All categories</option></select>
+        <label for="topNSelect" class="muted" style="margin:0;">Show top</label>
+        <select id="topNSelect">
+          <option value="10" selected>10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="exportCsvBtn" type="button">Export CSV</button>
+      </div>
+    </div>
+
+    <div id="movingLoading" class="muted">Loading...</div>
+    <div id="movingError" class="error-text hidden"></div>
+
+    <div id="movingResults" class="hidden">
+      <div class="stat-card-grid">
+        <div class="stat-card moving-stat" data-class="Fast" title="Show Fast movers">
+          <div class="stat-label"><span class="stat-icon">🚀</span> Fast Moving</div>
+          <div class="stat-value" id="statFast">-</div>
+          <div class="muted" id="statFastSub" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card moving-stat" data-class="Medium" title="Show Medium movers">
+          <div class="stat-label"><span class="stat-icon">➡️</span> Medium</div>
+          <div class="stat-value" id="statMedium">-</div>
+          <div class="muted" id="statMediumSub" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card moving-stat" data-class="Slow" title="Show Slow movers">
+          <div class="stat-label"><span class="stat-icon">🐢</span> Slow Moving</div>
+          <div class="stat-value" id="statSlow">-</div>
+          <div class="muted" id="statSlowSub" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card moving-stat" data-class="Not Moving" title="Show items with no sales">
+          <div class="stat-label"><span class="stat-icon">🛑</span> Not Moving</div>
+          <div class="stat-value" id="statDead">-</div>
+          <div class="muted" id="statDeadSub" style="font-size:12px;"></div>
+        </div>
+        <div class="stat-card hidden" id="statTiedUpCard">
+          <div class="stat-label"><span class="stat-icon">💰</span> Stock Tied Up (Slow + Not Moving)</div>
+          <div class="stat-value" id="statTiedUp">-</div>
+          <div class="muted" style="font-size:12px;">On-hand quantity x item cost</div>
+        </div>
+      </div>
+
+      <div class="moving-chart-grid">
+        <div class="card">
+          <h3 style="margin-top:0;">🚀 Top <span class="topNLabel">10</span> Fast Movers</h3>
+          <p class="muted" style="margin-top:-6px; font-size:12px;">Units sold in the period</p>
+          <div id="fastChart"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">🐢 Top <span class="topNLabel">10</span> Slow / Not Moving - Most Stock on Hand</h3>
+          <p class="muted" style="margin-top:-6px; font-size:12px;">Candidates for promos, bundles or a stop on re-ordering</p>
+          <div id="slowChart"></div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-top:16px;">
+        <div id="classTabs" style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" data-class="" type="button">All</button>
+          <button class="btn btn-secondary btn-sm" data-class="Fast" type="button">Fast</button>
+          <button class="btn btn-secondary btn-sm" data-class="Medium" type="button">Medium</button>
+          <button class="btn btn-secondary btn-sm" data-class="Slow" type="button">Slow</button>
+          <button class="btn btn-secondary btn-sm" data-class="Not Moving" type="button">Not Moving</button>
+        </div>
+        <label style="display:flex; gap:6px; align-items:center; margin:0;">
+          <input type="checkbox" id="inStockOnly" /> Only items with stock on hand
+        </label>
+      </div>
+
+      <div class="muted" id="rowCountLabel" style="margin:6px 0;"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr id="movingTableHead"></tr>
+          </thead>
+          <tbody id="movingTableBody"></tbody>
+        </table>
+      </div>
+      <div style="text-align:center; margin:12px 0;">
+        <button class="btn btn-secondary btn-sm hidden" id="showMoreBtn" type="button">Show more</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Item drill-down: recent sales orders + Item Ledger movements (click a table row). -->
+  <div id="itemTxModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:1000px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div>
+          <h2 id="itemTxTitle" style="margin:0;">-</h2>
+          <a id="itemTxLedgerLink" href="item-ledger-entries.html" target="_blank" rel="noopener" style="font-size:13px;">Open full history in Item Ledger Entries &rarr;</a>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="itemTxCloseBtn" type="button">Close</button>
+      </div>
+      <div id="itemTxBody" style="margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=payoutreceipt1"></script>
+  <script src="js/nav.js?v=movingitems1"></script>
+  <script src="js/slowFastMovingItems.js?v=movingitems3"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

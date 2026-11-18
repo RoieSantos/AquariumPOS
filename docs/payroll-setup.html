@@ -370,6 +370,16 @@
               </div>
             </div>
           </details>
+
+          <!-- sql/supabase_xendit_payout_receipt_cc_setting.sql (PortalSettings XENDIT_PAYOUT_RECEIPT_CC) -->
+          <details class="doc-fasttab" open>
+            <summary>Xendit Payout Proof <span class="doc-fasttab-summary">A copy of every payout's transaction proof for your records</span></summary>
+            <div class="doc-fasttab-body">
+              <p class="bc-doc-hint" style="margin:0 0 10px;">Xendit emails each employee the proof of their salary / cash advance payout (their Receipt Email). Put an address here to be CC'd on every one - it also gets the proof for employees with no Receipt Email. Several addresses: separate with commas. Leave blank for no copy. Applies to payouts sent from now on.</p>
+              <div class="bc-doc-field"><label for="payoutReceiptCc">Records Email (CC)</label><input type="text" id="payoutReceiptCc" autocomplete="off" maxlength="500" placeholder="records@rspetstop.com" /></div>
+              <p class="muted" id="payoutReceiptCcUpdated" style="margin:4px 0 0; font-size:12px;"></p>
+            </div>
+          </details>
         </div>
       </div>
     </div>
@@ -533,9 +543,9 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=recvlock1"></script>
+  <script src="js/nav.js?v=movingitems1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/payrollSetup.js?v=receiptemail1"></script>
+  <script src="js/payrollSetup.js?v=receiptcc1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

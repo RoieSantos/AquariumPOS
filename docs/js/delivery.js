@@ -1671,7 +1671,10 @@ function stopHasDeliveryFee(s) {
 // checkbox in a stop's Status cell. Per "only a super user can do a back job" - Super User only
 // (re-checked server side).
 function stopBackJobToggleHtml(s) {
-  const canEdit = !!currentSession?.isSuperUser;
+  // Super User + production (Production Manager role / Production Member) -
+  // supabase_delivery_back_job_production.sql re-checks.
+  const canEdit = !!(currentSession?.isSuperUser || currentSession?.isProductionMember
+    || (currentSession?.staffRoles || []).includes('ProductionManager'));
   return `<br><label class="muted" style="white-space:nowrap;" title="Back job - return trip, no delivery fee needed to print">`
     + `<input type="checkbox" data-back-job-stop-id="${s.stop_id}"${s.is_back_job ? ' checked' : ''}${canEdit ? '' : ' disabled'}> Back job</label>`;
 }
@@ -1872,7 +1875,7 @@ function showDayDetail(dateKey) {
             <button class="btn btn-secondary btn-sm" data-print-joborder-stop-id="${s.stop_id}" type="button">Print Job Order</button>
             <button class="btn btn-secondary btn-sm" data-edit-stop-id="${s.stop_id}" type="button" title="Fix this stop's customer name/address">Edit Details</button>
             ${s.geocode_status !== 'ok' ? `<button class="btn btn-secondary btn-sm" data-retry-geocode-id="${s.stop_id}" data-retry-geocode-address="${encodeURIComponent(displayAddress)}" type="button">Retry Map</button>` : ''}
-            ${currentSession.isSuperUser ? `<button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" type="button">Remove</button>` : ''}
+            ${canRemoveStops() ? `<button class="btn btn-danger btn-sm" data-stop-id="${s.stop_id}" data-stop-order="${s.order_id || ''}" type="button">Remove</button>` : ''}
           </td>
         </tr>
       `;
@@ -1887,7 +1890,7 @@ function showDayDetail(dateKey) {
   });
 
   tbody.querySelectorAll('button[data-stop-id]').forEach((btn) => {
-    btn.addEventListener('click', () => removeStop(btn.dataset.stopId, dateKey));
+    btn.addEventListener('click', () => removeStop(btn.dataset.stopId, dateKey, btn.dataset.stopOrder));
   });
 
   tbody.querySelectorAll('button[data-remove-vendor-stop-code]').forEach((btn) => {
@@ -2509,7 +2512,55 @@ function subscribeToDriverLocations() {
   });
 }
 
-async function removeStop(stopId, dateKey) {
+// Super User or Sales Manager (Staff Role, supabase_sales_manager_role.sql) - read from staffRoles
+// so an already-logged-in Sales Manager gets it without logging in again. The RPC re-checks.
+function canRemoveStops() {
+  return !!(currentSession?.isSuperUser || (currentSession?.staffRoles || []).includes('SalesManager'));
+}
+
+function escLog(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Who removed which scheduled stop, newest first (admin_list_delivery_stop_removals).
+async function openRemovalLog() {
+  const modal = document.getElementById('removalLogModal');
+  const tbody = document.getElementById('removalLogTableBody');
+  tbody.innerHTML = '<tr><td colspan="7" class="muted">Loading...</td></tr>';
+  modal.classList.remove('hidden');
+
+  const { data, error } = await supabaseClient.rpc('admin_list_delivery_stop_removals', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_limit: 300
+  });
+
+  if (error) {
+    console.error('admin_list_delivery_stop_removals failed:', error);
+    tbody.innerHTML = `<tr><td colspan="7" class="error-text">${escLog(error.message || 'Could not load the log.')}</td></tr>`;
+    return;
+  }
+
+  const rows = data || [];
+  const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+  const fmtDate = (v) => (v ? new Date(v + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '');
+  tbody.innerHTML = rows.length === 0
+    ? '<tr><td colspan="7" class="muted">No stops have been removed yet.</td></tr>'
+    : rows.map((r) => `
+      <tr>
+        <td>${escLog(fmtDateTime(r.removed_at))}</td>
+        <td><strong>${escLog(r.removed_by)}</strong></td>
+        <td>${escLog(r.order_id)}</td>
+        <td>${escLog(r.customer_name)}</td>
+        <td>${escLog(fmtDate(r.delivery_date))}${r.route_name ? `<br><span class="muted">${escLog(r.route_name)}</span>` : ''}</td>
+        <td>${escLog(r.address)}${r.notes ? `<br><span class="muted">Notes: ${escLog(r.notes)}</span>` : ''}</td>
+        <td>${escLog(r.scheduled_by)}${r.scheduled_at ? `<br><span class="muted">${escLog(fmtDateTime(r.scheduled_at))}</span>` : ''}</td>
+      </tr>`).join('');
+}
+
+async function removeStop(stopId, dateKey, orderId) {
+  if (!confirm(`Remove ${orderId || 'this order'} from the delivery calendar?\n\nThis is logged under your name.`)) return;
+
   const { error } = await supabaseClient.rpc('admin_delete_delivery_stop', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
@@ -2518,6 +2569,7 @@ async function removeStop(stopId, dateKey) {
 
   if (error) {
     console.error('admin_delete_delivery_stop failed:', error);
+    alert(error.message || 'Could not remove the stop.');
     return;
   }
 
@@ -3159,7 +3211,7 @@ async function syncOrderFromStop(stop, details, previousAddress) {
 
   const failures = [];
   const reasonOf = (error) => (/not authorized/i.test(error.message)
-    ? 'your account can\'t edit orders (Super User / Conversations Access only)'
+    ? 'your account can\'t edit orders (Super User / Sales Manager / Conversations Access only)'
     : error.message);
   if (shippingChanged) {
     const { error } = await supabaseClient.rpc('admin_set_portal_order_shipping_details', {
@@ -3308,6 +3360,14 @@ function wireToolbarAndModal() {
 
   document.getElementById('closeDayDetailBtn').addEventListener('click', () => {
     document.getElementById('dayDetailPanel').classList.add('hidden');
+  });
+
+  // Removed Stops log (supabase_sales_manager_role.sql) - Super User / Sales Manager only.
+  const removalLogBtn = document.getElementById('removalLogBtn');
+  if (canRemoveStops()) removalLogBtn.classList.remove('hidden');
+  removalLogBtn.addEventListener('click', openRemovalLog);
+  document.getElementById('removalLogCloseBtn').addEventListener('click', () => {
+    document.getElementById('removalLogModal').classList.add('hidden');
   });
 
   document.getElementById('printManifestBtn').addEventListener('click', () => {

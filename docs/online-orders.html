@@ -41,7 +41,7 @@
     <div class="bc-titlebar">
       <div>
         <h1 class="bc-title">Online Orders</h1>
-        <p class="bc-subtitle" id="ordersSubtitle">Live, read-only view of customer orders fetched directly from Pancake.</p>
+        <p class="bc-subtitle" id="ordersSubtitle">Live view of customer orders.</p>
       </div>
       <div class="bc-title-tools">
         <div class="bc-search">
@@ -158,7 +158,7 @@
         <!-- To Ship + on the delivery calendar (sql/supabase_online_order_for_delivery_status.sql) -->
         <button type="button" class="bc-tab status-summary-pill online-pill" data-status="For Delivery" title="Built and scheduled on the delivery calendar">For Delivery <span class="status-summary-count" id="statusCountForDelivery">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Shipped">Shipped <span class="status-summary-count" id="statusCountShipped">-</span></button>
-        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Delivered" title="Marked Done by the Delivery Team (portal only - Pancake still says Shipped)">Delivered <span class="status-summary-count" id="statusCountDelivered">-</span></button>
+        <button type="button" class="bc-tab status-summary-pill online-pill" data-status="Delivered" title="Marked Done by the Delivery Team">Delivered <span class="status-summary-count" id="statusCountDelivered">-</span></button>
         <button type="button" class="bc-tab status-summary-pill" data-status="Cancelled">Cancelled <span class="status-summary-count" id="statusCountCancelled">-</span></button>
       </div>
 
@@ -467,7 +467,7 @@
         <button class="bc-cmd" id="cardDeliverySlipBtn" type="button" title="Print a delivery slip: what's in this delivery, what was delivered before, what's still to deliver"><svg class="bc-ico"><use href="#ico-print"/></svg>Delivery Slip</button>
         <!-- Super User / Production Manager / Sales User / Store Manager, open orders before To Ship -
              js/onlineOrders.js cancelCardOrder, sql/supabase_online_order_cancel.sql. -->
-        <button class="bc-cmd bc-cmd-danger hidden" id="cardCancelOrderBtn" type="button" title="Cancel this order (in Pancake too) - a reason is required">Cancel Order</button>
+        <button class="bc-cmd bc-cmd-danger hidden" id="cardCancelOrderBtn" type="button" title="Cancel this order - a reason is required">Cancel Order</button>
         <!-- Super User / Sales User / Store Manager, shipped orders - js/onlineOrders.js "Return / Exchange",
              sql/supabase_online_order_returns.sql. -->
         <button class="bc-cmd hidden" id="cardReturnBtn" type="button" title="The customer is returning or exchanging an item from this shipped order">Return / Exchange</button>
@@ -1236,7 +1236,7 @@
       </div>
       <div class="bc-dialog-body">
         <p class="bc-lede">Tick the part(s) that need rework. They go back to the maker's list with your reason.</p>
-        <p id="sendBackAfterSalesNote" class="bc-lede hidden"><b>After-sales rework.</b> The order stays <span id="sendBackAfterSalesStatus"></span> - nothing changes in Pancake or the delivery. It's back on the maker's list until they mark it Production Done.</p>
+        <p id="sendBackAfterSalesNote" class="bc-lede hidden"><b>After-sales rework.</b> The order stays <span id="sendBackAfterSalesStatus"></span> - nothing changes in the delivery. It's back on the maker's list until they mark it Production Done.</p>
         <div id="sendBackParts" class="oo-sb-parts"></div>
         <div class="bc-field oo-sb-reason">
           <label for="sendBackReason">Reason</label>
@@ -1712,7 +1712,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=recvlock1"></script>
+  <script src="js/nav.js?v=movingitems1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pullToRefresh.js"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
@@ -1727,7 +1727,7 @@
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/onlineOrders.js?v=statuslink1"></script>
+  <script src="js/onlineOrders.js?v=pickupfee1"></script>
   <script src="js/onlineNewOrders.js?v=cod1"></script>
   <script src="js/pwa.js"></script>
 </body>

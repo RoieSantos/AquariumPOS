@@ -99,6 +99,7 @@
                 <option value="ProductionManager">Production Manager</option>
                 <option value="AllBranchFabrication">All-Branch Fabrication</option>
                 <option value="CatalogEditor">Catalog Editor</option>
+                <option value="SalesManager">Sales Manager</option>
                 <option value="__none">(no role)</option>
               </select>
             </div>
@@ -249,6 +250,7 @@
                   <label title="Assigns Tank Maker / Stand Maker / Dispatcher on Online Orders"><input type="checkbox" value="ProductionManager" /> Production Manager</label>
                   <label title="Also sees other branches' open orders that need fabrication (custom, 10mm / 12mm glass, stand) on Online Orders"><input type="checkbox" value="AllBranchFabrication" /> All-Branch Fabrication</label>
                   <label title="Item Setup: add and edit items, pictures and variants - no prices, cost or vendors"><input type="checkbox" value="CatalogEditor" /> Catalog Editor</label>
+                  <label title="Same as Sales User, plus can remove scheduled orders from the Delivery calendar (logged in the Removed Stops Log) and adjust an order's delivery fee"><input type="checkbox" value="SalesManager" /> Sales Manager</label>
                 </div>
               </div>
               <div class="bc-field">
@@ -332,9 +334,9 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=recvlock1"></script>
+  <script src="js/nav.js?v=movingitems1"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
-  <script src="js/userSetup.js?v=9"></script>
+  <script src="js/userSetup.js?v=10"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

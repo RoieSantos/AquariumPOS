@@ -7120,3 +7120,19 @@ body:has(#czQuoteBar:not(.hidden)) .wizard-page {
     padding-bottom: 110px;
   }
 }
+
+/* Slow & Fast Moving Items report (docs/slow-fast-moving-items.html) - two bar-chart cards side by
+   side (stacked on phones), clickable stat cards, and an amber bar for the slow-stock chart. */
+.moving-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+.moving-stat { cursor: pointer; }
+.moving-stat:hover { outline: 2px solid var(--primary); outline-offset: -2px; }
+.item-rank-bar-fill.moving-bar-slow { background: linear-gradient(90deg, #c98a12, #e0b04a); }
+@media (max-width: 640px) {
+  .moving-chart-grid { grid-template-columns: 1fr; }
+}
+.moving-row { cursor: pointer; }
+.moving-row:hover td { background: rgba(77, 127, 196, 0.10); }

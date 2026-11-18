@@ -1,10 +1,11 @@
 // Xendit Payouts (money out to GCash / Maya / bank accounts) - used by xendit-payroll-payout, xendit-owner-payout
 // and xendit-webhook. v2: https://developers.xendit.co/api-reference/#payouts
-// v3: https://docs.xendit.co/apidocs/create-payout-v3 (Beta). Xendit support (ticket 2805116) recommends v3: v2 may
-// carry an extra fee, and only v3 has processor_reference (not guaranteed to match the recipient's app).
+// v3: https://docs.xendit.co/apidocs/create-payout-v3. Xendit support (ticket 2805116): no extra per-payout fee on
+// v2, but legacy APIs may carry a USD 250 / month maintenance fee; only v3 has processor_reference (not guaranteed
+// to match the recipient's app).
 //
-// Which API: PortalSettings 'XENDIT_PAYOUT_API' = 'v2' (default) or 'v3'. With 'v3', e-wallets (GCash / Maya ...)
-// go through v3; banks stay on v2 until Xendit tells us the v3 routing values for PH banks (v3Routing below).
+// Which API: PortalSettings 'XENDIT_PAYOUT_API' = 'v2' (default) or 'v3'. With 'v3', only channels with a
+// confirmed v3 routing pair go through v3 (v3Routing below); everything else stays on v2.
 // Each payout row keeps the API it was first sent with (XenditPayouts.ApiVersion) and a re-send always uses that
 // one - the Idempotency-key only protects against paying twice within the same API.
 // sql/supabase_xendit_payouts_v3.sql
@@ -24,12 +25,18 @@ function auth(key: string) {
 
 export type XenditResult = { ok: boolean; status: number; body: any };
 
-// v3 wants a routing pair instead of v2's channel_code. Xendit's PH example: WALLET + PH_GCASH. Banks aren't
-// documented for v3 yet (the routing types are SWIFT / IBAN / ...) - null keeps them on v2.
-const EWALLET_CODES = new Set(['PH_GCASH', 'PH_PAYMAYA', 'PH_MAYA', 'PH_GRABPAY', 'PH_SHOPEEPAY']);
+// v3 wants a routing pair instead of v2's channel_code - and Xendit (ticket 2805116, 2026-11-18) says v2 codes
+// must NOT be reused as v3 values. So only pairs Xendit itself documents are here; any other channel returns null
+// and stays on v2. Add a row only once Xendit confirms it (and a test payout succeeds):
+//   PH_GCASH - WALLET + PH_GCASH (Create Payout v3 example)
+//   PH_BDO   - SWIFT + BNORPHMM (Create Payout v3 example)
+//   Maya (PH_PAYMAYA) - WALLET + ? (value not confirmed yet); BPI (PH_BPI) - SWIFT + ? (not confirmed yet)
+const V3_ROUTING: Record<string, { type: string; value: string }> = {
+  PH_GCASH: { type: 'WALLET', value: 'PH_GCASH' },
+  PH_BDO: { type: 'SWIFT', value: 'BNORPHMM' }
+};
 export function v3Routing(channelCode: string): { type: string; value: string } | null {
-  const code = String(channelCode ?? '').trim().toUpperCase();
-  return EWALLET_CODES.has(code) ? { type: 'WALLET', value: code } : null;
+  return V3_ROUTING[String(channelCode ?? '').trim().toUpperCase()] ?? null;
 }
 
 // The API a NEW payout should use.

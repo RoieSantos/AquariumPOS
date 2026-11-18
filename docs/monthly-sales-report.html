@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monthly Sales Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    #msResults th.num, #msResults td.num { text-align: right; white-space: nowrap; }
+    #msResults tr.ms-total td { font-weight: 700; }
+    #msResults h2 { margin: 20px 0 8px; }
+    #msResults tr.ms-zero td { color: var(--muted, #888); }
+    .ms-short { color: #c0392b; font-weight: 600; }
+    .ms-over { color: #1e8449; font-weight: 600; }
+    .ms-up { color: #1e8449; }
+    .ms-down { color: #c0392b; }
+    #msMonth { min-width: 150px; }
+    .ms-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; white-space: nowrap; }
+    #msResults table.ms-matrix th.num { white-space: normal; min-width: 90px; }
+    #msResults table.ms-matrix td.ms-rowtotal, #msResults table.ms-matrix th.ms-rowtotal { font-weight: 700; border-left: 2px solid var(--border, #ccc); }
+    #msResults table.ms-matrix td a { color: inherit; }
+    .ms-seg .btn { border-radius: 0; }
+    .ms-seg .btn:first-child { border-radius: 6px 0 0 6px; }
+    .ms-seg .btn:last-child { border-radius: 0 6px 6px 0; }
+    .ms-seg .btn:not(.btn-primary) { background: transparent; border: 1px solid var(--border, #ccc); color: inherit; }
+    #yrResults th.num, #yrResults td.num { text-align: right; white-space: nowrap; }
+    #yrResults table.ms-matrix th.num { white-space: normal; min-width: 100px; }
+    #yrResults tr.ms-total td { font-weight: 700; }
+    #yrResults tr.ms-zero td { color: var(--muted, #888); }
+    #yrResults .ms-rowtotal { font-weight: 700; border-left: 2px solid var(--border, #ccc); }
+    #yrResults .ms-pct { display: block; font-size: 12px; font-weight: 600; }
+    #yrResults .ms-partial { font-style: italic; }
+    #yrResults td a { color: inherit; }
+    @media print {
+      #topnav, .pm-toolbar { display: none !important; }
+      .table-wrap { overflow: visible !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Monthly Sales</h1>
+    <p class="muted">One month's online and walk-in sales, filtered by branch: day by day, per branch, tender, category and staff, plus expenses, advance orders and the POS cash counts. Same rules as the Daily Sales Report, so a month adds up to its days. Click a day to open its Daily Sales Report with the receipts.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group ms-seg" role="group" aria-label="Period">
+        <button class="btn btn-sm" id="monthViewBtn" type="button">Month</button>
+        <button class="btn btn-sm" id="yearViewBtn" type="button">Year</button>
+      </div>
+      <div class="pm-filter-group hidden" id="yearControls">
+        <button class="btn btn-secondary btn-sm" id="prevYearBtn" type="button" aria-label="Previous year">&larr;</button>
+        <select id="yrYear" aria-label="Year"></select>
+        <button class="btn btn-secondary btn-sm" id="nextYearBtn" type="button" aria-label="Next year">&rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="thisYearBtn" type="button">This year</button>
+      </div>
+      <div class="pm-filter-group" id="monthControls">
+        <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button" aria-label="Previous month">&larr;</button>
+        <input type="month" id="msMonth" aria-label="Month" />
+        <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button" aria-label="Next month">&rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="thisMonthBtn" type="button">This month</button>
+        <button class="btn btn-secondary btn-sm" id="lastMonthBtn" type="button">Last month</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="warehouseSelect" aria-label="Branch">
+          <option value="">All branches</option>
+        </select>
+        <label class="ms-toggle" id="matrixToggleLabel" title="Show each branch as its own column (All branches only)"><input type="checkbox" id="matrixToggle" /> Branches side by side</label>
+        <button class="btn btn-secondary btn-sm" id="exportBtn" type="button">Export (CSV)</button>
+        <button class="btn btn-secondary btn-sm" id="printBtn" type="button">Print</button>
+      </div>
+    </div>
+
+    <div id="msLoading" class="muted">Loading...</div>
+    <div id="msError" class="error-text hidden"></div>
+
+    <div id="msResults" class="hidden">
+      <p class="muted" id="monthLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💰</span> Total Sales</div>
+          <div class="stat-value" id="statTotal">-</div>
+          <div class="muted" id="statTotalSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🌐</span> Online Sales</div>
+          <div class="stat-value" id="statOnline">-</div>
+          <div class="muted" id="statOnlineSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏪</span> Walk-In Sales</div>
+          <div class="stat-value" id="statWalkin">-</div>
+          <div class="muted" id="statWalkinSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🧾</span> Expenses</div>
+          <div class="stat-value" id="statExpense">-</div>
+          <div class="muted" id="statExpenseSub" style="font-size:13px;"></div>
+        </div>
+      </div>
+      <p class="muted" id="compareNote" style="font-size:13px;margin:4px 0 16px;"></p>
+
+      <div class="toolbar" style="margin-top:20px;">
+        <h2 style="margin:0;">Day by Day</h2>
+        <select id="matrixMetric" class="hidden" aria-label="Show in each branch column">
+          <option value="total">Total Sales</option>
+          <option value="online">Online Sales</option>
+          <option value="walkin">Walk-In Sales</option>
+          <option value="count">Orders</option>
+          <option value="expense">Expenses</option>
+          <option value="net">Sales less Expenses</option>
+        </select>
+      </div>
+      <p class="muted hidden" id="matrixNote" style="font-size:13px;margin:4px 0 8px;"></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th><th class="num">Expenses</th><th class="num">Sales less Expenses</th><th class="num">Advance Collected</th></tr></thead>
+          <tbody id="dayBody"></tbody>
+        </table>
+      </div>
+
+      <h2>By Branch</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Branch</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th><th class="num">Expenses</th><th class="num">vs Previous Month</th></tr></thead>
+          <tbody id="branchBody"></tbody>
+        </table>
+      </div>
+
+      <h2>By Tender</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Tender</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th></tr></thead>
+          <tbody id="tenderBody"></tbody>
+        </table>
+      </div>
+
+      <h2>By Staff</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Staff</th><th class="num">Online</th><th class="num">Walk-In</th><th class="num">Total</th><th class="num">Orders</th></tr></thead>
+          <tbody id="staffBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Online orders count under whoever confirmed them; walk-ins under the cashier who rang them up.</p>
+
+      <h2>By Category</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Category</th><th class="num">Units</th><th class="num">Revenue</th><th class="num">Share</th></tr></thead>
+          <tbody id="categoryBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Category revenue is the line amount, so it won't match Total Sales exactly: delivery fees and order discounts aren't lines, and items inside a set count under the set.</p>
+
+      <h2>Expenses by Category</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Category</th><th class="num">Entries</th><th class="num">Amount</th><th class="num">Share</th></tr></thead>
+          <tbody id="expCatBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">POS expenses plus the Expense Journal. Bills &amp; Dues payments (rent, utilities, loans...) are not included - see the Bills &amp; Dues page.</p>
+
+      <h2>Advance Orders</h2>
+      <p class="muted" style="font-size:13px;margin:0 0 8px;">Kept apart from the sales above, like the Daily Sales Report. <strong>Placed</strong> = new advance orders this month (full order value); <strong>Collected</strong> = money taken this month on any advance order (a void's refund shows as negative).</p>
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📝</span> Advance Orders Placed</div>
+          <div class="stat-value" id="statAdvPlaced">-</div>
+          <div class="muted" id="statAdvPlacedSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💵</span> Advance Collected</div>
+          <div class="stat-value" id="statAdvCollected">-</div>
+          <div class="muted" id="statAdvCollectedSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🧮</span> Sales + Advance Collected</div>
+          <div class="stat-value" id="statAllIn">-</div>
+          <div class="muted" id="statAllInSub" style="font-size:13px;">Total Sales plus money taken on advance orders (fully paid advance orders counted once)</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Collected by Tender</th><th class="num">Payments</th><th class="num">Amount</th></tr></thead>
+          <tbody id="advTenderBody"></tbody>
+        </table>
+      </div>
+
+      <h2>Cash Count (POS End of Day)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Branch</th><th class="num">Counts</th><th class="num">Cash Sales</th><th class="num">Short</th><th class="num">Over</th><th class="num">Net Short / Over</th><th class="num">Days Short</th></tr></thead>
+          <tbody id="cashBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="yrResults" class="hidden">
+      <p class="muted" id="yearLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💰</span> <span id="yrStatTitle">Sales this year</span></div>
+          <div class="stat-value" id="yrStatTotal">-</div>
+          <div class="muted" id="yrStatTotalSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📅</span> <span id="yrStatLyTitle">Last year, same period</span></div>
+          <div class="stat-value" id="yrStatLy">-</div>
+          <div class="muted" id="yrStatLySub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🏆</span> Best month</div>
+          <div class="stat-value" id="yrStatBest">-</div>
+          <div class="muted" id="yrStatBestSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📈</span> Fastest growing branch</div>
+          <div class="stat-value" id="yrStatGrow">-</div>
+          <div class="muted" id="yrStatGrowSub" style="font-size:13px;"></div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-top:20px;">
+        <h2 style="margin:0;">Per Branch, Per Month</h2>
+        <div class="pm-filter-group">
+          <select id="yrMetric" aria-label="Figure to show">
+            <option value="total">Total Sales</option>
+            <option value="online">Online Sales</option>
+            <option value="walkin">Walk-In Sales</option>
+            <option value="count">Orders</option>
+            <option value="avg">Average per Order</option>
+            <option value="expense">Expenses</option>
+            <option value="net">Sales less Expenses</option>
+            <option value="adv">Advance Collected</option>
+          </select>
+          <select id="yrCompare" aria-label="Growth compared with">
+            <option value="mom">% vs previous month</option>
+            <option value="yoy">% vs same month last year</option>
+            <option value="none">No %</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="ms-matrix" id="yrTable">
+          <thead id="yrHead"></thead>
+          <tbody id="yrBody"></tbody>
+        </table>
+      </div>
+      <p class="muted" style="font-size:13px;">Green = up, red = down. Click a month to open it in Month view. <span id="yrPartialNote"></span></p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=payoutreceipt1"></script>
+  <script src="js/nav.js?v=movingitems1"></script>
+  <script src="js/monthlySalesReport.js?v=yearsales1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

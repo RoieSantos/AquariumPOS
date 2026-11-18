@@ -656,7 +656,7 @@ begin
       v_mat_name := coalesce(nullif(trim(coalesce(v_mat ->> 'name', '')), ''), v_mat_code, v_mat_variation);
 
       if v_mat_variation is null then
-        raise exception 'Component "%" is not linked to a Pancake product (no VariationId in Items) - fix the item or remove it from the set.',
+        raise exception 'Part "%" is not linked to an item in the portal (unknown item code or no VariationId) - fix its item code on the Customer Aquarium package, or untick it.',
           coalesce(v_mat_name, '?');
       end if;
 

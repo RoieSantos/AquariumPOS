@@ -15,7 +15,7 @@ let sortDir = 1;
 let cardMode = 'new'; // 'new' | 'edit'
 let filterPaneOpen = true;
 
-const ROLE_LABELS = { StandMaker: 'Stand Maker', TankMaker: 'Tank Maker', Dispatcher: 'Dispatcher', Cashier: 'Cashier', ProductionManager: 'Production Manager', AllBranchFabrication: 'All-Branch Fabrication', CatalogEditor: 'Catalog Editor' };
+const ROLE_LABELS = { StandMaker: 'Stand Maker', TankMaker: 'Tank Maker', Dispatcher: 'Dispatcher', Cashier: 'Cashier', ProductionManager: 'Production Manager', AllBranchFabrication: 'All-Branch Fabrication', CatalogEditor: 'Catalog Editor', SalesManager: 'Sales Manager' };
 
 // Portal access flags: [list field, RPC param, card checkbox id, short label, description].
 const ACCESS_FLAGS = [
@@ -387,6 +387,8 @@ async function saveUserCard() {
     p_has_paid_rest_day: document.getElementById('cardPaidRestDay').checked,
     p_employee_no: val('cardEmployeeNo') || null
   };
+  // A Sales Manager is a Sales User plus calendar stop removal (supabase_sales_manager_role.sql).
+  if (getCheckedRoles().includes('SalesManager')) document.getElementById('cardSalesUser').checked = true;
   ACCESS_FLAGS.forEach(([, param, id]) => { params[param] = document.getElementById(id).checked; });
 
   if (isNew) {

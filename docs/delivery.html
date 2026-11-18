@@ -65,7 +65,11 @@
             <h2 id="calendarMonthLabel" style="margin:0; min-width:180px; text-align:center;"></h2>
             <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button">Next &rarr;</button>
           </div>
-          <button class="btn btn-primary" id="assignOrderBtn" type="button">+ Assign Order</button>
+          <div style="display:flex; gap:8px;">
+            <!-- Super User / Sales Manager only (js/delivery.js canRemoveStops / openRemovalLog). -->
+            <button class="btn btn-secondary hidden" id="removalLogBtn" type="button">Removed Stops Log</button>
+            <button class="btn btn-primary" id="assignOrderBtn" type="button">+ Assign Order</button>
+          </div>
         </div>
 
         <div class="delivery-calendar-scroll">
@@ -293,6 +297,32 @@
     </div>
   </div>
 
+  <!-- Removed Stops log - who removed which scheduled order (sql/supabase_sales_manager_role.sql). -->
+  <div id="removalLogModal" class="modal-backdrop hidden">
+    <div class="modal-panel" style="max-width:1100px; width:95vw;">
+      <div class="toolbar">
+        <h2 style="margin:0;">Removed Stops Log</h2>
+        <button class="btn btn-secondary btn-sm" id="removalLogCloseBtn" type="button">Close</button>
+      </div>
+      <div class="table-wrap" style="max-height:70vh; overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Removed At</th>
+              <th>Removed By</th>
+              <th>Order ID</th>
+              <th>Customer</th>
+              <th>Was Scheduled For</th>
+              <th>Address</th>
+              <th>Originally Assigned By</th>
+            </tr>
+          </thead>
+          <tbody id="removalLogTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- Driver order detail - opened by tapping an Order ID card in the Driver Route View
        (js/delivery.js's openDriverOrderDetail). Deliberately shows no price/amount fields - just
        customer/phone/address/notes and the product list (description + quantity), per "can the
@@ -382,13 +412,13 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
-  <script src="js/nav.js?v=recvlock1"></script>
+  <script src="js/nav.js?v=movingitems1"></script>
   <script src="js/pagination.js"></script>
   <script src="js/pushNotifications.js?v=3"></script>
   <script src="js/facebookPostSettings.js?v=fbpost1"></script>
   <script src="js/facebookPostShared.js?v=qp1"></script>
   <script src="js/deliverySerialGate.js?v=sergate2"></script>
-  <script src="js/delivery.js?v=xqr4"></script>
+  <script src="js/delivery.js?v=salesmgr1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

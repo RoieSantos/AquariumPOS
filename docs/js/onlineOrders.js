@@ -1123,7 +1123,7 @@ function nextStepForStock(o) {
   // stock builds moved the order to Assigned. Retries just that (and the customer message).
   if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)
       && (o.status || '').trim().toLowerCase() !== 'assigned') {
-    return { action: 'stock-assigned', label: 'Set Assigned', icon: 'ico-assign', title: `Being built on ${s.production_order_no}, but the order isn't Assigned yet. Moves it to Assigned in the portal and Pancake and sends the customer the "in production" message.` };
+    return { action: 'stock-assigned', label: 'Set Assigned', icon: 'ico-assign', title: `Being built on ${s.production_order_no}, but the order isn't Assigned yet. Moves it to Assigned and sends the customer the "in production" message.` };
   }
   if (s.production_order_no && ['Open', 'Released'].includes(s.production_order_status)) {
     return { action: 'open-prod', label: `In Production ${s.production_order_no}`, icon: 'ico-done', title: `Being built on ${s.production_order_no} (${s.production_order_status}). It can ship once its output is posted.\n${stockLinesSummary(s)}` };
@@ -1362,8 +1362,8 @@ function nextStepFor(o) {
   if (o.walkin_stage) return nextStepForWalkin(o);
   if (canMarkShipped(o)) {
     return o.release
-      ? { action: 'shipped', label: 'Release Remaining', icon: 'ico-ship', title: 'Partly released - release the rest (or another batch). The last batch marks it Shipped in the portal and Pancake' }
-      : { action: 'shipped', label: 'Release / Ship', icon: 'ico-ship', title: 'Release all or some items. Releasing everything marks it Shipped in the portal and Pancake' };
+      ? { action: 'shipped', label: 'Release Remaining', icon: 'ico-ship', title: 'Partly released - release the rest (or another batch). The last batch marks it Shipped' }
+      : { action: 'shipped', label: 'Release / Ship', icon: 'ico-ship', title: 'Release all or some items. Releasing everything marks it Shipped' };
   }
   if (currentSession?.isOnlineOrderStaff && !canAssignOrders()) return nextStepForOnlineOrderStaff(o);
   if (!canAssignOrders()) {
@@ -1382,7 +1382,7 @@ function nextStepFor(o) {
 
   if (isProductionDone(o) && canChangeProduction(o)) {
     return ['printed', 'assigned'].includes(status)
-      ? { action: 'ship', label: 'Ready to Ship', icon: 'ico-ship', title: 'Move to To Ship in the portal and Pancake, then choose whether to message the customer' }
+      ? { action: 'ship', label: 'Ready to Ship', icon: 'ico-ship', title: 'Move to To Ship, then choose whether to message the customer' }
       : { action: 'ship', label: 'Ready to Ship', icon: 'ico-ship', disabled: true, title: 'Assign the order first - it has to be Assigned before it can ship' };
   }
   if (['confirmed', 'submitted', 'printed'].includes(status) && display !== 'Assigned') {
@@ -1496,7 +1496,7 @@ async function handleNextStepClick(orderId, btn) {
     const ok = await confirmAction({
       caption: 'READY TO SHIP',
       title: orderLabel(o),
-      message: 'Mark this order as Ready to Ship?\n\nIt moves to To Ship in the portal and Pancake.',
+      message: 'Mark this order as Ready to Ship?\n\nIt moves to To Ship.',
       confirmLabel: 'Yes, Ready to Ship',
       tone: 'is-ship'
     });
@@ -1543,8 +1543,8 @@ async function handleNextStepClick(orderId, btn) {
       caption: 'READY TO SHIP - FROM STOCK',
       title: orderLabel(o),
       messageHtml: setUnchecked
-        ? (s?.has_set_line ? 'This SET order is assembled and has no serial-tracked parts.' : 'This order has no serial-tracked items - nothing to pick.') + ' Move it to To Ship in the portal and Pancake?'
-        : `Everything is in stock at ${escapeHtml(s?.warehouse_name || 'this branch')}:\n${stockLinesHtml(s)}\n\nPick the serial(s) and move this order to To Ship in the portal and Pancake?`,
+        ? (s?.has_set_line ? 'This SET order is assembled and has no serial-tracked parts.' : 'This order has no serial-tracked items - nothing to pick.') + ' Move it to To Ship?'
+        : `Everything is in stock at ${escapeHtml(s?.warehouse_name || 'this branch')}:\n${stockLinesHtml(s)}\n\nPick the serial(s) and move this order to To Ship?`,
       confirmLabel: 'Yes, Ready to Ship',
       tone: 'is-ship'
     });
@@ -1560,7 +1560,7 @@ async function handleNextStepClick(orderId, btn) {
     const ok = await confirmAction({
       caption: 'SET ASSIGNED',
       title: orderLabel(o),
-      message: `${s?.production_order_no || 'A Production Order'} is building this order.\n\nMove it to Assigned in the portal and Pancake? The customer gets the "in production" message (once per order).`,
+      message: `${s?.production_order_no || 'A Production Order'} is building this order.\n\nMove it to Assigned? The customer gets the "in production" message (once per order).`,
       confirmLabel: 'Yes, Set Assigned'
     });
     if (!ok) return;
@@ -1660,7 +1660,11 @@ function canEditCardDeliveryFee(o) {
   if (o.received_at_shop) {
     return !o.picked_up_at && !['delivered', 'cancelled', 'canceled', 'returned', 'returning'].includes(status);
   }
-  return canEditCardShippingDetails(o);
+  if (canEditCardShippingDetails(o)) return true;
+  // A pickup order that still carries a fee (e.g. AO-00251) - editable so it can be lowered / cleared,
+  // same open statuses (sql/supabase_pickup_order_delivery_fee_remove.sql re-checks).
+  return !o.for_delivery && Number(o.delivery_fee) > 0
+    && !['shipped', 'delivered', 'completed', 'cancelled', 'canceled', 'returned', 'returning'].includes(status);
 }
 
 // Shipping Address / Contact No. keep the original rule: open online delivery orders only.
@@ -1715,8 +1719,7 @@ async function cancelCardOrder(orderId, btn) {
       return;
     }
     const warnings = check?.[0]?.warnings || [];
-    const isPortal = String(orderId).startsWith('AO-');
-    const reason = window.prompt(`Cancel order ${orderId}?${isPortal ? '' : ' It is cancelled in Pancake too.'} The customer is NOT messaged.`
+    const reason = window.prompt(`Cancel order ${orderId}? The customer is NOT messaged.`
       + (warnings.length ? `\n\nHeads up:\n- ${warnings.join('\n- ')}` : '')
       + '\n\nReason for cancelling (required):');
     if (reason === null) return;
@@ -1803,9 +1806,7 @@ async function saveCardBranch() {
     }
     const info = check?.[0] || {};
     const warnings = info.warnings || [];
-    const isPortal = String(orderId).startsWith('AO-');
     if (!confirm(`Move order ${orderId} from ${info.from_warehouse || 'its branch'} to ${info.to_warehouse}?`
-      + (isPortal ? '' : '\n\nThe warehouse is changed in Pancake too.')
       + (warnings.length ? `\n\nHeads up - kept with the order:\n- ${warnings.join('\n- ')}` : ''))) return;
 
     btn.textContent = 'Moving...';
@@ -2024,7 +2025,7 @@ async function markOrderShippedWhole(o, btn) {
   const ok = await confirmWithPhoto({
     caption: 'MARK SHIPPED',
     title: orderLabel(o),
-    message: `${shipBalanceWarning(o)}Has this order been shipped / handed to the customer?\n\nTake a photo of what is leaving first. It changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+    message: `${shipBalanceWarning(o)}Has this order been shipped / handed to the customer?\n\nTake a photo of what is leaving first. It changes to Shipped${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
     confirmLabel: 'Yes, Mark Shipped',
     tone: 'is-ship',
     refId: o.order_id,
@@ -2200,7 +2201,7 @@ async function saveRelease() {
     ? {
       caption: 'RELEASE ALL - MARK SHIPPED',
       title: orderLabel(o),
-      message: `${shipBalanceWarning(o)}Release everything that is left?\n\nTake a photo of what is leaving first. The order changes to Shipped in the portal and Pancake${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
+      message: `${shipBalanceWarning(o)}Release everything that is left?\n\nTake a photo of what is leaving first. The order changes to Shipped${(currentSession?.staffRoles || []).includes('Dispatcher') ? ', and you are recorded as its dispatcher' : ''}. No message is sent to the customer.`,
       confirmLabel: 'Yes, Mark Shipped',
       tone: 'is-ship',
       refId: o.order_id,
@@ -2209,7 +2210,7 @@ async function saveRelease() {
     : {
       caption: 'PARTIAL RELEASE',
       title: orderLabel(o),
-      message: `Release ${count} item(s) now?\n\nTake a photo of what is leaving first. The rest stays pending - the order stays in To Ship until everything is released. Nothing changes in Pancake yet.`,
+      message: `Release ${count} item(s) now?\n\nTake a photo of what is leaving first. The rest stays pending - the order stays in To Ship until everything is released.`,
       confirmLabel: 'Yes, Release',
       tone: 'is-ship',
       refId: o.order_id,
@@ -2910,7 +2911,7 @@ async function applyStatusChange(orderId, newStatus, notifyCustomer, photoUrl, p
           return;
         }
         alert(`Could not update status - the connection dropped and order ${orderId} is still ${nowStatus || 'unchanged'}. `
-          + 'Pancake may be slow right now; wait a minute and try again.');
+          + 'The server may be slow right now; wait a minute and try again.');
         triggerEl.disabled = false;
         return;
       }
@@ -3525,7 +3526,7 @@ function setComponentRowHtml(comp, compIdx) {
         </label>`;
       }).join('')}</div>${noneNote}`;
   } else if (def && !def.variation_id) {
-    picker = '<div class="error-text" style="font-size:12px; margin-top:2px;">Not linked to a Pancake product - untick it or fix the item first.</div>';
+    picker = '<div class="error-text" style="font-size:12px; margin-top:2px;">This part is not linked to an item in the portal - fix its item code on the Customer Aquarium package, or untick it.</div>';
   }
   return `
     <div class="set-comp" data-comp-idx="${compIdx}">
@@ -3656,7 +3657,7 @@ function renderSetAssemblyModal() {
   container.innerHTML = sets.map((s, setIdx) => {
     const qtyOk = isWholeSetQuantity(s.quantity);
     const body = !qtyOk
-      ? `<p class="error-text" style="margin:6px 0 0;">SET quantity "${escapeHtml(String(s.quantity))}" is not a whole number - fix the order in Pancake first.</p>`
+      ? `<p class="error-text" style="margin:6px 0 0;">SET quantity "${escapeHtml(String(s.quantity))}" is not a whole number - fix the order's quantity first.</p>`
       : !s.chosenPackage
         ? '<p class="muted" style="margin:6px 0 0;">Pick the BOM package for this SET - it\'s remembered for this product next time.</p>'
         : (s.components.length
@@ -3893,7 +3894,7 @@ function wireSetAssemblyModalButtons() {
           pick = variantSel.value === '' ? null : comp.variants[Number(variantSel.value)];
           if (!pick) { problems.push(`${setComponentTitle(comp)}: choose a variant`); return; }
         }
-        if (!pick || !pick.variation_id) { problems.push(`${setComponentTitle(comp)}: not linked to a Pancake product - untick it`); return; }
+        if (!pick || !pick.variation_id) { problems.push(`${setComponentTitle(comp)}: not linked to an item in the portal - fix its item code on the Customer Aquarium package, or untick it`); return; }
         if (row.querySelector('.set-comp-serials')) {
           if (row._serialError) { problems.push(`${setComponentTitle(comp)}: serials could not be loaded`); return; }
           const picked = row._picked || [];
@@ -3935,7 +3936,7 @@ function wireSetAssemblyModalButtons() {
     confirmBtn.disabled = true;
     cancelBtn.disabled = true; // Pancake may already be updated - don't let a cancel strand To Ship
     const originalLabel = confirmBtn.textContent;
-    confirmBtn.textContent = 'Saving to Pancake...';
+    confirmBtn.textContent = 'Saving...';
     // Parts + serial reservations in one transaction - if Pancake fails, nothing is reserved.
     const { data, error } = await supabaseClient.rpc('staff_assemble_online_order_set', {
       p_admin_username: currentSession.username,
@@ -3955,7 +3956,7 @@ function wireSetAssemblyModalButtons() {
     }
     if (data && data.resynced === false) {
       // Pancake has the parts; only the local copy is behind - the regular sync catches up.
-      alert('SET parts were saved to Pancake, but the portal could not re-read the order yet. If the serial picker is missing a part, cancel and try To Ship again in a minute.');
+      alert('SET parts were saved, but the portal could not re-read the order yet. If the serial picker is missing a part, cancel and try To Ship again in a minute.');
     }
     closeSetAssemblyModal('done');
   });
@@ -4440,7 +4441,7 @@ async function openSendMessageModal(orderId) {
     subEl.textContent = `To ${name} (Order ${orderId}) - via the GMA Page.`;
     sendBtn.disabled = false;
   } else if (sendMessageRoute.has_pancake_conversation) {
-    subEl.textContent = `To ${name} (Order ${orderId}) - via Pancake.`;
+    subEl.textContent = `To ${name} (Order ${orderId}) - via Messenger.`;
     sendBtn.disabled = false;
   } else {
     subEl.textContent = `Order ${orderId}`;
@@ -5868,7 +5869,7 @@ async function loadOrderCardLines(orderId) {
   document.getElementById('ocReturnsPart').classList.add('hidden');
   document.getElementById('ocAddonOf').classList.add('hidden');
   cardAttachmentsByLineId = {};
-  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines from Pancake...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="cell-msg">Loading lines...</td></tr>';
   document.getElementById('orderCardLinesFoot').innerHTML = '';
   renderOrderCardPhotos([]);
   cardGlassTanks = [];
@@ -6201,7 +6202,7 @@ async function saveChangeItem() {
   } else if (openCardOrderId === ctx.orderNo) {
     loadOrderCardLines(ctx.orderNo);
   }
-  const note = data?.resynced === false ? '\n\nPancake has the change, but the portal could not re-read the order yet - Refresh in a minute.' : '';
+  const note = data?.resynced === false ? '\n\nThe change is saved, but the portal could not re-read the order yet - Refresh in a minute.' : '';
   const split = data?.new_line_no ? `\n\n${data.quantity} moved to new line ${data.new_line_no}; the rest stay on line ${ctx.lineId}.` : '';
   alert(`Changed:\n${data?.old_description || '-'}\n→ ${data?.new_description || '-'}${split}${note}`);
 }
@@ -7108,9 +7109,9 @@ async function saveOrderLine(lineId, patch) {
   if (Number(data?.money_delta)) refreshCurrentOrders(); // Money to Collect / Balance moved with price / qty
 
   const notes = [];
-  if (data?.description_changed && data?.description_kept === false) notes.push('Pancake kept this product\'s own name, so the Description did not change - put the detail in the Note instead.');
-  if (data?.price_changed && data?.price_kept === false) notes.push('Pancake kept this product\'s own price, so the Unit Price did not change - change it in Pancake.');
-  if (data?.resynced === false) notes.push('Pancake has the change, but the portal could not re-read the order yet - Refresh in a minute.');
+  if (data?.description_changed && data?.description_kept === false) notes.push('This product kept its own name, so the Description did not change - put the detail in the Note instead.');
+  if (data?.price_changed && data?.price_kept === false) notes.push('This product kept its own price, so the Unit Price did not change - change the price on Item Setup.');
+  if (data?.resynced === false) notes.push('The change is saved, but the portal could not re-read the order yet - Refresh in a minute.');
   if (notes.length) alert(notes.join('\n\n'));
   return true;
 }
@@ -7721,7 +7722,7 @@ async function deleteOnlineOrder(orderId, btn) {
   }
   const o = findFlatOrder(orderId);
   const label = `#${orderId}${o?.customer_name ? ' (' + o.customer_name + ')' : ''}`;
-  if (!confirm(`Permanently delete order ${label} from the portal?\n\nThis is for cleaning up junk/test orders only - its lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring it back. Any stock it took goes back to inventory and its serials return to In Stock. This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete order ${label} from the portal?\n\nThis is for cleaning up junk/test orders only - its lines, payments, photos and history are removed too, and the sync won't bring it back. Any stock it took goes back to inventory and its serials return to In Stock. This cannot be undone.`)) return;
   if (prompt(`Type the order number (${orderId}) to confirm:`)?.trim() !== String(orderId)) {
     alert('Order number did not match - nothing deleted.');
     return;
@@ -7785,7 +7786,7 @@ async function deleteCheckedOrders(btn) {
     const o = findFlatOrder(id);
     return `#${id}${o?.customer_name ? ' - ' + o.customer_name : ''}`;
   }).join('\n') + (ids.length > 15 ? `\n...and ${ids.length - 15} more` : '');
-  if (!confirm(`Permanently delete ${ids.length} order(s) from the portal?\n\n${preview}\n\nThis is for cleaning up junk/test orders only - their lines, payments, photos and history are removed too, and the POS/Pancake sync won't bring them back. Any stock they took goes back to inventory and their serials return to In Stock. This cannot be undone.`)) return;
+  if (!confirm(`Permanently delete ${ids.length} order(s) from the portal?\n\n${preview}\n\nThis is for cleaning up junk/test orders only - their lines, payments, photos and history are removed too, and the sync won't bring them back. Any stock they took goes back to inventory and their serials return to In Stock. This cannot be undone.`)) return;
   if (prompt(`Type DELETE ${ids.length} to confirm:`)?.trim().toUpperCase() !== `DELETE ${ids.length}`) {
     alert('Confirmation did not match - nothing deleted.');
     return;
@@ -10746,7 +10747,7 @@ async function initAdvanceOrdersView() {
   if (currentScope === 'walkin' && showScopeTabs) {
     myAssignmentsOnly = false;
     document.querySelector('.bc-title').textContent = 'Walk-in Orders';
-    document.getElementById('ordersSubtitle').textContent = 'Pancake orders received and paid for in-store.';
+    document.getElementById('ordersSubtitle').textContent = 'Orders received and paid for in-store.';
     // Walk-in tabs are portal-only stages (supabase_walkin_order_portal_status.sql) - no Confirmed /
     // Printed / To Ship: the POS creates every walk-in as Shipped in Pancake.
     document.querySelectorAll('#statusSummaryBar .online-pill').forEach((pill) => pill.classList.add('hidden'));
@@ -10790,7 +10791,7 @@ async function initAdvanceOrdersView() {
         location.replace(`online-orders.html?scope=walkin&open=${encodeURIComponent(openParam)}`);
         return;
       }
-      alert(`Online order ${openParam} isn't in this list yet - it may not have synced from Pancake. Try Refresh in a few minutes.`);
+      alert(`Online order ${openParam} isn't in this list yet - it may not have synced yet. Try Refresh in a few minutes.`);
       return;
     }
     selectOrderRow(openParam);

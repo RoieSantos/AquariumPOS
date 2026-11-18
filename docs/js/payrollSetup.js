@@ -552,6 +552,43 @@ async function loadCutoffSettings() {
 
   togglePayDayInput('cutoffAPayDay', 'cutoffAPayLastDay');
   togglePayDayInput('cutoffBPayDay', 'cutoffBPayLastDay');
+  loadPayoutReceiptCc();
+}
+
+// Records email CC'd on every Xendit payout proof (sql/supabase_xendit_payout_receipt_cc_setting.sql).
+let payoutReceiptCcReady = false;
+async function loadPayoutReceiptCc() {
+  const input = document.getElementById('payoutReceiptCc');
+  const note = document.getElementById('payoutReceiptCcUpdated');
+  const { data, error } = await supabaseClient.rpc('admin_get_payout_receipt_cc', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password
+  });
+  payoutReceiptCcReady = !error;
+  input.disabled = !!error;
+  if (error) {
+    note.textContent = error.message.includes('admin_get_payout_receipt_cc')
+      ? 'Run sql/supabase_xendit_payout_receipt_cc_setting.sql to set this here.' : error.message;
+    return;
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  input.value = row?.email_cc || '';
+  note.textContent = row?.updated_by
+    ? `Last changed by ${row.updated_by}${row.updated_at ? ', ' + new Date(row.updated_at).toLocaleString('en-PH') : ''}`
+    : '';
+}
+
+async function savePayoutReceiptCc() {
+  if (!payoutReceiptCcReady) return null;
+  const { data, error } = await supabaseClient.rpc('admin_set_payout_receipt_cc', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_email_cc: document.getElementById('payoutReceiptCc').value
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) return error?.message || result?.message || 'Failed to save the records email.';
+  await loadPayoutReceiptCc();
+  return null;
 }
 
 async function saveCutoffSettings() {
@@ -578,12 +615,17 @@ async function saveCutoffSettings() {
     p_overtime_multiplier: Number(document.getElementById('overtimeMultiplier').value) || 1.25
   });
 
+  const result = Array.isArray(data) ? data[0] : data;
+  const ccError = await savePayoutReceiptCc();
+
   saveBtn.disabled = false;
   saveBtn.textContent = 'Save Settings';
 
-  const result = Array.isArray(data) ? data[0] : data;
-  if (error || !result || !result.success) {
-    errorEl.textContent = error?.message || result?.message || 'Failed to save cutoff settings.';
+  const messages = [];
+  if (error || !result || !result.success) messages.push(error?.message || result?.message || 'Failed to save cutoff settings.');
+  if (ccError) messages.push(ccError);
+  if (messages.length) {
+    errorEl.textContent = messages.join(' ');
     errorEl.classList.remove('hidden');
   }
 }

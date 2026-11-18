@@ -446,6 +446,7 @@ function renderTopNavLinks(activeLabel) {
   const finance = [];
   if (isSuperUser) {
     finance.push({ section: 'Cash & Payments', href: 'daily-sales-report.html', label: 'Daily Sales Report' });
+    finance.push({ section: 'Cash & Payments', href: 'monthly-sales-report.html', label: 'Monthly Sales Report' });
   }
   if (isSuperUser || isStoreManager) {
     finance.push({ section: 'Cash & Payments', href: 'tender-declarations.html', label: 'Tender Declarations' });
@@ -477,6 +478,7 @@ function renderTopNavLinks(activeLabel) {
   if (canSeeSalesAnalysis) {
     reports.push({ section: 'Sales', href: 'reports.html', label: 'Reports' });
     reports.push({ section: 'Sales', href: 'top-selling-items.html', label: 'Top Selling Items' });
+    reports.push({ section: 'Sales', href: 'slow-fast-moving-items.html', label: 'Slow & Fast Moving' });
     reports.push({ section: 'Sales', href: 'category-sales-report.html', label: 'Category Sales' });
     reports.push({ section: 'Sales', href: 'sealant-sales-report.html', label: 'Sealant Sales' });
   }
@@ -666,6 +668,7 @@ const TELL_ME_KEYWORDS = {
   'serial-inventory-journal.html': 'count serial stocktake',
   'reports.html': 'sales report',
   'top-selling-items.html': 'best sellers sales',
+  'slow-fast-moving-items.html': 'slow moving fast moving dead stock non-moving aging overstock velocity',
   'sealant-sales-report.html': 'silicone black clear',
   'category-sales-report.html': 'sales by category',
   'customer-aquarium.html': 'customer tanks',
@@ -683,6 +686,7 @@ const TELL_ME_KEYWORDS = {
   'payment-method-report.html': 'gcash cash bank collections',
   'bir-sales-report.html': 'bir tax vat walk-in sales journal sales book',
   'daily-sales-report.html': 'eod end of day sales summary today yesterday z report',
+  'monthly-sales-report.html': 'month monthly sales summary branch warehouse per day',
   'general-setup.html': 'settings company config',
   'ai-bot-setup.html': 'alice chatbot',
   'gma-conversations.html': 'messages inbox chat messenger',
