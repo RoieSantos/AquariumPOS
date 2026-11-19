@@ -1552,8 +1552,10 @@ let latestDetectedPayment = null;
 // off there's no Pay link, so everything comes back.
 const MANUAL_PAYMENT_HINT = '💳 Send the customer a Pay link (the button above) - the payment is recorded on the order automatically. Cash on delivery or money sent outside Xendit: a super user records it on the Online Orders page.';
 const CREATE_ORDER_PAYMENT_HINT = '💳 Payment: save the order first, then click 💳 Pay link on its card in the Information tab. The payment is recorded automatically.';
+// Per "allow my sales manager to do payments manually": a Sales Manager (Staff Role) keeps the manual
+// payment tools here even while Xendit is live (sql/supabase_manual_payments_sales_manager.sql).
 function canRecordManualPayment() {
-  return !xenditEnabled;
+  return !xenditEnabled || (currentSession?.staffRoles || []).includes('SalesManager');
 }
 
 function useDetectedPayment(amount, method, reference, messageId) {

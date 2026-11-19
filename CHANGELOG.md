@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-19
+
+- **Sales Manager can record payments by hand** while Xendit is live (Add / Edit / Delete payment on Conversations and Online Orders, Create Order payment, detected-payment screenshots) - was Super User only (Online Orders) / nobody (Conversations). [supabase_manual_payments_sales_manager.sql](sql/supabase_manual_payments_sales_manager.sql) widens `_manual_payment_guard`; [gmaConversations.js](docs/js/gmaConversations.js) / [onlineNewOrders.js](docs/js/onlineNewOrders.js) `?v=salesmgrpay1`.
+
 ## 2026-11-18
 
 - New report **Reports > Slow & Fast Moving** ([slow-fast-moving-items.html](docs/slow-fast-moving-items.html), [slowFastMovingItems.js](docs/js/slowFastMovingItems.js)): every item classed Fast (top 20% of sellers by units) / Medium / Slow (bottom 50%) / Not Moving (no sales) over 30/60/90/180/365 days, with stock on hand from the Item Ledger, days of stock cover, last sold date, charts, filters and CSV export. Stock value at cost is Super User only. RPC in [supabase_slow_fast_moving_report.sql](sql/supabase_slow_fast_moving_report.sql); nav cache bumped to `nav.js?v=movingitems1` on all pages. Items in the PRODUCTION ITEM category (build materials) are excluded from Slow / Not Moving. "Show top" 10/20/50/100 picker for both charts. New "Last Movement" column (latest Item Ledger entry) and clicking a row opens the item's 20 latest sales orders + Item Ledger movements (new RPC `admin_get_item_recent_transactions`, same SQL file; `slowFastMovingItems.js?v=movingitems3`).

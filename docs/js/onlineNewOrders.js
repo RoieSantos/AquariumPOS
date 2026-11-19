@@ -1071,7 +1071,8 @@ Promise.resolve(supabaseClient.rpc('public_get_xendit_settings')).then(({ data, 
   aoXenditEnabled = !error && !!(data && data[0] && data[0].enabled);
 }).catch(() => {});
 function aoCanRecordManualPayment() {
-  return !!currentSession?.isSuperUser || !aoXenditEnabled;
+  // + Sales Manager (sql/supabase_manual_payments_sales_manager.sql).
+  return !!currentSession?.isSuperUser || (currentSession?.staffRoles || []).includes('SalesManager') || !aoXenditEnabled;
 }
 
 function aoPayRender(container) {
