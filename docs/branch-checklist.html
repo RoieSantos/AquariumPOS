@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Branch Checklist - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=movingitems3" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .bc-today { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .bc-item { border: 1px solid var(--panel-border); background: var(--panel-bg); border-radius: 10px; padding: 14px;
+               border-top: 4px solid var(--neutral); display: flex; flex-direction: column; gap: 8px; }
+    .bc-item.is-done { border-top-color: var(--success); }
+    .bc-item h3 { margin: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .bc-item img { width: 100%; max-height: 180px; object-fit: cover; border-radius: 6px; }
+    .bc-item textarea { width: 100%; }
+    .bc-pick { display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
+    .bc-pick input { display: none; }
+    #bcMonth th.num, #bcMonth td.num, #bcMonth td.c { text-align: center; }
+    .bc-yes { color: var(--success); font-weight: 700; }
+    .bc-no { color: var(--danger); font-weight: 700; }
+    .bc-yes a { color: inherit; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1 id="bcTitle">Daily Branch Checklist</h1>
+    <p class="muted">Every open day: Opening, Closing and Store Cleaning, each with a photo as proof. These, plus the POS end-of-day, make up the SOP Compliance part of the Manager KPI. Checklists can only be done for today.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button" aria-label="Previous month">&larr;</button>
+        <input type="month" id="bcMonthInput" aria-label="Month" />
+        <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button" aria-label="Next month">&rarr;</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="branchSelect" aria-label="Branch" class="hidden"></select>
+        <a class="btn btn-secondary btn-sm" href="manager-kpi.html">Manager KPI</a>
+      </div>
+    </div>
+
+    <div id="bcLoading" class="muted">Loading...</div>
+    <div id="bcError" class="error-text hidden"></div>
+
+    <div id="bcResults" class="hidden">
+      <h2 id="todayHeading">Today</h2>
+      <div class="bc-today" id="todayItems"></div>
+
+      <h2 style="margin-top:28px;">This month</h2>
+      <p class="muted" id="monthSummary" style="margin-top:-4px;"></p>
+      <div class="table-wrap">
+        <table id="bcMonth">
+          <thead><tr><th>Day</th><th class="num">Opening</th><th class="num">Closing</th><th class="num">Cleaning</th><th class="num">POS end-of-day</th></tr></thead>
+          <tbody id="monthRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=kpi1"></script>
+  <script src="js/nav.js?v=kpi1"></script>
+  <script src="js/branchChecklist.js?v=kpi1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

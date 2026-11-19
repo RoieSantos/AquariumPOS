@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment Status - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <div class="toolbar">
+      <div>
+        <h1 style="margin-bottom:4px;">Payment Status</h1>
+        <p class="muted" style="margin:0;">Live status of the Xendit payment channels we use. Refreshes every 2 minutes.</p>
+      </div>
+      <button class="btn btn-secondary" id="refreshBtn" type="button">Refresh</button>
+    </div>
+
+    <div id="overallBox" class="card" style="padding:14px 16px;margin-bottom:16px;">Loading...</div>
+
+    <div id="incidentsSection" class="hidden">
+      <h2>Current problems</h2>
+      <div id="incidentsList"></div>
+    </div>
+
+    <h2>Customer payments</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Channel</th><th>Status</th></tr></thead>
+        <tbody id="paymentRows"><tr><td colspan="2" class="muted">Loading...</td></tr></tbody>
+      </table>
+    </div>
+
+    <div id="payoutSection" class="hidden">
+      <h2>Payouts (salary / owner funds)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Channel</th><th>Status</th></tr></thead>
+          <tbody id="payoutRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="maintSection" class="hidden">
+      <h2>Scheduled maintenance</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>When (PH time)</th><th>What</th><th>Channels</th></tr></thead>
+          <tbody id="maintRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="padding:14px 16px;margin-top:16px;">
+      <strong>Not everything shows here.</strong>
+      <p class="muted" style="margin:6px 0 0;">
+        This page only shows problems on Xendit's side. If the customer's own app is down
+        (for example GCash showing "QRPH will be back soon" when scanning), Xendit can still say "Working".
+        If a customer can't pay, ask them to use another method: card, Maya, bank, or cash.
+        To check a wallet itself:
+        <a href="https://downdetector.ph/status/gcash/" target="_blank" rel="noopener">GCash on Downdetector</a> ·
+        <a href="https://downdetector.ph/status/paymaya/" target="_blank" rel="noopener">Maya on Downdetector</a> ·
+        <a href="https://status.xendit.co/" target="_blank" rel="noopener">Xendit status page</a>
+      </p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=kpi1"></script>
+  <script src="js/nav.js?v=kpi1"></script>
+  <script src="js/paymentStatus.js?v=1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

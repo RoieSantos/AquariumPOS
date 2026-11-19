@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manager KPI - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=movingitems3" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    #kpiResults th.num, #kpiResults td.num { text-align: right; white-space: nowrap; }
+    #kpiResults h2 { margin: 28px 0 8px; }
+    .kpi-sub { margin: -4px 0 10px; font-size: 13px; }
+    .kpi-good { color: var(--success); font-weight: 600; }
+    .kpi-bad { color: var(--danger); font-weight: 600; }
+    .kpi-cat td { background: var(--page-bg); font-weight: 700; font-size: 13px; }
+    .kpi-off td { color: var(--text-muted); }
+    tr.kpi-total td { font-weight: 700; border-top: 2px solid var(--panel-border); }
+    .kpi-bar { display: inline-block; width: 70px; height: 8px; border-radius: 4px; background: var(--panel-border); vertical-align: middle; margin-right: 6px; overflow: hidden; }
+    .kpi-bar > span { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
+    .kpi-trends { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .kpi-chart { position: relative; }
+    .kpi-chart svg { width: 100%; height: auto; display: block; }
+    .kpi-tip { position: absolute; pointer-events: none; background: var(--panel-bg); border: 1px solid var(--panel-border);
+               box-shadow: var(--shadow); border-radius: 6px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
+    .kpi-rate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+    .kpi-rate-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    .kpi-closed { font-size: 13px; }
+    @media print {
+      #topnav, .pm-toolbar, .kpi-no-print { display: none !important; }
+      .table-wrap { overflow: visible !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1 id="kpiTitle">Manager KPI</h1>
+    <p class="muted">Monthly branch manager score: Financial, Operations, People and Leadership, weighted into one final score. Closed months are frozen; the current month is live and scored on what has happened so far.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button" aria-label="Previous month">&larr;</button>
+        <input type="month" id="kpiMonth" aria-label="Month" />
+        <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button" aria-label="Next month">&rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="thisMonthBtn" type="button">This month</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="branchSelect" aria-label="Branch" class="hidden"></select>
+        <a class="btn btn-secondary btn-sm" href="branch-checklist.html">Daily Checklist</a>
+        <a class="btn btn-secondary btn-sm" id="scorecardLink" href="manager-scorecard.html">Stock details</a>
+        <button class="btn btn-secondary btn-sm hidden" id="closeMonthBtn" type="button">Close month &amp; save scores</button>
+        <button class="btn btn-secondary btn-sm hidden" id="reopenMonthBtn" type="button">Reopen month</button>
+        <button class="btn btn-secondary btn-sm" id="printBtn" type="button">Print</button>
+      </div>
+    </div>
+
+    <div id="kpiLoading" class="muted">Loading...</div>
+    <div id="kpiError" class="error-text hidden"></div>
+
+    <div id="kpiResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="stat-card-grid" id="summaryCards"></div>
+
+      <h2>📊 KPI breakdown</h2>
+      <p class="muted kpi-sub">"No data" KPIs (no target set, log not started, not rated yet) are left out and their weight is spread over the others - the Effective weight column shows what each one really counted for.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>KPI</th><th>Target</th><th class="num">Actual</th><th>Score</th><th class="num">Weight</th><th class="num">Effective weight</th><th class="num">Weighted score</th><th>How it was worked out</th></tr>
+          </thead>
+          <tbody id="kpiRows"></tbody>
+        </table>
+      </div>
+
+      <div class="card kpi-no-print hidden" id="ratingCard" style="margin-top:16px;">
+        <h3 style="margin-top:0;">⭐ Leadership &amp; Initiative rating</h3>
+        <p class="muted kpi-sub">5 = Outstanding, 4 = Very Good, 3 = Good, 2 = Needs Improvement, 1 = Poor. Only Super Users can rate.</p>
+        <div class="kpi-rate-grid" id="ratingFields"></div>
+        <label style="display:block; margin-top:10px; font-size:13px;">Notes (the manager can see these)
+          <textarea id="ratingNotes" rows="2" style="width:100%;"></textarea>
+        </label>
+        <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
+          <button class="btn btn-primary btn-sm" id="saveRatingBtn" type="button">Save rating</button>
+          <span class="muted" id="ratingMsg"></span>
+        </div>
+      </div>
+
+      <h2>📈 Last 12 months</h2>
+      <div class="kpi-trends">
+        <div class="card"><h3 style="margin-top:0;">KPI score</h3><div class="kpi-chart" id="trendScore"></div></div>
+        <div class="card"><h3 style="margin-top:0;">Sales</h3><div class="kpi-chart" id="trendSales"></div></div>
+        <div class="card"><h3 style="margin-top:0;">Team attendance</h3><div class="kpi-chart" id="trendAttendance"></div></div>
+        <div class="card"><h3 style="margin-top:0;">Inventory accuracy</h3><div class="kpi-chart" id="trendAccuracy"></div></div>
+      </div>
+
+      <h2>🏆 Branch ranking</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr id="rankHead"></tr></thead>
+          <tbody id="rankRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=kpi1"></script>
+  <script src="js/nav.js?v=kpi1"></script>
+  <script src="js/managerKpi.js?v=kpi1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

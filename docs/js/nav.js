@@ -30,7 +30,8 @@ function repairLink(session, activeLabel) {
 // since the full nav further down already lists them under Calculators.
 function allStaffLinks(activeLabel) {
   return `
-          <a class="topnav-link${activeLabel === 'Aquarium Calculator' ? ' active' : ''}" href="aquarium-calculator.html">Aquarium Calculator</a>`;
+          <a class="topnav-link${activeLabel === 'Aquarium Calculator' ? ' active' : ''}" href="aquarium-calculator.html">Aquarium Calculator</a>
+          <a class="topnav-link${activeLabel === 'Payment Status' ? ' active' : ''}" href="payment-status.html">Payment Status</a>`;
 }
 
 // Renders the shared top navigation bar into <div id="topnav"></div>.
@@ -40,6 +41,136 @@ function renderTopNav(activeLabel) {
   mountTellMe();
   mountPayoutNotice(getPortalSession());
   mountTransferReceiveLock(getPortalSession());
+  mountPaymentStatusNotice(getPortalSession());
+}
+
+// Payment channel status - per "see when a payment channel is down so our staff is aware". Reads Xendit's
+// public status page (Atlassian Statuspage, CORS open, no key needed) straight from the browser. Only the
+// channels we actually use (xendit-create-invoice's NON_CARD_CHANNELS + cards + the QR Ph POS code, and the
+// payout destinations in _shared/xendit-payouts.ts) count. Shared by the banner below and payment-status.html.
+// Xendit only reports its own side: a wallet's own scanner being down (e.g. GCash "QRPH will be back soon")
+// won't show here.
+const XENDIT_STATUS_URL = 'https://status.xendit.co/api/v2/summary.json';
+const XENDIT_STATUS_CACHE_KEY = 'xenditStatusCache';
+const PAYMENT_STATUS_SKIP_PAGES = ['payment-status.html', 'staff-login.html', 'change-password.html'];
+// [Xendit group, Xendit component name, our label, kind]
+const XENDIT_WATCHED_CHANNELS = [
+  ['Philippines - Payments', 'QR Payments - QRPH', 'QR Ph (scan to pay)', 'payment'],
+  ['Philippines - Payments', 'E-Wallets - GCash', 'GCash (pay link)', 'payment'],
+  ['Philippines - Payments', 'E-Wallets - Paymaya', 'Maya', 'payment'],
+  ['Philippines - Payments', 'E-Wallets - Grabpay', 'GrabPay', 'payment'],
+  ['Philippines - Payments', 'E-Wallets - ShopeePay', 'ShopeePay', 'payment'],
+  ['Philippines - Payments', 'Credit/Debit Cards', 'Credit / Debit Cards', 'payment'],
+  ['Philippines - Payments', 'Direct Debit - BPI', 'BPI Direct Debit', 'payment'],
+  ['Philippines - Payments', 'Direct Debit - BPI Online Banking', 'BPI Online Banking', 'payment'],
+  ['Philippines - Payments', 'Direct Debit - RCBC', 'RCBC Direct Debit', 'payment'],
+  ['Philippines - Payments', 'Direct Debit - RCBC Online Banking', 'RCBC Online Banking', 'payment'],
+  ['Philippines - Payments', 'Over-The-Counter Payments - Cebuana', 'Cebuana (over the counter)', 'payment'],
+  ['Philippines - Payments', 'Over-The-Counter Payments - LBC', 'LBC (over the counter)', 'payment'],
+  ['Callback', null, 'Payment confirmations (callbacks)', 'payment'],
+  ['Philippines - Payouts', 'Disbursement - GCASH', 'Payout to GCash', 'payout'],
+  ['Philippines - Payouts', 'Disbursement - Paymaya', 'Payout to Maya', 'payout'],
+  ['Philippines - Payouts', 'Disbursement - BPI', 'Payout to BPI', 'payout'],
+  ['Philippines - Payouts', 'Disbursement - BDO', 'Payout to BDO', 'payout'],
+  ['Philippines - Payouts', 'Disbursement - Other Philippines banks and E-Wallets', 'Payout to other banks / wallets', 'payout']
+];
+const XENDIT_STATUS_TEXT = {
+  operational: 'Working',
+  degraded_performance: 'Slow',
+  partial_outage: 'Partly down',
+  major_outage: 'Down',
+  under_maintenance: 'Maintenance'
+};
+
+// Fetches the summary (cached per tab for 3 minutes unless force) and boils it down to our channels,
+// plus incidents / maintenance that touch them. Returns null if Xendit's page can't be reached.
+async function fetchPaymentChannelStatus(force) {
+  let raw = null;
+  if (!force) {
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(XENDIT_STATUS_CACHE_KEY) || 'null');
+      if (cached && Date.now() - cached.at < 3 * 60 * 1000) raw = cached.raw;
+    } catch (e) { /* storage blocked / bad JSON */ }
+  }
+  if (!raw) {
+    try {
+      const res = await fetch(XENDIT_STATUS_URL, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const s = await res.json();
+      // Keep only what we use - the full summary is ~130 KB.
+      raw = {
+        components: (s.components || []).map((c) => ({ id: c.id, name: c.name, status: c.status, group_id: c.group_id || null, group: !!c.group })),
+        incidents: (s.incidents || []).map((i) => ({ name: i.name, status: i.status, impact: i.impact, shortlink: i.shortlink, started_at: i.started_at || i.created_at, updated_at: i.updated_at, update: i.incident_updates?.[0]?.body || '', components: (i.components || []).map((c) => c.id) })),
+        maintenances: (s.scheduled_maintenances || []).map((m) => ({ name: m.name, status: m.status, shortlink: m.shortlink, scheduled_for: m.scheduled_for, scheduled_until: m.scheduled_until, components: (m.components || []).map((c) => c.id) }))
+      };
+    } catch (e) {
+      return null;
+    }
+    try { sessionStorage.setItem(XENDIT_STATUS_CACHE_KEY, JSON.stringify({ at: Date.now(), raw })); } catch (e) { /* storage blocked */ }
+  }
+
+  const groups = {};
+  raw.components.filter((c) => c.group).forEach((g) => { groups[g.name] = g; });
+  const channels = [];
+  XENDIT_WATCHED_CHANNELS.forEach(([groupName, name, label, kind]) => {
+    const group = groups[groupName];
+    // A top-level component (Callback) or a child of the named group.
+    const comp = name
+      ? raw.components.find((c) => c.name === name && group && c.group_id === group.id)
+      : group;
+    if (comp) channels.push({ id: comp.id, label, kind, status: comp.status });
+  });
+  const ids = new Set(channels.map((c) => c.id));
+  const touches = (item) => item.components.some((id) => ids.has(id));
+  const labelsFor = (item) => channels.filter((c) => item.components.includes(c.id)).map((c) => c.label);
+  const incidents = raw.incidents.filter(touches).map((i) => ({ ...i, channels: labelsFor(i) }));
+  const maintenances = raw.maintenances.filter(touches).map((m) => ({ ...m, channels: labelsFor(m) }));
+  return { channels, incidents, maintenances };
+}
+
+function paymentStatusSeverity(status) {
+  return status === 'major_outage' || status === 'partial_outage' ? 'danger' : (status === 'operational' ? 'ok' : 'warning');
+}
+
+async function mountPaymentStatusNotice(session) {
+  if (!session?.username) return;
+  const page = (location.pathname.split('/').pop() || '').toLowerCase();
+  if (page.includes('print') || PAYMENT_STATUS_SKIP_PAGES.includes(page)) return;
+  const status = await fetchPaymentChannelStatus(false);
+  if (!status) return; // fails quiet - never blocks a page
+  // Payout problems only matter to whoever sends payouts.
+  const seesPayouts = !!(session.isSuperUser || session.isPayrollOfficer);
+  const bad = status.channels.filter((c) => c.status !== 'operational' && (c.kind === 'payment' || seesPayouts));
+  if (!bad.length) return;
+  // Dismiss hides it for this tab until the set of problems changes.
+  const signature = bad.map((c) => c.id + ':' + c.status).sort().join('|');
+  try { if (sessionStorage.getItem('paymentStatusDismissed') === signature) return; } catch (e) { /* storage blocked */ }
+
+  const anyDown = bad.some((c) => paymentStatusSeverity(c.status) === 'danger');
+  const color = anyDown ? 'var(--danger)' : '#a6720a';
+  const box = document.createElement('div');
+  box.id = 'paymentStatusNotice';
+  box.className = 'no-print';
+  box.setAttribute('role', 'status');
+  box.style.cssText = 'max-width:1200px;margin:10px auto 0;padding:10px 14px;border-radius:8px;'
+    + `border:1px solid ${color};background:var(--panel-bg);color:var(--text-main);`
+    + 'box-shadow:var(--shadow);display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;font-size:14px;'
+    + 'width:calc(100% - 32px);box-sizing:border-box;';
+  const list = bad.map((c) => `${payoutNoticeEscape(c.label)} (${payoutNoticeEscape(XENDIT_STATUS_TEXT[c.status] || c.status)})`).join(', ');
+  const customerHint = bad.some((c) => c.kind === 'payment') ? ' Offer the customer another payment method.' : '';
+  box.innerHTML = `
+    <div style="flex:1 1 260px;min-width:0;">
+      <strong style="color:${color};">Payment channel issue:</strong> ${list}.${customerHint}
+      <a href="payment-status.html">See payment status</a>
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm" data-paystatus-dismiss>Dismiss</button>`;
+  box.querySelector('[data-paystatus-dismiss]').addEventListener('click', () => {
+    try { sessionStorage.setItem('paymentStatusDismissed', signature); } catch (e) { /* storage blocked */ }
+    box.remove();
+  });
+  const nav = document.getElementById('topnav');
+  if (nav && nav.parentNode) nav.parentNode.insertBefore(box, nav.nextSibling);
+  else document.body.prepend(box);
 }
 
 // Overdue-receipt lock - per "the time they ship the goods and they did not receive until next day we can
@@ -362,6 +493,8 @@ function renderTopNavLinks(activeLabel) {
   sales.push({ section: 'Quotes & Calculators', href: 'repair-calculator.html', label: 'Repair Calculator' });
   sales.push({ section: 'Quotes & Calculators', href: 'sticker-calculator.html', label: 'Custom Accessories / Stickers' });
   sales.push({ section: 'Quotes & Calculators', href: 'glass-cut-list.html', label: 'Glass Cut List' });
+  // Every login can open it (ALL_STAFF_PAGES in js/auth.js) - Xendit's live channel status.
+  sales.push({ section: 'Payments', href: 'payment-status.html', label: 'Payment Status' });
 
   // Delivery: its own menu - the calendar, quoting a delivery fee, and (super users) zones / rates.
   const delivery = [
@@ -475,6 +608,17 @@ function renderTopNavLinks(activeLabel) {
 
   // Reports: sales analysis and response times.
   const reports = [];
+  if (isSuperUser) {
+    // Manager's Report: sales vs target, money in/out, stock missing (sql/supabase_manager_report.sql).
+    reports.push({ section: 'Overview', href: 'manager-report.html', label: "Manager's Report" });
+  }
+  if (isSuperUser || isStoreManager) {
+    // Manager Scorecard: one branch's goals, no money figures; Store Managers see only their own branch
+    // (sql/supabase_manager_scorecard.sql).
+    reports.push({ section: 'Overview', href: 'manager-kpi.html', label: 'Manager KPI' });
+    reports.push({ section: 'Overview', href: 'manager-scorecard.html', label: 'Manager Scorecard' });
+    reports.push({ section: 'Overview', href: 'branch-checklist.html', label: 'Daily Checklist' });
+  }
   if (canSeeSalesAnalysis) {
     reports.push({ section: 'Sales', href: 'reports.html', label: 'Reports' });
     reports.push({ section: 'Sales', href: 'top-selling-items.html', label: 'Top Selling Items' });
@@ -667,6 +811,10 @@ const TELL_ME_KEYWORDS = {
   'maker-assignments.html': 'tank maker stand maker jobs',
   'serial-inventory-journal.html': 'count serial stocktake',
   'reports.html': 'sales report',
+  'manager-kpi.html': 'manager kpi score evaluation bonus ranking performance review attendance retention sop leadership',
+  'branch-checklist.html': 'opening closing cleaning checklist sop daily photo',
+  'manager-scorecard.html': 'manager scorecard kpi goals performance gauge evaluation count sheet expected count on hand sold',
+  'manager-report.html': 'manager overview target goal quota profit loss losing missing shrinkage stock summary performance',
   'top-selling-items.html': 'best sellers sales',
   'slow-fast-moving-items.html': 'slow moving fast moving dead stock non-moving aging overstock velocity',
   'sealant-sales-report.html': 'silicone black clear',
@@ -700,6 +848,7 @@ const TELL_ME_KEYWORDS = {
   'price-increase.html': 'price change raise markup wholesale percent',
   'payment-methods.html': 'gcash cash bank tender',
   'xendit-payments.html': 'online payment gateway gcash card pay link',
+  'payment-status.html': 'xendit down outage qrph gcash maya card channel maintenance payout status',
   'xendit-ledger.html': 'xendit balance transactions fees vat withdrawal payout settlement money in out',
   'gl-setup.html': 'accounts chart accounting',
   'user-setup.html': 'staff employees permissions accounts login',

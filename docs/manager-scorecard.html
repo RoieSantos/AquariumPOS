@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manager Scorecard - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=movingitems3" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    #scResults th.num, #scResults td.num { text-align: right; white-space: nowrap; }
+    #scResults h2 { margin: 28px 0 8px; }
+    .sc-sub { margin: -4px 0 10px; font-size: 13px; }
+    .sc-good { color: var(--success); font-weight: 600; }
+    .sc-bad { color: var(--danger); font-weight: 600; }
+    .sc-overall { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; border: 1px solid var(--panel-border);
+                  background: var(--panel-bg); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+    .sc-overall .sc-big { font-size: 34px; font-weight: 700; line-height: 1; }
+    .sc-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .sc-tile { border: 1px solid var(--panel-border); background: var(--panel-bg); border-radius: 10px; padding: 12px 14px;
+               border-top: 4px solid var(--neutral); }
+    .sc-tile.is-good { border-top-color: var(--success); }
+    .sc-tile.is-warn { border-top-color: #d39b1c; }
+    .sc-tile.is-bad { border-top-color: var(--danger); }
+    .sc-tile .sc-name { font-size: 13px; color: var(--text-muted); display: flex; justify-content: space-between; gap: 8px; }
+    .sc-tile .sc-value { font-size: 24px; font-weight: 700; margin: 6px 0 2px; }
+    .sc-tile .sc-goal { font-size: 12px; color: var(--text-muted); }
+    .sc-tile .sc-detail { font-size: 12px; margin-top: 4px; }
+    .sc-meter { position: relative; height: 14px; border-radius: 7px; background: var(--panel-border); margin: 10px 0 4px; }
+    .sc-meter-fill { height: 100%; border-radius: 7px; background: var(--primary); max-width: 100%; }
+    .sc-meter-fill.is-ahead { background: var(--success); }
+    .sc-meter-mark { position: absolute; top: -4px; width: 2px; height: 22px; background: var(--text-main); }
+    .sc-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .sc-count-col { display: none; }
+    .print-only { display: none; }
+    @media print {
+      #topnav, .pm-toolbar, .sc-no-print { display: none !important; }
+      .table-wrap { overflow: visible !important; }
+      body.sc-print-sheet .sc-count-col { display: table-cell; min-width: 90px; border-bottom: 1px solid #999; }
+      body.sc-print-sheet .print-only { display: block; }
+      body.sc-print-sheet .sc-hide-on-sheet { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1 id="scTitle">Manager Scorecard</h1>
+    <p class="muted sc-hide-on-sheet">The numbers this branch is measured on for the month: sales against target, cash counts, and how well the stock is looked after. Each box shows its goal. Stock figures come from the Item Ledger.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button" aria-label="Previous month">&larr;</button>
+        <input type="month" id="scMonth" aria-label="Month" />
+        <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button" aria-label="Next month">&rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="thisMonthBtn" type="button">This month</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="branchSelect" aria-label="Branch" class="hidden"></select>
+        <button class="btn btn-secondary btn-sm" id="printBtn" type="button">Print scorecard</button>
+        <button class="btn btn-secondary btn-sm" id="printSheetBtn" type="button">Print count sheet</button>
+      </div>
+    </div>
+
+    <div id="scLoading" class="muted">Loading...</div>
+    <div id="scError" class="error-text hidden"></div>
+
+    <div id="scResults" class="hidden">
+      <p class="muted" id="periodLabel" style="margin:0 0 12px;"></p>
+
+      <div class="sc-hide-on-sheet">
+        <div class="sc-overall" id="overall"></div>
+        <div class="sc-tiles" id="tiles"></div>
+
+        <h2>🎯 Sales vs target</h2>
+        <div class="card"><div id="targetMeter"></div></div>
+
+        <div class="sc-two" style="margin-top:16px;">
+          <div class="card">
+            <h3 style="margin-top:0;">🚚 Transfers not fully received</h3>
+            <div class="table-wrap"><table><thead><tr><th>Transfer</th><th>From &rarr; To</th><th class="num">Shipped</th><th class="num">Received</th><th>Since</th></tr></thead><tbody id="transferRows"></tbody></table></div>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0;">🏆 Top sellers</h3>
+            <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Sales</th></tr></thead><tbody id="topRows"></tbody></table></div>
+          </div>
+        </div>
+      </div>
+
+      <h2>📦 Items: on hand, sold and expected count</h2>
+      <p class="muted sc-sub sc-no-print">"Expected count" is what the system says should be on the shelf. Items marked <span class="badge badge-danger">Recount</span> show below zero, so the system number can't be right - count them first.</p>
+      <p class="print-only" style="font-size:12px;">Counted by: ____________________ &nbsp; Date: ______________ &nbsp; Checked by: ____________________</p>
+      <div class="toolbar sc-no-print">
+        <input type="search" id="itemSearch" placeholder="Search item or code..." style="min-width:200px;" />
+        <select id="itemView" aria-label="Show">
+          <option value="stock">Items with stock (count sheet)</option>
+          <option value="sold">Sold this month</option>
+          <option value="problems">Problems only (recount, missing, written off)</option>
+          <option value="all">Everything that moved or has stock</option>
+        </select>
+      </div>
+      <div class="muted sc-no-print" id="itemCount" style="margin:6px 0;"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th><th>Category</th>
+              <th class="num" id="onHandHead">Expected count</th>
+              <th class="num sc-hide-on-sheet">Sold</th>
+              <th class="num sc-hide-on-sheet" title="Purchased, produced or transferred in">Received</th>
+              <th class="num sc-hide-on-sheet">Sent out</th>
+              <th class="num sc-hide-on-sheet" title="Missing in counts + written off">Missing / written off</th>
+              <th class="sc-no-print">Status</th>
+              <th class="sc-count-col">Actual count</th>
+            </tr>
+          </thead>
+          <tbody id="itemRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=kpi1"></script>
+  <script src="js/nav.js?v=kpi1"></script>
+  <script src="js/managerScorecard.js?v=scorecard1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

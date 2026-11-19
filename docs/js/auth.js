@@ -184,7 +184,11 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'online-orders.html', 'online-order-lines.html',
   'gma-conversations.html', 'gma-order-invoice.html', 'customers.html',
   // Own store's declarations only + attach bank deposit receipts (supabase_tender_deposit_receipts.sql).
-  'tender-declarations.html'
+  'tender-declarations.html',
+  // Own branch's scorecard only - goals, stock on hand / sold / expected count, no money (supabase_manager_scorecard.sql).
+  'manager-scorecard.html',
+  // Manager KPI (own branch score, no bonus) + the daily Opening/Closing/Cleaning checklist (supabase_manager_kpi*.sql).
+  'manager-kpi.html', 'branch-checklist.html'
 ];
 
 // Same exclusive-lockdown shape as Delivery Team/Online Order Staff above, for a "plain" account
@@ -241,7 +245,8 @@ function canOpenProductionPage(session, page) {
 // breakdown was removed), so it's safe for everyone.
 // payout-receipt.html: an employee's own Xendit salary / cash advance receipt (my_get_payout_receipt only
 // returns their own unless they're a payroll officer / super user - sql/supabase_xendit_payout_receipts.sql).
-const ALL_STAFF_PAGES = ['aquarium-calculator.html', 'payout-receipt.html'];
+// payment-status.html: Xendit's public channel status - no business data.
+const ALL_STAFF_PAGES = ['aquarium-calculator.html', 'payout-receipt.html', 'payment-status.html'];
 
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });

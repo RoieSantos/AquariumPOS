@@ -17,6 +17,20 @@ Whenever a change needs SQL run (one file or several), end the reply with a numb
 - Say which files are already done (user ran them / confirmed output) and which must NOT be re-run (e.g. an older file that would overwrite a newer version of the same function).
 - Note which are safe to re-run and which are read-only checks, and end with any follow-up step (e.g. reload the page for a new JS cache version).
 
+### Run SQL yourself via the Supabase CLI (preferred)
+
+Instead of handing Roie a run list to paste into the SQL editor, run the files yourself against the live project with the Supabase CLI (set up 2026-11-18, logged in on this PC):
+
+```
+npx --no-install supabase db query --remote=hymcmesqgpliyyeghpgq --yes -f sql/<file>.sql
+```
+
+- Pass the project ref explicitly (`--remote=hymcmesqgpliyyeghpgq`). Plain `--remote` fails with "Cannot find project ref" because the CLI v3 doesn't read the old `supabase/.temp/linked-project.json`.
+- **This is the live production database (rspetstop.com).** Before running anything that changes data, functions or tables, show Roie the file(s), the order, and a one-line "what it does", and get a yes in the current conversation. Only then add `--yes`. An approval covers the files named, not later ones.
+- Read-only checks (diagnostics, verifying a function exists, previewing what a backfill would touch) can be run without asking, using `--read-only` instead of `--yes`. Put multi-line test queries in a scratch `.sql` file and pass it with `-f`, because inline SQL with quoted identifiers gets mangled by the shell.
+- Still save every script in `sql/` first and link it, and still run multi-file changes in dependency order. After a run, report the result and verify it with a `--read-only` query (PL/pgSQL only hits column errors at runtime, so test the function body's query, not just that it compiled).
+- If the CLI errors (auth expired, network), fall back to the "Run in this order" list above.
+
 ## Changelog
 
 Whenever you make a code change (any edit/add/delete to a tracked file - SQL, JS, HTML, Edge Functions, etc.), append a dated entry to [CHANGELOG.md](CHANGELOG.md) summarizing what changed and why, in the same session as the change itself - don't wait to be asked. Newest entries go at the top, under a `## YYYY-MM-DD` heading (reuse today's heading if one already exists from earlier in the day). Keep each entry to 1-2 lines per change; this is a running log for the user, not a detailed diff.

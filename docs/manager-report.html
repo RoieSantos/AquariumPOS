@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manager's Report - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=movingitems3" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    #mrResults th.num, #mrResults td.num { text-align: right; white-space: nowrap; }
+    #mrResults tr.mr-total td { font-weight: 700; border-top: 2px solid var(--panel-border); }
+    #mrResults h2 { margin: 28px 0 8px; }
+    #mrResults .mr-sub { margin: -4px 0 10px; font-size: 13px; }
+    .mr-good { color: var(--success); font-weight: 600; }
+    .mr-bad { color: var(--danger); font-weight: 600; }
+    .mr-verdict { border-radius: 10px; padding: 14px 16px; margin: 0 0 16px; border: 1px solid var(--panel-border);
+                  background: var(--panel-bg); display: flex; gap: 12px; align-items: flex-start; }
+    .mr-verdict .mr-verdict-icon { font-size: 26px; line-height: 1; }
+    .mr-verdict h3 { margin: 0 0 4px; }
+    .mr-verdict ul { margin: 6px 0 0; padding-left: 18px; }
+    .mr-verdict.is-good { border-left: 5px solid var(--success); }
+    .mr-verdict.is-bad { border-left: 5px solid var(--danger); }
+    .mr-verdict.is-warn { border-left: 5px solid #d39b1c; }
+    .mr-meter { position: relative; height: 14px; border-radius: 7px; background: var(--panel-border); margin: 10px 0 4px; overflow: visible; }
+    .mr-meter-fill { height: 100%; border-radius: 7px; background: var(--primary); max-width: 100%; }
+    .mr-meter-fill.is-ahead { background: var(--success); }
+    .mr-meter-mark { position: absolute; top: -4px; width: 2px; height: 22px; background: var(--text-main); }
+    .mr-meter-legend { display: flex; justify-content: space-between; font-size: 12px; }
+    .mr-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .mr-chart { position: relative; }
+    .mr-chart svg { width: 100%; height: auto; display: block; }
+    .mr-tip { position: absolute; pointer-events: none; background: var(--panel-bg); border: 1px solid var(--panel-border);
+              box-shadow: var(--shadow); border-radius: 6px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
+    .mr-key { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; font-size: 12px; }
+    .mr-key i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--primary); }
+    .mr-key i.dash { border-top: 2px dashed var(--text-muted); }
+    .mr-target-input { width: 140px; text-align: right; }
+    .stat-card .stat-value.mr-bad, .stat-card .stat-value.mr-good { font-weight: 700; }
+    @media (max-width: 600px) { .mr-two { grid-template-columns: 1fr; } }
+    @media print {
+      #topnav, .pm-toolbar, .mr-no-print { display: none !important; }
+      .table-wrap { overflow: visible !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>Manager's Report</h1>
+    <p class="muted">How the month is going: sales against target, money in against money out, and what happened to the stock - what came in, what sold, and what went missing. Pick a branch to see just that branch.</p>
+
+    <div class="toolbar pm-toolbar">
+      <div class="pm-filter-group">
+        <button class="btn btn-secondary btn-sm" id="prevMonthBtn" type="button" aria-label="Previous month">&larr;</button>
+        <input type="month" id="mrMonth" aria-label="Month" />
+        <button class="btn btn-secondary btn-sm" id="nextMonthBtn" type="button" aria-label="Next month">&rarr;</button>
+        <button class="btn btn-secondary btn-sm" id="thisMonthBtn" type="button">This month</button>
+      </div>
+      <div class="pm-filter-group">
+        <select id="warehouseSelect" aria-label="Branch">
+          <option value="">All branches</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="exportBtn" type="button">Export items (CSV)</button>
+        <button class="btn btn-secondary btn-sm" id="printBtn" type="button">Print</button>
+      </div>
+    </div>
+
+    <div id="mrLoading" class="muted">Loading...</div>
+    <div id="mrError" class="error-text hidden"></div>
+
+    <div id="mrResults" class="hidden">
+      <p class="muted" id="monthLabel" style="margin:0 0 12px;"></p>
+
+      <div id="verdict"></div>
+
+      <div class="stat-card-grid">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">💰</span> Sales so far</div>
+          <div class="stat-value" id="statSales">-</div>
+          <div class="muted" id="statSalesSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">🎯</span> Target</div>
+          <div class="stat-value" id="statTarget">-</div>
+          <div class="muted" id="statTargetSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">📈</span> Month-end forecast</div>
+          <div class="stat-value" id="statForecast">-</div>
+          <div class="muted" id="statForecastSub" style="font-size:13px;"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-icon">⚖️</span> Money in - money out</div>
+          <div class="stat-value" id="statNet">-</div>
+          <div class="muted" id="statNetSub" style="font-size:13px;"></div>
+        </div>
+      </div>
+
+      <!-- 1. Sales vs target -->
+      <h2>🎯 Sales vs Target</h2>
+      <div class="card">
+        <div id="targetMeter"></div>
+        <div id="paceChart" class="mr-chart" style="margin-top:16px;"></div>
+      </div>
+
+      <details class="card mr-no-print" id="targetEditor" style="margin-top:12px;">
+        <summary style="cursor:pointer; font-weight:600;">Set monthly targets per branch</summary>
+        <p class="muted mr-sub" style="margin-top:8px;">The target for "All branches" is the sum of the branch targets. Leave a box empty (or 0) for no target.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Branch</th><th class="num">Last month's target</th><th class="num">Last month's sales</th><th class="num">Target this month</th></tr></thead>
+            <tbody id="targetRows"></tbody>
+          </table>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" id="saveTargetsBtn" type="button">Save targets</button>
+          <button class="btn btn-secondary btn-sm" id="copyTargetsBtn" type="button">Copy last month's targets</button>
+          <span class="muted" id="targetMsg" style="align-self:center;"></span>
+        </div>
+      </details>
+
+      <!-- 2. Money in / out -->
+      <h2>⚖️ Are we making money?</h2>
+      <p class="muted mr-sub">Cash view for the month. Purchases are stock bought (it sits on the shelf until sold), so the net is also shown without them.</p>
+      <div class="mr-two">
+        <div class="card">
+          <div class="table-wrap">
+            <table>
+              <tbody id="moneyRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">Gross margin (items with a cost)</h3>
+          <div id="marginBox"></div>
+        </div>
+      </div>
+
+      <!-- 3. Inventory -->
+      <h2>📦 Inventory - is anything going missing?</h2>
+      <p class="muted mr-sub">From the Item Ledger. "Missing" = physical counts that came up short; "Written off" = manual negative adjustments; "Used in store" = items expensed on the POS. Valued at item cost (latest purchase cost if the item has none).</p>
+      <div class="stat-card-grid" id="invCards"></div>
+
+      <div class="mr-two">
+        <div class="card">
+          <h3 style="margin-top:0;">🔻 Missing &amp; written off</h3>
+          <div class="table-wrap"><table><thead><tr><th>Item</th><th>Branch</th><th class="num">Missing</th><th class="num">Written off</th><th class="num">Value</th></tr></thead><tbody id="lossRows"></tbody></table></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">🚚 Transfers not fully received</h3>
+          <div class="table-wrap"><table><thead><tr><th>Transfer</th><th>From &rarr; To</th><th class="num">Shipped</th><th class="num">Received</th><th>Since</th></tr></thead><tbody id="transferRows"></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="mr-two" style="margin-top:16px;">
+        <div class="card">
+          <h3 style="margin-top:0;">💸 Sold below cost</h3>
+          <p class="muted mr-sub">"Check cost" = the cost is over 3x the selling price - usually the cost was entered per pack/roll while the item sells per piece. Fix it in Item Setup.</p>
+          <div class="table-wrap"><table><thead><tr><th>Item</th><th>Branch</th><th class="num">Qty</th><th class="num">Sold for</th><th class="num">Cost</th><th></th></tr></thead><tbody id="belowCostRows"></tbody></table></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">🏆 Top sellers this month</h3>
+          <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Sales</th></tr></thead><tbody id="topRows"></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- 4. Item movement -->
+      <h2>📋 Items: stock in, sold and missing</h2>
+      <p class="muted mr-sub">Every item that moved this month or still holds stock. Opening + in - sold - used - missing - written off - transferred out = closing.</p>
+      <div class="toolbar mr-no-print">
+        <input type="search" id="itemSearch" placeholder="Search item or code..." style="min-width:200px;" />
+        <select id="itemView" aria-label="Show">
+          <option value="problems">Only problems (missing, written off, negative stock)</option>
+          <option value="moved">Items that moved this month</option>
+          <option value="all">All items with stock</option>
+        </select>
+      </div>
+      <div class="muted" id="itemCount" style="margin:6px 0;"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th><th>Branch</th>
+              <th class="num">Opening</th><th class="num" title="Purchased + produced">Bought / made</th>
+              <th class="num">Transfer in</th><th class="num">Transfer out</th>
+              <th class="num">Sold</th><th class="num">Used in store</th>
+              <th class="num" title="Physical count found more than the system had">Found</th>
+              <th class="num" title="Physical count found less than the system had">Missing</th>
+              <th class="num" title="Manual adjustments (+ / -)">Adjusted</th>
+              <th class="num">Closing</th><th class="num">Closing value</th>
+            </tr>
+          </thead>
+          <tbody id="itemRows"></tbody>
+        </table>
+      </div>
+      <div style="text-align:center; margin:12px 0;">
+        <button class="btn btn-secondary btn-sm hidden" id="moreItemsBtn" type="button">Show more</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=kpi1"></script>
+  <script src="js/nav.js?v=kpi1"></script>
+  <script src="js/managerReport.js?v=manager1"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>
