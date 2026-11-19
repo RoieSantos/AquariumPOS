@@ -311,7 +311,59 @@ async function loadBestSellers() {
   showBestSection();
 }
 
+// New Arrivals - fish / plants received at a store recently (supabase_new_arrivals.sql
+// public_get_new_arrivals; the number of days is set on the portal's New Arrivals page). One card
+// per item, naming the branch(es) it arrived at. No prices, per request.
+const MAX_NEW_ARRIVALS = 12;
+
+function formatArrivedDate(value) {
+  if (!value) return '';
+  return new Date(`${value}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+}
+
+async function loadNewArrivals() {
+  const section = document.getElementById('landingNewArrivalsSection');
+  const grid = document.getElementById('landingNewArrivalsGrid');
+  if (!section || !grid) return;
+
+  const { data, error } = await supabaseClient.rpc('public_get_new_arrivals', { p_days: null });
+  if (error || !data || data.length === 0) return;
+
+  // Merge the per-branch rows into one card per item.
+  const byCode = new Map();
+  for (const row of data) {
+    const entry = byCode.get(row.code) || { ...row, branches: [] };
+    if (!entry.branches.includes(row.branch)) entry.branches.push(row.branch);
+    if (row.arrived_on > entry.arrived_on) entry.arrived_on = row.arrived_on;
+    if (!entry.images && row.images) entry.images = row.images;
+    byCode.set(row.code, entry);
+  }
+  const items = Array.from(byCode.values()).slice(0, MAX_NEW_ARRIVALS);
+
+  grid.innerHTML = items.map((item) => {
+    const imageUrl = firstImageUrl(item.images);
+    const isPlant = String(item.category_code || '').toUpperCase().includes('PLANT');
+    const visual = imageUrl
+      ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(item.name)}" loading="lazy" />`
+      : `<div class="land-best-placeholder" aria-hidden="true">${isPlant ? '🌿' : '🐠'}</div>`;
+    return `
+      <a class="land-product-card land-best-card" href="${productPageUrl(item.code)}">
+        <span class="land-best-rank">NEW</span>
+        ${visual}
+        <div class="land-product-info">
+          <div class="land-product-name">${escapeHtml(item.name)}</div>
+          <div class="land-best-note">Arrived ${escapeHtml(formatArrivedDate(item.arrived_on))} · ${escapeHtml(item.branches.join(' & '))}</div>
+        </div>
+      </a>
+    `;
+  }).join('');
+  section.hidden = false;
+  const navLink = document.getElementById('landingNewArrivalsNavLink');
+  if (navLink) navLink.hidden = false;
+}
+
 loadPromoBanner();
+loadNewArrivals();
 loadBestSellingSets();
 loadBestSellers();
 loadCategoryPills();

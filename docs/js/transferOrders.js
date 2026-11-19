@@ -1964,6 +1964,12 @@ async function receiveTransferOrder(docNo) {
 
     // Archive to Posted_Transfer_Header/Posted_Transfer_Line and remove from the live tables.
     await archiveReceivedTransferOrder(docNo);
+    // New Arrivals: archiving queued a "📣 NEW ARRIVALS" Facebook post if this transfer had fish /
+    // plants (sql/supabase_new_arrivals.sql trigger) - post it now instead of waiting for the
+    // 5-minute cron. Fire-and-forget: never awaited, never blocks or fails the Receive.
+    try {
+      supabaseClient.functions.invoke('new-arrivals-post', { body: { action: 'dispatch' } }).catch(() => {});
+    } catch { /* the cron posts it */ }
     document.getElementById('viewLinesModal').classList.add('hidden');
     await loadHeaders();
     window.alert(status === 'Received'

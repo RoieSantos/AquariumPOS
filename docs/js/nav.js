@@ -635,6 +635,7 @@ function renderTopNavLinks(activeLabel) {
   const marketing = [];
   if (isSuperUser) {
     marketing.push({ section: 'Facebook', href: 'quick-post.html', label: 'Quick Post' });
+    marketing.push({ section: 'Facebook', href: 'new-arrivals.html', label: 'New Arrivals' });
     marketing.push({ section: 'Facebook', href: 'video-ad-builder.html', label: 'Video Ad Builder' });
     marketing.push({ section: 'Facebook', href: 'facebook-post-test.html', label: 'Facebook Post Test' });
     marketing.push({ section: 'AI Bot', href: 'ai-bot-setup.html', label: 'AI Bot Setup' });
@@ -842,6 +843,7 @@ const TELL_ME_KEYWORDS = {
   'ai-bot-sandbox.html': 'alice chatbot test',
   'facebook-post-test.html': 'fb social',
   'quick-post.html': 'facebook fb photo social',
+  'new-arrivals.html': 'new arrivals fish plants announcement facebook auto post transfer received',
   'video-ad-builder.html': 'video ad reels marketing facebook instagram mp4 promo',
   'pricing-setup.html': 'prices rates',
   'size-pricing.html': 'fish size inch bigger price tier scale',

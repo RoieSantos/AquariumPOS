@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Arrivals - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <style>
+    .na-layout { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px; align-items: start; }
+    @media (max-width: 900px) { .na-layout { grid-template-columns: 1fr; } }
+    .na-banner { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--panel-border); display: block; }
+    .na-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .na-cats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 10px; }
+    .na-cats label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+    .na-caption { white-space: pre-wrap; font-size: 13px; background: var(--panel-bg, #f7f9fc); border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px; margin-top: 8px; }
+    .na-items { font-size: 13px; }
+    .na-err { color: var(--danger); font-size: 12px; margin-top: 2px; }
+    .card h2 { margin-top: 0; font-size: 17px; }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page">
+    <h1>📣 New Arrivals</h1>
+    <p class="muted">When a Transfer Order with fish or plants is <strong>received</strong> at GMA or Amaya, a "NEW ARRIVALS" post goes up on that store's Facebook Page automatically (GMA → GMA Page, Amaya → RS Pet Stop Page). The photo is the banner below. The caption lists the item names, with no prices. The same arrivals also show on rspetstop.com and Alice knows about them.</p>
+
+    <div id="notAuthorizedBox" class="hidden">
+      <p class="error-text">You do not have access to this page. Ask a super user to grant you access.</p>
+    </div>
+
+    <div id="naContent" class="hidden">
+      <div class="na-layout">
+        <div class="card">
+          <h2>Announcement banner</h2>
+          <img id="naBanner" class="na-banner" alt="New Arrivals banner" />
+          <p class="muted" id="naBannerStatus" style="font-size:13px;"></p>
+          <div class="na-row">
+            <label class="btn btn-secondary" for="naUploadInput">Upload your own banner</label>
+            <input type="file" id="naUploadInput" accept="image/png,image/jpeg,image/webp" class="hidden" />
+            <button class="btn btn-secondary" id="naRebuildBtn" type="button">Rebuild from logo</button>
+            <button class="btn btn-primary" id="naSaveBannerBtn" type="button" disabled>Save banner</button>
+          </div>
+          <p class="muted" style="font-size:12px;"><strong>Upload your own banner</strong> uses your image exactly as designed (square 1:1 or portrait 4:5 shows best on Facebook; big files are shrunk automatically). <strong>Rebuild from logo</strong> draws a simple one from the General Setup logo instead. Either way, tap Save banner to use it.</p>
+        </div>
+
+        <div>
+          <div class="card">
+            <h2>Settings</h2>
+            <label class="checkbox-row"><input type="checkbox" id="naEnabled" /> Auto-post New Arrivals when a transfer is received</label>
+            <div style="margin-top:10px;"><strong style="font-size:14px;">Announced categories</strong></div>
+            <div class="na-cats" id="naCategories"></div>
+            <label style="font-size:14px;">Show on the website for
+              <input type="number" id="naWebsiteDays" min="1" max="60" style="width:70px;" /> days after arrival</label>
+            <div class="na-row">
+              <button class="btn btn-primary" id="naSaveSettingsBtn" type="button">Save settings</button>
+              <span class="muted" id="naSettingsStatus" style="align-self:center; font-size:13px;"></span>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <h2>Caption preview</h2>
+            <div class="na-row" style="margin-top:0;">
+              <select id="naPreviewStore"><option value="GMA">GMA</option><option value="Amaya">Amaya</option></select>
+              <button class="btn btn-secondary" id="naPreviewBtn" type="button">Preview with sample fish</button>
+            </div>
+            <div class="na-caption hidden" id="naCaptionPreview"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+          <h2 style="margin:0;">Announcements</h2>
+          <div class="na-row" style="margin:0;">
+            <button class="btn btn-secondary btn-sm" id="naDispatchBtn" type="button">Post waiting now</button>
+            <button class="btn btn-secondary btn-sm" id="naRefreshBtn" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="bc-grid">
+            <thead><tr><th>Received</th><th>Transfer</th><th>Store</th><th>Items</th><th>Status</th><th></th></tr></thead>
+            <tbody id="naPostsBody"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="naError" class="error-text hidden"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=kpi1"></script>
+  <script src="js/nav.js?v=newarr1"></script>
+  <script src="js/companyBranding.js"></script>
+  <script src="js/newArrivals.js?v=2"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

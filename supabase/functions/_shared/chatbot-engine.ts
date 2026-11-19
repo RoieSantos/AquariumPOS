@@ -1019,6 +1019,12 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: {} }
   },
   {
+    name: 'list_new_arrivals',
+    description:
+      'List the NEW ARRIVALS - fish and aquatic plants that just arrived at our stores (received at Amaya or GMA in the last several days), newest first, each with the branch it arrived at and the date. Use when a customer asks "what\'s new", "any new fish", "new arrivals", "bagong dating", or what fresh stock a branch just got. Name the items and the branch; for price or current stock look the item up with search_items / list_items_in_category (this list has no prices). If the list is empty, say no new batch has arrived in the last few days and offer what is currently in stock instead.',
+    input_schema: { type: 'object', properties: {} }
+  },
+  {
     name: 'list_items_in_category',
     description:
       'List active items in one specific category, with price and stock (quantity_in_stock is the all-branch total; stock_by_location is the per-branch count for Amaya and GMA - use that when telling a customer about stock; for Aquarium/Stand/Sump items it counts finished serial-tracked units on hand only; items with variants also carry stock_by_variant, an array of {option (usually the color), sku, Amaya, GMA} per in-stock variant). Use after list_categories, or when the customer names a category directly (e.g. "what filters do you have").',
@@ -3421,6 +3427,14 @@ export async function executeTool(params: ExecuteToolParams): Promise<string> {
       const sets = ((data ?? []) as Array<Record<string, unknown>>).filter((row) => Number(row.price) > 0);
       return sets.length > 0 ? JSON.stringify(sets) : 'No ready-made aquarium sets are currently available.';
     }
+    case 'list_new_arrivals': {
+      // sql/supabase_new_arrivals.sql - same list as the website's New Arrivals section.
+      const { data, error } = await supabase.rpc('public_get_new_arrivals', { p_days: null });
+      if (error) return `Lookup failed: ${error.message}`;
+      const rows = ((data ?? []) as Array<Record<string, unknown>>)
+        .map((r) => ({ item_code: r.code, name: r.name, category: r.category_code, branch: r.branch, arrived_on: r.arrived_on }));
+      return rows.length > 0 ? JSON.stringify(rows) : 'No new fish or plants have arrived at either branch in the last few days.';
+    }
     case 'list_items_in_category': {
       const categoryCode = String(input.category_code ?? '').trim();
       if (!categoryCode) return 'No category code provided.';
@@ -4156,6 +4170,7 @@ export const READ_ONLY_TOOL_NAMES = [
   'search_items',
   'list_categories',
   'list_aquarium_sets',
+  'list_new_arrivals',
   'list_items_in_category',
   'compute_aquarium_quote',
   'compute_sump_quote',

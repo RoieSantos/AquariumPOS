@@ -28,6 +28,7 @@
 
       <nav class="land-nav" id="landingNav" aria-label="Main">
         <a class="land-nav-link" href="#offer">What we offer</a>
+        <a class="land-nav-link" href="#new-arrivals" id="landingNewArrivalsNavLink" hidden>New arrivals</a>
         <a class="land-nav-link" href="#best-sellers" id="landingBestNavLink" hidden>Best sellers</a>
         <a class="land-nav-link" href="#shop" id="landingShopNavLink" hidden>Shop</a>
         <a class="land-nav-link" href="#builds">Custom builds</a>
@@ -115,6 +116,16 @@
       <div class="land-pill-more-row">
         <button class="land-pill-more" id="landingPillsMoreBtn" type="button" hidden>Show all categories</button>
       </div>
+    </div>
+  </section>
+
+  <!-- Fish / plants received at a store in the last few days (js/landing.js loadNewArrivals,
+       sql/supabase_new_arrivals.sql public_get_new_arrivals) - no prices, per request. -->
+  <section class="land-section land-visit" id="landingNewArrivalsSection" hidden>
+    <div class="land-wrap" id="new-arrivals">
+      <h2 class="land-section-title">📣 New Arrivals</h2>
+      <p class="land-section-sub">Fresh fish and plants that just arrived at our stores. Visit us or message us to reserve yours!</p>
+      <div class="land-product-grid" id="landingNewArrivalsGrid"></div>
     </div>
   </section>
 
@@ -228,7 +239,7 @@
   <script src="js/config.js"></script>
   <script src="js/supabaseClient.js"></script>
   <script src="js/companyBranding.js"></script>
-  <script src="js/landing.js?v=8"></script>
+  <script src="js/landing.js?v=9"></script>
   <script>
     document.getElementById('landingYear').textContent = new Date().getFullYear();
   </script>
