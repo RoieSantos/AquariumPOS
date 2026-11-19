@@ -89,6 +89,18 @@ export async function storedPayoutApi(supabase: any, payoutId: string): Promise<
   return data === 'v3' ? 'v3' : 'v2';
 }
 
+// v3 requires recipient.address.street_line_1 and city in live (the docs say optional - first live owner withdrawal
+// 2026-11-19 got API_VALIDATION_ERROR without them). We don't keep structured addresses for employees / owner
+// accounts, so every v3 payout carries RS Pet Stop's registered (BIR 2303) address - the same one on the Xendit
+// account and the website footer.
+const PAYOUT_ADDRESS = {
+  country: 'PH',
+  street_line_1: 'Blk 17 Lot 16 Masson St., Pineview Filinvest, Sahud Ulan',
+  city: 'Tanza',
+  province_state: 'Cavite',
+  postal_code: '4108'
+};
+
 function splitName(full: string): { given: string; surname: string } {
   const words = String(full ?? '').trim().split(/\s+/).filter(Boolean);
   if (words.length <= 1) return { given: (words[0] ?? '-').slice(0, 50), surname: (words[0] ?? '-').slice(0, 50) };
@@ -151,7 +163,7 @@ export async function createPayout(key: string, idempotencyKey: string, payout: 
           given_name: name.given,
           surname: name.surname,
           relationship: payout.relationship ?? 'EMPLOYEE',
-          address: { country: 'PH' },
+          address: PAYOUT_ADDRESS,
           account_details: {
             currency: 'PHP',
             account_country: 'PH',
