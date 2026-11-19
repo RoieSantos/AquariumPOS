@@ -79,9 +79,9 @@
 
       <div class="card" style="margin-bottom:16px;">
         <h2 style="margin-top:0;">Payment channels</h2>
-        <p class="muted" style="margin-top:0;">What Xendit says is activated on the account for the current mode (live or test). Activate more in the Xendit dashboard under Settings &gt; Payment Channels. The list is refreshed from Xendit at most every 10 minutes.</p>
-        <button class="btn btn-secondary" id="checkChannelsBtn" type="button">Check channels</button>
-        <div id="channelsResult" style="margin-top:10px;"></div>
+        <!-- The "Check channels" button used GET /payment_channels, which Xendit counts as a legacy API (USD 250 /
+             month maintenance fee - ticket 2805116), so it's gone. Edge Function xendit-channels is no longer called. -->
+        <p class="muted" style="margin:0;">See which payment channels are activated in the Xendit Dashboard under Settings &gt; Payment Channels (live and test mode separately). The portal no longer asks Xendit for this list, because Xendit counts that as a legacy API with a monthly fee.</p>
       </div>
 
       <div class="toolbar">
@@ -118,7 +118,7 @@
   <script src="js/supabaseClient.js"></script>
   <script src="js/auth.js?v=payoutreceipt1"></script>
   <script src="js/nav.js?v=movingitems1"></script>
-  <script src="js/xenditPayments.js?v=xdelivery1"></script>
+  <script src="js/xenditPayments.js?v=nolegacy1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

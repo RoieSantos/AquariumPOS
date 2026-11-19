@@ -25,23 +25,41 @@ function auth(key: string) {
 
 export type XenditResult = { ok: boolean; status: number; body: any };
 
-// v3 wants a routing pair instead of v2's channel_code - and Xendit (ticket 2805116, 2026-11-18) says v2 codes
-// must NOT be reused as v3 values. So only pairs Xendit itself documents are here; any other channel returns null
-// and stays on v2. Add a row only once Xendit confirms it (and a test payout succeeds):
-//   PH_GCASH - WALLET + PH_GCASH (Create Payout v3 example)
-//   PH_BDO   - SWIFT + BNORPHMM (Create Payout v3 example)
-//   Maya (PH_PAYMAYA) - WALLET + ? (value not confirmed yet); BPI (PH_BPI) - SWIFT + ? (not confirmed yet)
-const V3_ROUTING: Record<string, { type: string; value: string }> = {
-  PH_GCASH: { type: 'WALLET', value: 'PH_GCASH' },
-  PH_BDO: { type: 'SWIFT', value: 'BNORPHMM' }
-};
-export function v3Routing(channelCode: string): { type: string; value: string } | null {
-  return V3_ROUTING[String(channelCode ?? '').trim().toUpperCase()] ?? null;
+// Where a payout can go, and its v3 routing pair. v3 uses routing_type_1 / routing_value_1 instead of v2's
+// channel_code, and v2 codes must NOT be reused as v3 values. The pairs below are the ones Xendit support
+// confirmed (ticket 2805116, 2026-11-19). `code` is what Payroll Setup saves (StaffUsers.PayoutChannelCode) and the
+// owner accounts secret uses: the v2 channel code where there is one; v3Only = no v2 code, v3 only.
+// Add a row only once Xendit confirms its pair (and a test payout succeeds); keep
+// sql/supabase_xendit_payout_channels_v3_check.sql's list in step.
+// Also replaces GET /payouts_channels (legacy - no v3 equivalent) for the Payroll Setup list once on v3.
+export const PH_PAYOUT_DESTINATIONS: { code: string; name: string; category: 'EWALLET' | 'BANK'; type: string; value: string; v3Only?: boolean }[] = [
+  { code: 'PH_GCASH', name: 'GCash', category: 'EWALLET', type: 'WALLET', value: 'PH_GCASH' },
+  { code: 'PH_PAYMAYA', name: 'Maya (PayMaya Wallet)', category: 'EWALLET', type: 'WALLET', value: 'PH_PAYMAYA' },
+  { code: 'PH_BPI', name: 'BPI', category: 'BANK', type: 'SWIFT', value: 'BPGOPHM1' },
+  { code: 'PH_BDO', name: 'BDO Unibank', category: 'BANK', type: 'SWIFT', value: 'BNORPHMM' },
+  { code: 'PH_BDO_NETWORK_BANK', name: 'BDO Network Bank', category: 'BANK', type: 'SWIFT', value: 'ONNRPHM1', v3Only: true },
+  { code: 'PH_MAYA_BANK', name: 'Maya Bank', category: 'BANK', type: 'SWIFT', value: 'PAPHPHM1', v3Only: true }
+];
+
+function destination(channelCode: string) {
+  const code = String(channelCode ?? '').trim().toUpperCase();
+  return PH_PAYOUT_DESTINATIONS.find((d) => d.code === code) ?? null;
 }
 
-// The API a NEW payout should use.
+export function v3Routing(channelCode: string): { type: string; value: string } | null {
+  const d = destination(channelCode);
+  return d ? { type: d.type, value: d.value } : null;
+}
+
+export function isV3Setting(setting: string | null): boolean {
+  return String(setting ?? '').trim().toLowerCase() === 'v3';
+}
+
+// The API a NEW payout should use. A v3-only destination always goes to v3 (v2 has no code for it).
 export function chooseApi(setting: string | null, channelCode: string): PayoutApi {
-  return String(setting ?? '').trim().toLowerCase() === 'v3' && v3Routing(channelCode) ? 'v3' : 'v2';
+  const d = destination(channelCode);
+  if (d?.v3Only) return 'v3';
+  return isV3Setting(setting) && d ? 'v3' : 'v2';
 }
 
 export async function readPayoutApiSetting(supabase: any): Promise<string> {

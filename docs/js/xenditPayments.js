@@ -295,7 +295,7 @@ async function checkChannels() {
   document.getElementById('xenditLiveMode').addEventListener('change', renderLiveModeHint);
   document.getElementById('refreshBtn').addEventListener('click', loadPayments);
   document.getElementById('payLinkBtn').addEventListener('click', copyPayLink);
-  document.getElementById('checkChannelsBtn').addEventListener('click', checkChannels);
+  document.getElementById('checkChannelsBtn')?.addEventListener('click', checkChannels); // button removed (legacy /payment_channels)
   document.getElementById('searchBox').addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(loadPayments, 300);

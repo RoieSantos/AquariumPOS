@@ -18,8 +18,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { payoutKeyFor, readKeyFor } from '../_shared/xendit-keys.ts';
 import {
-  createPayout, findPayoutByReference, getPayout, listPayoutChannels, payoutApiFor, readPayoutApiSetting, recordArgs, storedPayoutApi,
-  xenditMessage
+  createPayout, findPayoutByReference, getPayout, isV3Setting, listPayoutChannels, PH_PAYOUT_DESTINATIONS, payoutApiFor,
+  readPayoutApiSetting, recordArgs, storedPayoutApi, xenditMessage
 } from '../_shared/xendit-payouts.ts';
 
 const CORS_HEADERS = {
@@ -69,6 +69,13 @@ Deno.serve(async (req) => {
 
   // ---------------------------------------------------------------- channels
   if (action === 'channels') {
+    // On v3: the destinations Xendit confirmed for v3 (no call to the legacy /payouts_channels at all).
+    if (isV3Setting(await readPayoutApiSetting(supabase))) {
+      const channels = PH_PAYOUT_DESTINATIONS
+        .map((d) => ({ code: d.code, name: d.name, category: d.category, min: null, max: null }))
+        .sort((a, b) => (a.category === b.category ? a.name.localeCompare(b.name) : a.category === 'EWALLET' ? -1 : 1));
+      return jsonResponse({ isTest, channels, api: 'v3' });
+    }
     const cached = channelCache.get(isTest);
     if (cached && Date.now() - cached.at < CHANNEL_CACHE_MS) return jsonResponse({ isTest, channels: cached.channels });
     const key = payoutKeyFor(isTest) ?? readKeyFor(isTest);
