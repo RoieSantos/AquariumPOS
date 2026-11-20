@@ -982,7 +982,10 @@ namespace AquariumPOS
         // which the normal sync sends up - the portal then frees its serials, delivery stops and makers
         // (supabase_advance_order_void.sql). Refused once the portal has it at Ready to Ship or later.
 
-        internal static void EnsureAdvanceOrderVoidColumns(SqlConnection connection)
+        // VoidCredit: set when the void kept the money as credit for a new order instead of refunding it
+        // (VoidOrderCredit.cs). VoidCreditUsed / VoidCreditUsedOn: how much of a void's money went to new
+        // orders, and which receipts.
+        internal static void EnsureAdvanceOrderVoidColumns(SqlConnection connection, SqlTransaction? tx = null)
         {
             using var cmd = new SqlCommand(@"
 IF OBJECT_ID('dbo.AdvanceOrderHeader', 'U') IS NOT NULL
@@ -997,7 +1000,26 @@ BEGIN
         ALTER TABLE dbo.AdvanceOrderHeader ADD VoidReason NVARCHAR(500) NULL;
     IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidRefund') IS NULL
         ALTER TABLE dbo.AdvanceOrderHeader ADD VoidRefund DECIMAL(18, 2) NULL;
-END", connection);
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidCredit') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidCredit DECIMAL(18, 2) NULL;
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidCreditUsed') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidCreditUsed DECIMAL(18, 2) NULL;
+    IF COL_LENGTH('dbo.AdvanceOrderHeader', 'VoidCreditUsedOn') IS NULL
+        ALTER TABLE dbo.AdvanceOrderHeader ADD VoidCreditUsedOn NVARCHAR(200) NULL;
+END", connection, tx);
+            cmd.ExecuteNonQuery();
+        }
+
+        // Same columns MainForm.SaveAdvanceOrder adds on first use - an older install may not have them yet.
+        internal static void EnsureCustomerTagColumns(SqlConnection connection)
+        {
+            using var cmd = new SqlCommand(@"
+IF COL_LENGTH('AdvanceOrderHeader', 'CustomerMobile') IS NULL
+    ALTER TABLE AdvanceOrderHeader ADD CustomerMobile NVARCHAR(30) NULL;
+IF COL_LENGTH('AdvanceOrderHeader', 'CustomerPsid') IS NULL
+    ALTER TABLE AdvanceOrderHeader ADD CustomerPsid NVARCHAR(100) NULL;
+IF COL_LENGTH('AdvanceOrderHeader', 'CustomerAddress') IS NULL
+    ALTER TABLE AdvanceOrderHeader ADD CustomerAddress NVARCHAR(500) NULL;", connection);
             cmd.ExecuteNonQuery();
         }
 
@@ -1201,7 +1223,8 @@ WHERE TransactionNo = @tn", conn))
                     }
                     if (rdr["IsVoid"] is bool alreadyVoid && alreadyVoid)
                     {
-                        MessageBox.Show(this, $"Advance order {receiptNo} is already voided.", "Void Order", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        rdr.Close();
+                        RefundHeldCredit(conn, transactionNo, receiptNo);
                         return;
                     }
                     if (rdr["DaysAgo"] == DBNull.Value)
@@ -1281,15 +1304,30 @@ GROUP BY StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode", conn))
             string refundLines = refunds.Count == 0
                 ? "  (no payment recorded - nothing to give back)"
                 : string.Join("\n", refunds.Select(r => $"  {r.TenderTypeCode}: P{r.Amount:N2}"));
+
+            // Refund the money, or keep it as credit for the customer's new order (VoidOrderCredit.cs) - per
+            // "they are voiding the transaction then the payment now is floating".
+            bool keepAsCredit = false;
+            if (totalRefund > 0m)
+            {
+                bool? choice = PromptRefundOrCredit(receiptNo, refundLines, totalRefund);
+                if (choice == null)
+                    return;
+                keepAsCredit = choice.Value;
+            }
+
             string portalNote = portal.Message is "OK" or "Not on the portal yet." or "Already voided on the portal." or ""
                 ? string.Empty
                 : $"\n\nNote: {portal.Message}";
             if (MessageBox.Show(this,
                     $"VOID advance order {receiptNo}{(string.IsNullOrWhiteSpace(customerName) ? "" : " - " + customerName)}?\n\n" +
                     $"Order total: P{netAmount:N2}\n" +
-                    $"Give back to the customer (full refund):\n{refundLines}\n" +
-                    $"Total refund: P{totalRefund:N2}\n" +
-                    (fromYesterday ? "This order is from yesterday - the refund comes out of TODAY's drawer and shows on today's EOD.\n" : string.Empty) +
+                    (keepAsCredit
+                        ? $"KEEP AS CREDIT - do NOT give the money back:\n{refundLines}\n" +
+                          $"Credit: P{totalRefund:N2} (use \"Voided Order Credit\" at checkout on the new order)\n"
+                        : $"Give back to the customer (full refund):\n{refundLines}\n" +
+                          $"Total refund: P{totalRefund:N2}\n" +
+                          (fromYesterday ? "This order is from yesterday - the refund comes out of TODAY's drawer and shows on today's EOD.\n" : string.Empty)) +
                     $"\nReason: {reason}\n\n" +
                     "This can't be undone. The void is recorded under your name." + portalNote,
                     "Confirm Void", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
@@ -1303,7 +1341,8 @@ GROUP BY StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode", conn))
                 using var tx = conn.BeginTransaction();
 
                 DateTime now = DateTime.Now;
-                foreach (var refund in refunds)
+                // Kept as credit: no refund rows - the money stays on this receipt until a new order takes it.
+                foreach (var refund in refunds.Where(_ => !keepAsCredit))
                 {
                     using var lineCmd = new SqlCommand(@"
 SELECT ISNULL(MAX([LineNo]), 0) + 1 FROM dbo.TransPaymentEntry
@@ -1333,12 +1372,13 @@ VALUES (@storeNo, @posTerminalNo, @transactionNo, @tenderTypeCode, @lineNo, @rec
 
                 using (var update = new SqlCommand(@"
 UPDATE dbo.AdvanceOrderHeader
-SET IsVoid = 1, VoidedAtUtc = SYSUTCDATETIME(), VoidedBy = @by, VoidReason = @reason, VoidRefund = @refund
+SET IsVoid = 1, VoidedAtUtc = SYSUTCDATETIME(), VoidedBy = @by, VoidReason = @reason, VoidRefund = @refund, VoidCredit = @credit
 WHERE TransactionNo = @tn AND IsVoid = 0", conn, tx))
                 {
                     update.Parameters.AddWithValue("@by", voidedBy.Length > 100 ? voidedBy.Substring(0, 100) : voidedBy);
                     update.Parameters.AddWithValue("@reason", reason.Length > 500 ? reason.Substring(0, 500) : reason);
-                    update.Parameters.AddWithValue("@refund", totalRefund);
+                    update.Parameters.AddWithValue("@refund", keepAsCredit ? 0m : totalRefund);
+                    update.Parameters.AddWithValue("@credit", keepAsCredit ? totalRefund : (object)DBNull.Value);
                     update.Parameters.AddWithValue("@tn", transactionNo);
                     if (update.ExecuteNonQuery() == 0)
                     {
@@ -1395,14 +1435,207 @@ IF OBJECT_ID('dbo.ItemSerialTracking', 'U') IS NOT NULL
                 Cursor = previousCursor;
             }
 
-            PrintAdvanceOrderVoidSlip(receiptNo, customerName, orderDescription, netAmount, refunds.Select(r => (r.TenderTypeCode, r.Amount)).ToList(), reason, voidedBy);
+            PrintAdvanceOrderVoidSlip(receiptNo, customerName, orderDescription, netAmount, refunds.Select(r => (r.TenderTypeCode, r.Amount)).ToList(), reason, voidedBy, keepAsCredit);
 
             MessageBox.Show(this,
                 $"Advance order {receiptNo} is VOIDED.\n\n" +
-                $"GIVE BACK TO THE CUSTOMER:\n{refundLines}\n" +
-                $"Total refund: P{totalRefund:N2}\n\n" +
+                (keepAsCredit
+                    ? $"KEPT AS CREDIT - do NOT give the money back:\n{refundLines}\n" +
+                      $"Credit: P{totalRefund:N2}\n\n" +
+                      "On the new order, press \"Voided Order Credit\" at checkout and pick this receipt.\n" +
+                      "If the customer wants the money back after all, press Void Order on this order again.\n\n"
+                    : $"GIVE BACK TO THE CUSTOMER:\n{refundLines}\n" +
+                      $"Total refund: P{totalRefund:N2}\n\n") +
                 syncNote,
                 "Order Voided", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            LoadAdvanceOrdersHeader(searchTextBox.Text);
+        }
+
+        // true = keep as credit, false = refund, null = cancel.
+        private bool? PromptRefundOrCredit(string receiptNo, string refundLines, decimal total)
+        {
+            using var dialog = new ThemedForm
+            {
+                Text = $"Void {receiptNo} - Payment",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ShowInTaskbar = false,
+                Size = new Size(560, 330),
+                BackColor = Color.White
+            };
+            var label = new Label
+            {
+                Text = $"The customer paid P{total:N2} on this order:\n{refundLines}\n\nWhat happens to the money?",
+                Location = new Point(16, 16),
+                Size = new Size(510, 130),
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+            var creditButton = new Button
+            {
+                Text = "Keep as credit for a NEW order\n(customer re-orders - money stays)",
+                Location = new Point(16, 160),
+                Size = new Size(250, 70),
+                BackColor = Color.DarkGreen,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                DialogResult = DialogResult.Yes
+            };
+            var refundButton = new Button
+            {
+                Text = "Refund - give the money\nback to the customer",
+                Location = new Point(276, 160),
+                Size = new Size(250, 70),
+                BackColor = Color.DarkRed,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                DialogResult = DialogResult.No
+            };
+            var cancelButton = new Button
+            {
+                Text = "Cancel",
+                Location = new Point(410, 240),
+                Size = new Size(116, 36),
+                BackColor = Color.Gray,
+                ForeColor = Color.White,
+                Font = new Font("Arial", 10, FontStyle.Bold),
+                DialogResult = DialogResult.Cancel
+            };
+            dialog.Controls.Add(label);
+            dialog.Controls.Add(creditButton);
+            dialog.Controls.Add(refundButton);
+            dialog.Controls.Add(cancelButton);
+            dialog.CancelButton = cancelButton;
+
+            return dialog.ShowDialog(this) switch
+            {
+                DialogResult.Yes => true,
+                DialogResult.No => false,
+                _ => null
+            };
+        }
+
+        // Void Order on an order that's already voided with credit still held: the customer wants the money
+        // back after all - refund what's left (VOID REFUND rows, like a normal void, dated now).
+        private void RefundHeldCredit(SqlConnection conn, string transactionNo, string receiptNo)
+        {
+            decimal held;
+            using (var cmd = new SqlCommand("SELECT VoidCredit FROM dbo.AdvanceOrderHeader WHERE TransactionNo = @tn", conn))
+            {
+                cmd.Parameters.AddWithValue("@tn", transactionNo);
+                var value = cmd.ExecuteScalar();
+                held = value == null || value == DBNull.Value ? 0m : Convert.ToDecimal(value);
+            }
+            var left = new List<(string StoreNo, string PosTerminalNo, string PaymentTransactionNo, string TenderTypeCode, decimal Amount)>();
+            if (held > 0m)
+            {
+                using var cmd = new SqlCommand(@"
+SELECT StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode, SUM(Amount) AS Amount
+FROM dbo.TransPaymentEntry WHERE ReceiptNo = @rc
+GROUP BY StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode
+HAVING SUM(Amount) > 0", conn);
+                cmd.Parameters.AddWithValue("@rc", receiptNo);
+                using var rdr = cmd.ExecuteReader();
+                while (rdr.Read())
+                    left.Add((rdr["StoreNo"]?.ToString() ?? "", rdr["POSTerminalNo"]?.ToString() ?? "", rdr["TransactionNo"]?.ToString() ?? "",
+                              rdr["TenderTypeCode"]?.ToString() ?? "", Convert.ToDecimal(rdr["Amount"])));
+            }
+            // Some of the credit may already be on a portal "New Order from Credit" - only the rest can go back.
+            if (left.Count > 0)
+            {
+                try
+                {
+                    var portal = Task.Run(() => OnlinefunctionsEvents.GetAdvanceOrderPortalCreditAsync(new[] { transactionNo })).GetAwaiter().GetResult();
+                    decimal allowed = VoidOrderCredit.AllowedAfterPortal(left.Sum(l => l.Amount), transactionNo, portal);
+                    decimal excess = left.Sum(l => l.Amount) - allowed;
+                    for (int i = left.Count - 1; i >= 0 && excess > 0m; i--)
+                    {
+                        decimal cut = Math.Min(left[i].Amount, excess);
+                        left[i] = (left[i].StoreNo, left[i].PosTerminalNo, left[i].PaymentTransactionNo, left[i].TenderTypeCode, left[i].Amount - cut);
+                        excess -= cut;
+                    }
+                    left.RemoveAll(l => l.Amount <= 0m);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this,
+                        $"Couldn't check advance order {receiptNo}'s credit on the portal, so nothing was refunded.\n\n" +
+                        $"The POS has to be online for this (the credit may already be used on the portal). Try again in a moment.\n\nError: {ex.Message}",
+                        "Refund Credit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            if (left.Count == 0)
+            {
+                MessageBox.Show(this, $"Advance order {receiptNo} is already voided" + (held > 0m ? " and its credit is all used." : "."),
+                    "Void Order", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            decimal total = left.Sum(l => l.Amount);
+            string lines = string.Join("\n", left.Select(l => $"  {l.TenderTypeCode}: P{l.Amount:N2}"));
+            if (MessageBox.Show(this,
+                    $"Advance order {receiptNo} is voided and P{total:N2} is still kept as credit:\n{lines}\n\n" +
+                    "REFUND it now (give the money back to the customer)?\n\n" +
+                    "The refund comes out of TODAY's drawer. Recorded under your name.",
+                    "Refund Credit", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+
+            string by = CurrentUser.Username ?? "POS_SYSTEM";
+            try
+            {
+                using var tx = conn.BeginTransaction();
+                DateTime now = DateTime.Now;
+                foreach (var l in left)
+                {
+                    using var lineCmd = new SqlCommand(@"
+SELECT ISNULL(MAX([LineNo]), 0) + 1 FROM dbo.TransPaymentEntry
+WHERE StoreNo = @storeNo AND POSTerminalNo = @posTerminalNo AND TransactionNo = @transactionNo", conn, tx);
+                    lineCmd.Parameters.AddWithValue("@storeNo", l.StoreNo);
+                    lineCmd.Parameters.AddWithValue("@posTerminalNo", l.PosTerminalNo);
+                    lineCmd.Parameters.AddWithValue("@transactionNo", l.PaymentTransactionNo);
+                    int lineNo = Convert.ToInt32(lineCmd.ExecuteScalar());
+
+                    using var insert = new SqlCommand(@"
+INSERT INTO dbo.TransPaymentEntry (StoreNo, POSTerminalNo, TransactionNo, TenderTypeCode, [LineNo], ReceiptNo, Description, Amount, UserID, Date, Time, CreatedDate)
+VALUES (@storeNo, @posTerminalNo, @transactionNo, @tenderTypeCode, @lineNo, @receiptNo, 'VOID REFUND', @amount, @userID, @date, @time, @createdDate)", conn, tx);
+                    insert.Parameters.AddWithValue("@storeNo", l.StoreNo);
+                    insert.Parameters.AddWithValue("@posTerminalNo", l.PosTerminalNo);
+                    insert.Parameters.AddWithValue("@transactionNo", l.PaymentTransactionNo);
+                    insert.Parameters.AddWithValue("@tenderTypeCode", l.TenderTypeCode);
+                    insert.Parameters.AddWithValue("@lineNo", lineNo);
+                    insert.Parameters.AddWithValue("@receiptNo", receiptNo);
+                    insert.Parameters.AddWithValue("@amount", -l.Amount);
+                    insert.Parameters.AddWithValue("@userID", by);
+                    insert.Parameters.AddWithValue("@date", now.Date);
+                    insert.Parameters.AddWithValue("@time", now.TimeOfDay);
+                    insert.Parameters.AddWithValue("@createdDate", now);
+                    insert.ExecuteNonQuery();
+                }
+                using (var update = new SqlCommand("UPDATE dbo.AdvanceOrderHeader SET VoidRefund = ISNULL(VoidRefund, 0) + @amt WHERE TransactionNo = @tn", conn, tx))
+                {
+                    update.Parameters.AddWithValue("@amt", total);
+                    update.Parameters.AddWithValue("@tn", transactionNo);
+                    update.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Couldn't refund the credit - nothing was changed.\n\nError: {ex.Message}", "Refund Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            string syncReceipt = receiptNo;
+            _ = Task.Run(async () =>
+            {
+                try { await OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync(syncReceipt).ConfigureAwait(false); }
+                catch (Exception syncEx) { System.Diagnostics.Debug.WriteLine($"Refund credit sync failed for {syncReceipt}: {syncEx.Message}"); }
+            });
+            PrintAdvanceOrderVoidSlip(receiptNo, string.Empty, string.Empty, 0m, left.Select(l => (l.TenderTypeCode, l.Amount)).ToList(),
+                "Credit refunded to the customer", by, keptAsCredit: false);
+            MessageBox.Show(this, $"GIVE BACK TO THE CUSTOMER:\n{lines}\n\nTotal refund: P{total:N2}", "Credit Refunded", MessageBoxButtons.OK, MessageBoxIcon.Information);
             LoadAdvanceOrdersHeader(searchTextBox.Text);
         }
 
@@ -1476,7 +1709,7 @@ IF OBJECT_ID('dbo.ItemSerialTracking', 'U') IS NOT NULL
         // Paper record for the drawer: what was given back, why, and who did it (same layout as the
         // income / expense receipts in FunctionEvents). Best-effort - the void itself is already saved.
         private void PrintAdvanceOrderVoidSlip(string receiptNo, string customerName, string orderDescription, decimal netAmount,
-            List<(string TenderTypeCode, decimal Amount)> refunds, string reason, string voidedBy)
+            List<(string TenderTypeCode, decimal Amount)> refunds, string reason, string voidedBy, bool keptAsCredit = false)
         {
             try
             {
@@ -1496,14 +1729,21 @@ IF OBJECT_ID('dbo.ItemSerialTracking', 'U') IS NOT NULL
                     slip.AppendLine($"Customer: {customerName}");
                 slip.AppendLine($"Order total: P{netAmount,8:F2}");
                 slip.AppendLine(new string('-', width));
-                slip.AppendLine("REFUNDED:");
+                slip.AppendLine(keptAsCredit ? "KEPT AS CREDIT:" : "REFUNDED:");
                 foreach (var refund in refunds)
                 {
                     string tender = refund.TenderTypeCode.Length > 9 ? refund.TenderTypeCode.Substring(0, 9) : refund.TenderTypeCode;
                     slip.AppendLine($"{tender.PadRight(Math.Max(0, width - 11))}P{refund.Amount,9:F2}");
                 }
                 slip.AppendLine(new string('-', width));
-                slip.AppendLine($"TOTAL REFUND:  P{refunds.Sum(r => r.Amount),8:F2}");
+                slip.AppendLine(keptAsCredit
+                    ? $"TOTAL CREDIT:  P{refunds.Sum(r => r.Amount),8:F2}"
+                    : $"TOTAL REFUND:  P{refunds.Sum(r => r.Amount),8:F2}");
+                if (keptAsCredit)
+                {
+                    slip.AppendLine("NOT given back - for the");
+                    slip.AppendLine("customer's new order.");
+                }
                 slip.AppendLine();
                 slip.AppendLine("Reason:");
                 foreach (string chunk in ChunkText(reason, width))

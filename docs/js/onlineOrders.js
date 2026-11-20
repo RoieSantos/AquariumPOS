@@ -6674,9 +6674,14 @@ function orderReturnRowHtml(r) {
   const isReplacement = r.replacement_order_id === openCardOrderId;
   const canReceive = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isStoreManager);
   const canCancel = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isSalesUser || s.isStoreManager);
-  const canRefund = !isReplacement && r.status === 'Received' && Number(r.refund_due) > 0 && !r.refunded_at_utc && s.isSuperUser;
+  // Many lines -> one item (sql/supabase_online_order_returns_multi.sql): the refund sits on the group's first
+  // row and is recorded once every row of the group is received.
+  const groupReceived = r.group_all_received === undefined || r.group_all_received === null ? r.status === 'Received' : r.group_all_received;
+  const canRefund = !isReplacement && r.status === 'Received' && groupReceived && Number(r.refund_due) > 0 && !r.refunded_at_utc && s.isSuperUser;
   const details = [
     `${Number(r.quantity)} x ${escapeHtml(r.description || '-')}`,
+    r.serial_nos ? `serial ${escapeHtml(r.serial_nos)}` : '',
+    r.return_group && r.return_group !== r.return_no ? `part of ${escapeHtml(r.return_group)}` : '',
     r.resolution === 'Exchange'
       ? `exchange for ${r.new_quantity} x ${escapeHtml(r.new_description || '-')}`
       : 'refund',
@@ -6703,14 +6708,87 @@ function renderOrderCardReturns() {
   document.getElementById('ocReturnsList').innerHTML = cardReturns.map(orderReturnRowHtml).join('');
 }
 
+// staff_list_order_return_lines rows for the dialog's order.
+let returnLinesData = [];
+
+async function loadReturnLines(orderNo) {
+  const box = document.getElementById('returnLines');
+  box.innerHTML = '<div class="muted">Loading...</div>';
+  const { data, error } = await supabaseClient.rpc('staff_list_order_return_lines', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_order_id: orderNo
+  });
+  if (returnOrderNo !== orderNo) return;
+  if (error) {
+    returnLinesData = [];
+    box.innerHTML = `<div class="error-text">${escapeHtml(/could not find the function|schema cache/i.test(error.message)
+      ? `${error.message} - run sql/supabase_online_order_returns_multi.sql.` : error.message)}</div>`;
+    return;
+  }
+  returnLinesData = data || [];
+  renderReturnLines();
+}
+
+// One row per order line: tick it, then how many (or, for a serial-tracked item, which serials come back).
+function renderReturnLines() {
+  const box = document.getElementById('returnLines');
+  if (!returnLinesData.length) {
+    box.innerHTML = '<div class="muted">This order has no lines.</div>';
+    return;
+  }
+  box.innerHTML = returnLinesData.map((l) => {
+    const id = escapeHtml(String(l.line_id));
+    const left = Number(l.returnable) || 0;
+    const blocked = !l.returnable_here ? (l.why_not || 'Can\'t be returned here.') : left <= 0 ? 'Already fully returned.' : '';
+    const serials = Array.isArray(l.serials) ? l.serials : [];
+    const credit = hidePrices() ? '' : ` · ${money(l.unit_credit)} each`;
+    let extra = '';
+    if (!blocked && l.needs_serial) {
+      extra = serials.length
+        ? `<div data-return-serials="${id}" class="hidden" style="margin-top:6px;">
+             <small>Tick the serial(s) coming back:</small>
+             ${serials.map((s) => `<label style="display:block; font-weight:normal;"><input type="checkbox" data-return-serial="${id}" value="${Number(s.running_serial_no)}" />
+               ${escapeHtml(s.serial_no)}${s.variant_code ? ` <small>${escapeHtml(s.variant_code)}</small>` : ''}</label>`).join('')}
+           </div>`
+        : '<div class="error-text" style="margin-top:4px;">No serial is tagged SOLD to this order for this item - tag it on Serial Tracker first.</div>';
+    } else if (!blocked) {
+      extra = `<div data-return-qty-wrap="${id}" class="hidden" style="margin-top:6px;">
+                 <small>How many: </small><input type="number" data-return-qty="${id}" min="1" max="${left}" step="1" value="1" style="width:80px;" /> <small>of ${left}</small>
+               </div>`;
+    }
+    return `<div class="oo-sb-part" style="display:block;${blocked ? ' opacity:.6;' : ''}">
+      <label style="display:flex; gap:10px; align-items:center; cursor:pointer;">
+        <input type="checkbox" data-return-line="${id}" ${blocked || (l.needs_serial && !serials.length) ? 'disabled' : ''} />
+        <span><b>${escapeHtml(`${Number(l.quantity)} x ${l.description || '-'}`)}</b>
+          <small>${l.needs_serial ? 'Serial-tracked · ' : ''}${left} can be returned${credit}${blocked ? ` · ${escapeHtml(blocked)}` : ''}</small></span>
+      </label>
+      ${extra}
+    </div>`;
+  }).join('');
+}
+
+// [{line_id, quantity, serials}] for the ticked lines.
+function returnPickedLines() {
+  return Array.from(document.querySelectorAll('#returnLines input[data-return-line]:checked')).map((cb) => {
+    const id = cb.dataset.returnLine;
+    const line = returnLinesData.find((l) => String(l.line_id) === id) || {};
+    if (line.needs_serial) {
+      const serials = Array.from(document.querySelectorAll('#returnLines input[data-return-serial]:checked'))
+        .filter((s) => s.dataset.returnSerial === id).map((s) => Number(s.value));
+      return { line_id: id, quantity: serials.length, serials };
+    }
+    const qtyInput = Array.from(document.querySelectorAll('#returnLines input[data-return-qty]')).find((q) => q.dataset.returnQty === id);
+    return { line_id: id, quantity: Number(qtyInput?.value), serials: [] };
+  });
+}
+
 function openReturnDialog() {
   if (!openCardOrderId) return;
   returnOrderNo = openCardOrderId;
-  const select = document.getElementById('returnLine');
-  select.innerHTML = cardLines.filter((l) => l.line_id).map((l) =>
-    `<option value="${escapeHtml(String(l.line_id))}" data-qty="${Number(l.quantity) || 1}">${escapeHtml(`${l.quantity ?? ''} x ${l.description || l.item_code || '-'}`)}</option>`).join('');
+  returnLinesData = [];
+  loadReturnLines(returnOrderNo);
   document.getElementById('returnTitle').textContent = `Order ${returnOrderNo}`;
-  document.getElementById('returnQty').value = '1';
   document.getElementById('returnNewQty').value = '1';
   document.getElementById('returnReason').value = '';
   document.getElementById('returnResolution').value = 'Exchange';
@@ -6762,8 +6840,7 @@ function returnFormArgs(dryRun) {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_order_id: returnOrderNo,
-    p_line_id: document.getElementById('returnLine').value,
-    p_quantity: Number(document.getElementById('returnQty').value),
+    p_lines: returnPickedLines(),
     p_reason: document.getElementById('returnReason').value.trim() || null,
     p_resolution: resolution,
     p_new_variation_id: exchange ? document.querySelector('#returnOptions input[name="returnPick"]:checked')?.value || null : null,
@@ -6778,11 +6855,12 @@ async function refreshReturnPreview() {
   const args = returnFormArgs(true);
   const generation = ++returnPreviewGeneration;
   errorEl.classList.add('hidden');
-  if (!args.p_line_id || (args.p_resolution === 'Exchange' && !args.p_new_variation_id)) {
+  if (!args.p_lines.length || args.p_lines.some((l) => !Number.isInteger(l.quantity) || l.quantity < 1)
+      || (args.p_resolution === 'Exchange' && !args.p_new_variation_id)) {
     box.classList.add('hidden');
     return;
   }
-  const { data, error } = await supabaseClient.rpc('staff_create_order_return', args);
+  const { data, error } = await supabaseClient.rpc('staff_create_order_return_multi', args);
   if (generation !== returnPreviewGeneration || !returnOrderNo) return;
   if (error) {
     box.classList.add('hidden');
@@ -6791,7 +6869,7 @@ async function refreshReturnPreview() {
     return;
   }
   const rows = hidePrices() ? [] : [
-    `Credit for the returned item: ${money(data.credit)}`,
+    `Credit for the returned item${args.p_lines.length > 1 ? 's' : ''}: ${money(data.credit)}`,
     args.p_resolution === 'Exchange' ? `New item: ${money(data.new_total)}` : '',
     Number(data.customer_pays) > 0 ? `<b>Customer pays ${money(data.customer_pays)}</b>` : '',
     Number(data.refund_due) > 0 ? `<b>Refund due ${money(data.refund_due)}</b>` : '',
@@ -6808,8 +6886,13 @@ async function saveReturn() {
   const errorEl = document.getElementById('returnError');
   const showError = (msg) => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
   const args = returnFormArgs(false);
-  if (!args.p_line_id) return showError('Pick the item being returned.');
-  if (!Number.isInteger(args.p_quantity) || args.p_quantity < 1) return showError('Quantity must be a whole number, 1 or more.');
+  if (!args.p_lines.length) return showError('Tick at least one item being returned.');
+  for (const l of args.p_lines) {
+    const line = returnLinesData.find((x) => String(x.line_id) === l.line_id) || {};
+    if (line.needs_serial && !l.serials.length) return showError(`Tick the serial(s) coming back for ${line.description || 'the serial-tracked item'}.`);
+    if (!Number.isInteger(l.quantity) || l.quantity < 1) return showError('Quantity must be a whole number, 1 or more.');
+    if (l.quantity > Number(line.returnable)) return showError(`Only ${Number(line.returnable)} of ${line.description || 'that line'} can be returned.`);
+  }
   if (!args.p_reason) return showError('A reason is required.');
   if (args.p_resolution === 'Exchange') {
     if (!args.p_new_variation_id) return showError('Pick the item they\'re exchanging it for.');
@@ -6818,13 +6901,14 @@ async function saveReturn() {
   const btn = document.getElementById('saveReturnBtn');
   btn.disabled = true;
   errorEl.classList.add('hidden');
-  const { data, error } = await supabaseClient.rpc('staff_create_order_return', args);
+  const { data, error } = await supabaseClient.rpc('staff_create_order_return_multi', args);
   btn.disabled = false;
   if (error) return showError(returnMissingSetupMessage(error.message));
   closeReturnDialog();
   if (openCardOrderId === orderNo) loadOrderCardReturns(orderNo);
   await refreshCurrentOrders();
-  alert(`${data.return_no} saved.${data.replacement_order_id ? `\nReplacement order: ${data.replacement_order_id}` : ''}\nThe customer is NOT messaged.`);
+  const nos = (data.return_nos || [data.return_no]).join(', ');
+  alert(`${nos} saved.${data.replacement_order_id ? `\nReplacement order: ${data.replacement_order_id}` : ''}\nReceive each returned item when it arrives.\nThe customer is NOT messaged.`);
 }
 
 function openReturnReceiveDialog(r) {
@@ -6909,7 +6993,10 @@ async function saveReturnReceive() {
 }
 
 async function cancelOrderReturn(r) {
-  const note = window.prompt(`Cancel ${r.return_no}? Reason (required):`);
+  const group = r.return_group && cardReturns.filter((x) => x.return_group === r.return_group).length > 1 ? r.return_group : null;
+  const note = window.prompt(group
+    ? `Cancel ${group}? This cancels every item on it (they share one replacement order). Reason (required):`
+    : `Cancel ${r.return_no}? Reason (required):`);
   if (note === null) return;
   const { error } = await supabaseClient.rpc('staff_cancel_order_return', {
     p_admin_username: currentSession.username,
@@ -6958,8 +7045,19 @@ function wireReturnDialogs() {
     document.getElementById('returnExchangeFields').classList.toggle('hidden', e.target.value !== 'Exchange');
     refreshReturnPreview();
   });
-  ['returnLine', 'returnQty', 'returnNewQty', 'returnOptions'].forEach((id) =>
+  ['returnNewQty', 'returnOptions'].forEach((id) =>
     document.getElementById(id).addEventListener('change', refreshReturnPreview));
+  // Ticking a line shows its quantity / serial picker; any change re-prices the preview.
+  document.getElementById('returnLines').addEventListener('change', (e) => {
+    const lineCb = e.target.closest('input[data-return-line]');
+    if (lineCb) {
+      const id = lineCb.dataset.returnLine;
+      document.querySelectorAll('#returnLines [data-return-qty-wrap], #returnLines [data-return-serials]').forEach((el) => {
+        if ((el.dataset.returnQtyWrap || el.dataset.returnSerials) === id) el.classList.toggle('hidden', !lineCb.checked);
+      });
+    }
+    refreshReturnPreview();
+  });
   document.getElementById('saveReturnBtn').addEventListener('click', saveReturn);
   document.getElementById('cancelReturnBtn').addEventListener('click', closeReturnDialog);
   document.getElementById('closeReturnBtn').addEventListener('click', closeReturnDialog);
@@ -8634,7 +8732,17 @@ function advanceVoidText(transactionNo) {
   return [
     `Voided${v.voided_at ? ` ${advanceDateTime(v.voided_at)}` : ''}${v.voided_by ? ` by ${v.voided_by}` : ''}`,
     v.void_reason || '',
-    v.void_refund !== null && v.void_refund !== undefined ? `refunded P${Number(v.void_refund).toFixed(2)}` : ''
+    // Kept as credit for a new order (POS VoidOrderCredit.cs, sql/supabase_advance_order_void_credit.sql) -
+    // "refunded P0.00" would be misleading then.
+    v.void_credit !== null && v.void_credit !== undefined
+      ? `kept as credit P${Number(v.void_credit).toFixed(2)}`
+      : (v.void_refund !== null && v.void_refund !== undefined ? `refunded P${Number(v.void_refund).toFixed(2)}` : ''),
+    v.void_credit !== null && v.void_credit !== undefined && Number(v.void_refund) > 0 ? `credit refunded P${Number(v.void_refund).toFixed(2)}` : '',
+    Number(v.void_credit_used) > 0
+      ? `P${Number(v.void_credit_used).toFixed(2)} used on ${v.void_credit_used_on || 'a new order'}`
+      : '',
+    // What New Order from Credit / the POS tender can still use (sql/supabase_advance_order_credit_order.sql).
+    Number(v.void_credit_left) > 0 ? `credit left P${Number(v.void_credit_left).toFixed(2)}` : ''
   ].filter(Boolean).join(' · ');
 }
 
@@ -9141,7 +9249,15 @@ function updateAdvanceCardActions(o) {
   document.getElementById('advanceCardMarkPaidBtn').classList.toggle('hidden',
     !currentSession?.isSuperUser || voided || o.fully_paid || !(Number(o.balance) > 0));
   document.getElementById('advanceCardAddCodBtn').classList.toggle('hidden', !canAddAdvanceCodItems(o));
+  document.getElementById('advanceCardNewFromCreditBtn').classList.toggle('hidden', !canNewOrderFromCredit(o));
   document.getElementById('advanceCardBody').classList.toggle('no-factbox', !canAssignOrders());
+}
+
+// Voided with credit left (sql/supabase_advance_order_credit_order.sql) - same roles as + Add COD Items.
+function canNewOrderFromCredit(o) {
+  const v = o && advanceVoidByNo.get(String(o.transaction_no));
+  return !!(currentSession?.isSuperUser || currentSession?.isSalesUser || currentSession?.isProductionManager)
+    && !!v && advanceStatus(o) === 'Voided' && Number(v.void_credit_left) > 0;
 }
 
 // ---- Add COD Items (#advCodDialog): per "they want to add new products but it will be COD". The items go on a
@@ -9184,13 +9300,26 @@ async function loadAdvanceCardAddOns(transactionNo) {
   tab.classList.remove('hidden');
 }
 
-async function openAdvCodDialog(transactionNo) {
+// 'cod' = + Add COD Items; 'credit' = New Order from Credit on a voided order (same dialog, the credit comes off
+// the new order's prices - sql/supabase_advance_order_credit_order.sql).
+let advCodMode = 'cod';
+let advCodCreditLeft = 0;
+
+async function openAdvCodDialog(transactionNo, mode = 'cod') {
   const no = String(transactionNo);
   advCodNo = no;
+  advCodMode = mode === 'credit' ? 'credit' : 'cod';
+  advCodCreditLeft = 0;
   advCodClientKey = `${no}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   advCodLines = [];
   advCodOptions = [];
-  document.getElementById('advCodTitle').textContent = `Advance order ${no}`;
+  const credit = advCodMode === 'credit';
+  document.getElementById('advCodCaption').textContent = credit ? 'NEW ORDER FROM CREDIT' : 'ADD COD ITEMS';
+  document.getElementById('advCodIntro').textContent = credit
+    ? 'Loading the credit...'
+    : 'These go on a new linked order with the full amount as COD. The advance order and its balance don\'t change.';
+  document.getElementById('advCodSaveBtn').textContent = credit ? 'Create Order' : 'Create COD Order';
+  document.getElementById('advCodTitle').textContent = credit ? `Voided advance order ${no}` : `Advance order ${no}`;
   document.getElementById('advCodSearch').value = '';
   document.getElementById('advCodQty').value = '1';
   document.getElementById('advCodPrice').value = '';
@@ -9209,11 +9338,36 @@ async function openAdvCodDialog(transactionNo) {
   document.getElementById('advCodDialog').classList.remove('hidden');
   document.getElementById('advCodSearch').focus();
 
-  const { data, error } = await advanceRpc('staff_get_advance_order_cod_addons', { p_no: no });
+  const [{ data, error }, creditRes] = await Promise.all([
+    advanceRpc('staff_get_advance_order_cod_addons', { p_no: no }),
+    credit ? advanceRpc('staff_get_advance_order_credit', { p_no: no }) : Promise.resolve(null)
+  ]);
   if (advCodNo !== no) return;
   if (error) {
     showAdvCodError(advCodMissingSetupMessage(error.message));
     return;
+  }
+  if (credit) {
+    if (creditRes.error) {
+      showAdvCodError(/could not find the function|schema cache/i.test(creditRes.error.message)
+        ? `${creditRes.error.message} - run sql/supabase_advance_order_credit_order.sql.` : creditRes.error.message);
+      return;
+    }
+    const c = creditRes.data || {};
+    advCodCreditLeft = Number(c.credit_left) || 0;
+    if (advCodCreditLeft <= 0) {
+      document.getElementById('advCodIntro').textContent = 'This voided order has no credit left.';
+      return;
+    }
+    if (c.needs_super_user && !currentSession?.isSuperUser) {
+      document.getElementById('advCodIntro').textContent = 'This order was voided as a REFUND - only a Super User can use it as credit.';
+      return;
+    }
+    document.getElementById('advCodIntro').textContent =
+      `${hidePrices() ? 'The credit' : `Credit ${money(advCodCreditLeft)}`} from this voided order comes off the new order's prices; `
+      + 'the customer pays the rest the usual way (pay link, COD, or Online Pay at the POS). Any credit left over stays for later.'
+      + (c.needs_super_user ? ' It was voided as a REFUND - only continue if the customer never took the money back.' : '');
+    renderAdvCodLines();
   }
   // Same name + address as the advance order's stop, so both group as one drop on the delivery calendar.
   if (data?.customer_name) document.getElementById('advCodCustomer').value = data.customer_name;
@@ -9397,8 +9551,12 @@ function renderAdvCodLines() {
         <button type="button" class="bc-link" data-adv-cod-remove="${index}">Remove</button>
       </div>`).join('')
     : '<div class="muted">No products added yet.</div>';
-  document.getElementById('advCodTotal').textContent = advCodLines.length && !hidePrices()
-    ? `COD total: ${money(advCodLines.reduce((sum, l) => sum + lineAmount(l), 0))}` : '';
+  const total = advCodLines.reduce((sum, l) => sum + lineAmount(l), 0);
+  const applied = Math.min(advCodCreditLeft, total);
+  document.getElementById('advCodTotal').textContent = !advCodLines.length || hidePrices() ? ''
+    : advCodMode === 'credit'
+      ? `Total ${money(total)} · credit −${money(applied)} · customer pays ${money(total - applied)}`
+      : `COD total: ${money(total)}`;
 }
 
 async function saveAdvCodDialog() {
@@ -9410,9 +9568,11 @@ async function saveAdvCodDialog() {
   const address = document.getElementById('advCodAddress').value.trim();
   if (fulfillment === 'Delivery' && !address) return showAdvCodError('Enter the delivery address.');
 
+  const credit = advCodMode === 'credit';
+  if (credit && advCodCreditLeft <= 0) return showAdvCodError('This voided order has no credit left.');
   const btn = document.getElementById('advCodSaveBtn');
   btn.disabled = true;
-  const { data, error } = await advanceRpc('staff_create_advance_order_cod_addon', {
+  const { data, error } = await advanceRpc(credit ? 'staff_create_order_from_void_credit' : 'staff_create_advance_order_cod_addon', {
     p_no: no,
     p_fulfillment: fulfillment,
     p_address: address || null,
@@ -9424,8 +9584,23 @@ async function saveAdvCodDialog() {
     p_customer_name: document.getElementById('advCodCustomer').value.trim() || null
   });
   btn.disabled = false;
-  if (error) return showAdvCodError(advCodMissingSetupMessage(error.message));
+  if (error) {
+    return showAdvCodError(credit && /could not find the function|schema cache/i.test(error.message)
+      ? `${error.message} - run sql/supabase_advance_order_credit_order.sql.` : advCodMissingSetupMessage(error.message));
+  }
   closeAdvCodDialog();
+  if (credit) {
+    // The badge / button read the void record - refresh it so "credit left" is current.
+    if (typeof loadAdvanceToFollow === 'function') await loadAdvanceToFollow([no]);
+    const row = advanceRowsByNo.get(no);
+    if (openAdvanceNo === no && row) updateAdvanceCardActions(row);
+    alert(`Created order ${data?.order_id}.`
+      + (hidePrices() ? '' : `\n\nCredit used: ${money(data?.credit_applied)}\nCustomer pays: ${money(data?.customer_pays)}`
+        + (Number(data?.credit_left) > 0 ? `\nCredit still left: ${money(data?.credit_left)}` : ''))
+      + `\n\n${fulfillment === 'Delivery' ? 'Schedule it on the delivery calendar as usual.' : 'At pickup, the cashier collects any balance with Online Pay on the POS using this order number.'}`
+      + '\nThe customer is NOT messaged.');
+    return;
+  }
   if (openAdvanceNo === no) loadAdvanceCardAddOns(no);
   alert(`Created order ${data?.order_id}${hidePrices() ? '' : ` with ${money(data?.total)} to collect as COD`}.\n\n`
     + (fulfillment === 'Delivery'
@@ -9435,6 +9610,7 @@ async function saveAdvCodDialog() {
 
 function wireAdvCodDialog() {
   document.getElementById('advanceCardAddCodBtn').addEventListener('click', () => openAdvanceNo && openAdvCodDialog(openAdvanceNo));
+  document.getElementById('advanceCardNewFromCreditBtn').addEventListener('click', () => openAdvanceNo && openAdvCodDialog(openAdvanceNo, 'credit'));
   let debounce = null;
   document.getElementById('advCodSearch').addEventListener('input', () => {
     clearTimeout(debounce);

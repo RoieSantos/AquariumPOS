@@ -4277,6 +4277,38 @@ ORDER BY [RunningSerialNo]", connection);
             return (ok, message);
         }
 
+        // Voided advance orders' credit as the portal sees it (pos_get_advance_order_credit,
+        // supabase_advance_order_credit_order.sql): how much "New Order from Credit" already used there, and what's
+        // left overall. Throws when the portal can't be reached - the POS then refuses to spend / refund the credit.
+        public static async Task<Dictionary<string, (bool Found, decimal PortalUsed, decimal Left)>> GetAdvanceOrderPortalCreditAsync(
+            IEnumerable<string> transactionNos, TimeSpan? timeout = null)
+        {
+            timeout ??= TimeSpan.FromSeconds(15);
+            var nos = transactionNos.Select(n => (n ?? string.Empty).Trim()).Where(n => n.Length > 0).Distinct().ToArray();
+            var result = new Dictionary<string, (bool Found, decimal PortalUsed, decimal Left)>(StringComparer.OrdinalIgnoreCase);
+            if (nos.Length == 0)
+                return result;
+
+            string respText = await PostJsonWithHeadersAsync(
+                AdvanceOrderRpcUrl("pos_get_advance_order_credit"),
+                JsonSerializer.Serialize(new { p_nos = nos }),
+                timeout.Value).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(respText) ? "[]" : respText);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException($"Unexpected reply from pos_get_advance_order_credit: {respText}");
+            foreach (var row in doc.RootElement.EnumerateArray())
+            {
+                string no = row.TryGetProperty("transaction_no", out var noProp) ? noProp.GetString() ?? string.Empty : string.Empty;
+                bool found = row.TryGetProperty("found", out var f) && f.ValueKind == JsonValueKind.True;
+                decimal used = row.TryGetProperty("portal_used", out var u) && u.ValueKind == JsonValueKind.Number ? u.GetDecimal() : 0m;
+                decimal left = row.TryGetProperty("credit_left", out var l) && l.ValueKind == JsonValueKind.Number ? l.GetDecimal() : 0m;
+                if (no.Length > 0)
+                    result[no] = (found, used, left);
+            }
+            return result;
+        }
+
         // Payments taken on the portal for an advance order that this POS hasn't written locally yet -
         // delivery remits and Super User "Mark Fully Paid" (pos_get_advance_order_portal_payments,
         // supabase_advance_order_portal_payments.sql). Throws when the portal can't be reached or the SQL
@@ -4483,8 +4515,10 @@ ORDER BY [RunningSerialNo]", connection);
             "CustomerMobile", "CustomerPsid", "CustomerAddress",
             // Void (AdvanceOrdersHeaderForm "Void Order", supabase_advance_order_void.sql). Only sent for a
             // voided order (see AdvanceOrderVoidColumns), so every other order keeps syncing on a Supabase
-            // that doesn't have these columns yet.
-            "IsVoid", "VoidedAtUtc", "VoidedBy", "VoidReason", "VoidRefund"
+            // that doesn't have these columns yet. VoidCredit / VoidCreditUsed / VoidCreditUsedOn: kept as credit for
+            // a new order (VoidOrderCredit.cs, supabase_advance_order_void_credit.sql).
+            "IsVoid", "VoidedAtUtc", "VoidedBy", "VoidReason", "VoidRefund",
+            "VoidCredit", "VoidCreditUsed", "VoidCreditUsedOn"
         };
 
         private static readonly HashSet<string> AdvanceOrderCustomerTagColumns = new(StringComparer.OrdinalIgnoreCase)
@@ -4494,7 +4528,8 @@ ORDER BY [RunningSerialNo]", connection);
 
         private static readonly HashSet<string> AdvanceOrderVoidColumns = new(StringComparer.OrdinalIgnoreCase)
         {
-            "IsVoid", "VoidedAtUtc", "VoidedBy", "VoidReason", "VoidRefund"
+            "IsVoid", "VoidedAtUtc", "VoidedBy", "VoidReason", "VoidRefund",
+            "VoidCredit", "VoidCreditUsed", "VoidCreditUsedOn"
         };
 
         // "Current warehouse" for tagging Advance Orders in the Portal - deliberately not persisted

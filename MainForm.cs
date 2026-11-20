@@ -29,6 +29,8 @@ namespace AquariumPOS
         public string TenderCode { get; set; } = "";
         public decimal Amount { get; set; }
         public DateTime PaymentTime { get; set; }
+        // TransPaymentEntry.Description when set (e.g. "CREDIT FROM <receipt>" - VoidOrderCredit.cs); else the receipt no.
+        public string? Description { get; set; }
     }
     public partial class MainForm : ThemedForm
     {
@@ -7740,6 +7742,7 @@ VALUES (@code, @description, @wholeSale, @disableChangePrice, @isProductionCateg
                             currentDiscountDescription = string.Empty;
                             grandTotal = 0;
                             payments.Clear();
+                            pendingVoidCredits.Clear();
                             totalPaid = 0;
                             currentReceiptNo = "";
                             currentTransNo = "";
@@ -17491,6 +17494,7 @@ END", connection);
         private void ClearButton_Click(object? sender, EventArgs e)
         {
             xenditOrderDescription = null;
+            pendingVoidCredits.Clear();
             salesListView.Items.Clear();
             currentTotal = 0;
             currentDiscount = 0;
@@ -17523,6 +17527,11 @@ END", connection);
             if (string.Equals(selectedItem.Tag?.ToString(), CardProcessingFeeTag, StringComparison.OrdinalIgnoreCase))
             {
                 MessageBox.Show("Card Processing Fee lines are managed automatically and cannot be removed manually.", "Protected Line", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (selectedItem.Name == VoidCreditLineName)
+            {
+                MessageBox.Show("Voided Order Credit lines can't be removed one by one. Use Void Transaction to start the sale again - the credit stays on the voided order.", "Protected Line", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
@@ -18179,6 +18188,25 @@ END", connection);
                             buttonPanel.Controls.Add(tenderButton);
                             buttonIndex++;
                         }
+
+                        // A voided advance order's payment, applied to this order (VoidOrderCredit.cs).
+                        if (!isReturnExchangeMode)
+                        {
+                            var creditButton = new Button
+                            {
+                                Text = "Voided Order Credit",
+                                Location = new Point(startX + (buttonIndex % buttonsPerRow) * (buttonWidth + spacing), startY + (buttonIndex / buttonsPerRow) * (buttonHeight + spacing)),
+                                Size = new Size(buttonWidth, buttonHeight),
+                                BackColor = Color.DarkOrange,
+                                ForeColor = Color.White,
+                                Font = new Font("Arial", 10, FontStyle.Bold),
+                                TextAlign = ContentAlignment.MiddleCenter,
+                                UseVisualStyleBackColor = false
+                            };
+                            creditButton.Click += ApplyVoidedOrderCredit_Click;
+                            buttonPanel.Controls.Add(creditButton);
+                            buttonIndex++;
+                        }
                     }
                 }
             }
@@ -18548,9 +18576,201 @@ END", connection);
                 currentReceiptNo = GenerateCentralizedReceiptNumber();
                 currentTransNo = GetNextTransactionNoPlusOne();
                 payments.Clear();
+                pendingVoidCredits.Clear();
                 totalPaid = 0;
                 //ShowPaymentMode();
             }
+        }
+
+        // ---- Voided Order Credit (VoidOrderCredit.cs): a voided advance order's payment applied to this sale /
+        // new advance order. Staged here as ordinary PAYMENT lines on the original tender(s); written to the
+        // voided order (use log, and the "CREDIT TO" move for a held credit) by RecordPaymentEntry once this
+        // sale's payments are recorded. A line whose payment never gets recorded (sale cleared) is just dropped.
+        private readonly List<VoidOrderCredit.Pending> pendingVoidCredits = new();
+        private const string VoidCreditLineName = "VOIDCREDIT";
+
+        private void ApplyVoidedOrderCredit_Click(object? sender, EventArgs e)
+        {
+            string flow = checkoutButton.Tag?.ToString() ?? string.Empty;
+            if (isReturnExchangeMode || flow == "EXPENSE_PENDING" || flow == "INCOME_PENDING")
+            {
+                MessageBox.Show(this, "Voided order credit can only pay for a sale or an advance order.", "Voided Order Credit", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            decimal remaining = currentTotal - currentDiscount - totalPaid;
+            if (remaining <= 0m)
+            {
+                MessageBox.Show(this, "Add the new order's items first - there is nothing left to pay.", "Voided Order Credit", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            List<VoidOrderCredit.Source> sources;
+            try
+            {
+                var staged = pendingVoidCredits
+                    .Where(p => payments.Contains(p.Payment))
+                    .GroupBy(p => VoidOrderCredit.Key(p.Source, p.Tender))
+                    .ToDictionary(g => g.Key, g => g.Sum(p => p.Payment.Amount));
+                // Capped by what the portal's "New Order from Credit" already used - so the POS has to be online.
+                sources = VoidOrderCredit.LoadAvailableCheckedWithPortal(connectionString, staged);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this,
+                    $"Couldn't load voided order credit: {ex.Message}\n\n" +
+                    "The POS has to be online for this (the credit can also be used on the portal, so it checks there first).",
+                    "Voided Order Credit", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            if (sources.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "No voided advance order has credit left.\n\n" +
+                    "Credit comes from orders voided with \"Keep as credit\", or orders voided with a refund in the last " +
+                    $"{VoidOrderCredit.RefundedCreditDays} days that the customer never took back.",
+                    "Voided Order Credit", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var source = PickVoidCreditSource(sources);
+            if (source == null)
+                return;
+
+            // Refunded void: the POS already shows the money as given back - only a Super User can say it wasn't.
+            string? approvedBy = null;
+            if (!source.Held)
+            {
+                if (MessageBox.Show(this,
+                        $"{source.ReceiptNo} was voided as a REFUND - the POS shows P{source.Available:N2} as given back to the customer.\n\n" +
+                        "Only continue if the customer did NOT actually take the money back (it is still in the drawer / account). " +
+                        "If they did, the drawer will be short at EOD.\n\nContinue? A Super User must approve.",
+                        "Refunded Void", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    return;
+                approvedBy = PromptManagerApproval("Approve using a refunded void as credit.");
+                if (approvedBy == null)
+                    return;
+            }
+
+            // Take from each tender until this sale is covered - never more than what's left to pay.
+            var allocations = new List<(VoidOrderCredit.Tender Tender, decimal Amount)>();
+            decimal left = remaining;
+            foreach (var tender in source.Tenders)
+            {
+                if (left <= 0m) break;
+                decimal take = Math.Min(tender.Available, left);
+                allocations.Add((tender, take));
+                left -= take;
+            }
+            decimal applying = allocations.Sum(a => a.Amount);
+            string lines = string.Join("\n", allocations.Select(a => $"  {a.Tender.TenderTypeCode}: P{a.Amount:N2}"));
+            if (MessageBox.Show(this,
+                    $"Apply P{applying:N2} from voided order {source.ReceiptNo}" +
+                    (string.IsNullOrWhiteSpace(source.CustomerName) ? "" : $" ({source.CustomerName})") + $" to this order?\n\n{lines}\n\n" +
+                    (applying < source.Available ? $"P{source.Available - applying:N2} stays as credit for later.\n\n" : string.Empty) +
+                    "No money changes hands - it's the payment the customer already made.",
+                    "Voided Order Credit", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+
+            // Same customer as the voided order, unless the cashier already picked one.
+            if (string.IsNullOrWhiteSpace(currentCustomerName) || string.Equals(currentCustomerName.Trim(), DefaultWalkInCustomerName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrWhiteSpace(source.CustomerName))
+                {
+                    currentCustomerName = source.CustomerName;
+                    currentCustomerPhone = source.CustomerMobile;
+                    currentCustomerPsid = source.CustomerPsid;
+                    currentCustomerAddress = source.CustomerAddress;
+                }
+            }
+
+            RestoreOriginalBottomButtons();
+            BeginPaymentModeIfNeeded();
+            foreach (var (tender, amount) in allocations)
+            {
+                var payment = AddPayment(tender.TenderTypeCode, tender.TenderTypeCode, amount,
+                    VoidOrderCredit.CreditFromPrefix + source.ReceiptNo, VoidCreditLineName);
+                pendingVoidCredits.Add(new VoidOrderCredit.Pending { Payment = payment, Source = source, Tender = tender, ApprovedBy = approvedBy });
+            }
+            ContinueCheckoutAfterPayment();
+        }
+
+        private VoidOrderCredit.Source? PickVoidCreditSource(List<VoidOrderCredit.Source> sources)
+        {
+            using var dialog = new ThemedForm
+            {
+                Text = "Voided Order Credit - pick the voided order",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ShowInTaskbar = false,
+                Size = new Size(860, 460),
+                BackColor = Color.White
+            };
+            var search = new TextBox { Location = new Point(16, 16), Size = new Size(400, 28), Font = new Font("Arial", 11), PlaceholderText = "Search receipt / customer / mobile" };
+            var list = new ListView
+            {
+                Location = new Point(16, 52),
+                Size = new Size(812, 300),
+                View = View.Details,
+                FullRowSelect = true,
+                MultiSelect = false,
+                HideSelection = false,
+                Font = new Font("Arial", 10)
+            };
+            list.Columns.Add("Receipt", 130);
+            list.Columns.Add("Customer", 170);
+            list.Columns.Add("Mobile", 110);
+            list.Columns.Add("Voided", 120);
+            list.Columns.Add("Kind", 80);
+            list.Columns.Add("Credit", 190);
+
+            void Fill()
+            {
+                string q = search.Text.Trim();
+                list.Items.Clear();
+                foreach (var s in sources)
+                {
+                    if (q.Length > 0 && !(s.ReceiptNo.Contains(q, StringComparison.OrdinalIgnoreCase)
+                                          || s.CustomerName.Contains(q, StringComparison.OrdinalIgnoreCase)
+                                          || s.CustomerMobile.Contains(q, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    var item = new ListViewItem(s.ReceiptNo) { Tag = s };
+                    item.SubItems.Add(s.CustomerName);
+                    item.SubItems.Add(s.CustomerMobile);
+                    item.SubItems.Add(s.VoidedAtUtc.HasValue ? s.VoidedAtUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "");
+                    item.SubItems.Add(s.Held ? "Credit" : "Refunded");
+                    item.SubItems.Add($"P{s.Available:N2} (" + string.Join(", ", s.Tenders.Select(t => $"{t.TenderTypeCode} {t.Available:N2}")) + ")");
+                    list.Items.Add(item);
+                }
+                if (list.Items.Count > 0)
+                    list.Items[0].Selected = true;
+            }
+            search.TextChanged += (_, _) => Fill();
+            Fill();
+
+            var note = new Label
+            {
+                Text = "Credit = voided with \"Keep as credit\". Refunded = voided as a refund (Super User must confirm the money was not given back).",
+                Location = new Point(16, 360),
+                Size = new Size(560, 40),
+                Font = new Font("Arial", 9)
+            };
+            var okButton = new Button { Text = "Apply", Location = new Point(592, 364), Size = new Size(116, 40), BackColor = Color.DarkGreen, ForeColor = Color.White, Font = new Font("Arial", 10, FontStyle.Bold) };
+            var cancelButton = new Button { Text = "Cancel", Location = new Point(712, 364), Size = new Size(116, 40), BackColor = Color.Gray, ForeColor = Color.White, Font = new Font("Arial", 10, FontStyle.Bold), DialogResult = DialogResult.Cancel };
+            VoidOrderCredit.Source? picked = null;
+            void Pick()
+            {
+                if (list.SelectedItems.Count == 0) return;
+                picked = list.SelectedItems[0].Tag as VoidOrderCredit.Source;
+                dialog.DialogResult = DialogResult.OK;
+                dialog.Close();
+            }
+            okButton.Click += (_, _) => Pick();
+            list.DoubleClick += (_, _) => Pick();
+            dialog.Controls.AddRange(new Control[] { search, list, note, okButton, cancelButton });
+            dialog.CancelButton = cancelButton;
+            return dialog.ShowDialog(this) == DialogResult.OK ? picked : null;
         }
 
         private void ProcessCheckout(string tenderDescription, string tenderCode, decimal paymentAmount)
@@ -18559,7 +18779,12 @@ END", connection);
 
             // Add this payment to the payment tracking
             AddPayment(tenderDescription, tenderCode, paymentAmount);
+            ContinueCheckoutAfterPayment();
+        }
 
+        // After a payment is added: keep taking payments, or complete the sale / advance order once paid.
+        private void ContinueCheckoutAfterPayment()
+        {
             // Check if payment is complete (compare against original grand total before payments)
             decimal originalGrandTotal = currentTotal - currentDiscount;
             decimal remainingBalance = originalGrandTotal - totalPaid;
@@ -18648,14 +18873,15 @@ END", connection);
             UpdatePaymentDisplay();
         }
 
-        private void AddPayment(string tenderType, string tenderCode, decimal amount)
+        private PaymentEntry AddPayment(string tenderType, string tenderCode, decimal amount, string? description = null, string? lineName = null)
         {
             var payment = new PaymentEntry
             {
                 TenderType = tenderType,
                 TenderCode = tenderCode,
                 Amount = amount,
-                PaymentTime = DateTime.Now
+                PaymentTime = DateTime.Now,
+                Description = description
             };
 
             // Add payment to the payments list
@@ -18663,6 +18889,8 @@ END", connection);
 
             // Only add payment details to salesListView (shared for sales and payments)
             var salesPaymentItem = new ListViewItem(tenderCode); // Description = Tender Type Code
+            if (!string.IsNullOrEmpty(lineName))
+                salesPaymentItem.Name = lineName;
             salesPaymentItem.SubItems.Add("1"); // Qty = 1
             salesPaymentItem.SubItems.Add($"{0:F2}"); // Price = Amount Tendered 
             salesPaymentItem.SubItems.Add($"-{amount:F2}");//Total
@@ -18673,6 +18901,7 @@ END", connection);
             UpdateTotal();
 
             // Note: Payment recording will happen when transaction is fully settled
+            return payment;
         }
 
 
@@ -19365,7 +19594,7 @@ GROUP BY LTRIM(RTRIM(ISNULL(VariationId, '')))", conn))
                         cmd.Parameters.AddWithValue("@tenderTypeCode", payment.TenderCode);
                         cmd.Parameters.AddWithValue("@lineNo", lineno);
                         cmd.Parameters.AddWithValue("@receiptNo", currentReceiptNo);
-                        cmd.Parameters.AddWithValue("@description", currentReceiptNo ?? (object)DBNull.Value);
+                        cmd.Parameters.AddWithValue("@description", (object?)payment.Description ?? currentReceiptNo ?? (object)DBNull.Value);
                         cmd.Parameters.AddWithValue("@amount", payment.Amount);
                         cmd.Parameters.AddWithValue("@userID", CurrentUser.Username ?? "POS_SYSTEM");
                         cmd.Parameters.AddWithValue("@date", payment.PaymentTime.Date);
@@ -19380,6 +19609,34 @@ GROUP BY LTRIM(RTRIM(ISNULL(VariationId, '')))", conn))
                     {
                         // Log successful recording
                         Console.WriteLine($"Successfully recorded {allPayments.Count} payment entries for receipt {currentReceiptNo}");
+                    }
+
+                    // Voided Order Credit lines just recorded: take them off the voided order (VoidOrderCredit.cs).
+                    if (pendingVoidCredits.Count > 0)
+                    {
+                        var credits = pendingVoidCredits.ToList();
+                        pendingVoidCredits.Clear();
+                        try
+                        {
+                            var touched = VoidOrderCredit.Commit(connection, credits, allPayments, currentReceiptNo ?? string.Empty, currentTransNo,
+                                CurrentUser.Username ?? "POS_SYSTEM");
+                            foreach (var voidReceipt in touched)
+                            {
+                                string r = voidReceipt;
+                                _ = System.Threading.Tasks.Task.Run(async () =>
+                                {
+                                    try { await OnlinefunctionsEvents.SyncSingleAdvanceOrderToSupabaseAsync(r).ConfigureAwait(false); }
+                                    catch (Exception syncEx) { System.Diagnostics.Debug.WriteLine($"Void credit sync failed for {r}: {syncEx.Message}"); }
+                                });
+                            }
+                        }
+                        catch (Exception creditEx)
+                        {
+                            MessageBox.Show(
+                                $"This order is saved and its payment recorded, but taking the credit off the voided order failed: {creditEx.Message}\n\n" +
+                                $"Tell a Super User (receipt {currentReceiptNo}) - the voided order may still show the credit as available. Do NOT use it again.",
+                                "Voided Order Credit", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
                     }
                 }
             }

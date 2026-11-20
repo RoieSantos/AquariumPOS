@@ -773,6 +773,9 @@
         <button class="bc-cmd hidden" id="advanceCardMarkPaidBtn" type="button" title="Record the remaining balance as paid"><svg class="bc-ico"><use href="#ico-done"/></svg>Mark Fully Paid</button>
         <!-- Super User / Sales User / Production Manager (js/onlineOrders.js openAdvCodDialog, sql/supabase_advance_order_cod_addon.sql). -->
         <button class="bc-cmd hidden" id="advanceCardAddCodBtn" type="button" title="Add products paid on delivery or pickup, as a separate linked order">+ Add COD Items</button>
+        <!-- Voided order with credit left - same dialog in "credit" mode (js/onlineOrders.js openAdvCodDialog,
+             sql/supabase_advance_order_credit_order.sql). -->
+        <button class="bc-cmd hidden" id="advanceCardNewFromCreditBtn" type="button" title="Use this voided order's credit on a new order">New Order from Credit</button>
       </div>
 
       <!-- Same split as the Online Order card: the document on the left, the Serials FactBox on the right. -->
@@ -944,13 +947,13 @@
     <div class="bc-dialog bc-assign-dialog" role="dialog" aria-modal="true" aria-labelledby="advCodTitle">
       <div class="bc-dialog-head">
         <div>
-          <div class="bc-doc-caption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">ADD COD ITEMS</div>
+          <div class="bc-doc-caption" id="advCodCaption" style="font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--text-muted);">ADD COD ITEMS</div>
           <h2 id="advCodTitle">Advance order</h2>
         </div>
         <button class="bc-iconbtn" id="advCodCloseBtn" type="button" aria-label="Close">&times;</button>
       </div>
       <div class="bc-dialog-body">
-        <p class="muted" style="margin-top:0;">These go on a new linked order with the full amount as COD. The advance order and its balance don't change.</p>
+        <p class="muted" id="advCodIntro" style="margin-top:0;">These go on a new linked order with the full amount as COD. The advance order and its balance don't change.</p>
         <div class="bc-field">
           <label for="advCodSearch">Search product</label>
           <input type="text" id="advCodSearch" autocomplete="off" placeholder="e.g. white paint, AST-003" />
@@ -1410,13 +1413,11 @@
       </div>
       <div class="bc-dialog-body">
         <p class="muted" style="margin-top:0;">Defective or wrong item: reported within 24 hours with photos. Change of mind: unused, in original condition, within 3 days.</p>
+        <!-- Tick one or more lines + how many of each; serial-tracked lines also tick which serials come back
+             (js/onlineOrders.js renderReturnLines, sql/supabase_online_order_returns_multi.sql). -->
         <div class="bc-field">
-          <label for="returnLine">Item being returned</label>
-          <select id="returnLine"></select>
-        </div>
-        <div class="bc-field">
-          <label for="returnQty">Quantity returned</label>
-          <input type="number" id="returnQty" min="1" step="1" value="1" />
+          <label>Items being returned</label>
+          <div id="returnLines" class="oo-sb-parts" style="max-height:260px; overflow:auto;"></div>
         </div>
         <div class="bc-field">
           <label for="returnReason">Reason</label>
@@ -1727,7 +1728,7 @@
   <script src="js/itemStockFactbox.js?v=tagserial1"></script>
   <script src="js/calcEmbedLines.js?v=drawlink1"></script>
   <script src="js/sizePricePicker.js?v=size1"></script>
-  <script src="js/onlineOrders.js?v=pickupfee1"></script>
+  <script src="js/onlineOrders.js?v=voidcreditorder1"></script>
   <script src="js/onlineNewOrders.js?v=salesmgrpay1"></script>
   <script src="js/pwa.js"></script>
 </body>
