@@ -2822,7 +2822,8 @@ function xenditPaymentBlock() {
 
 function replacePaymentDetails(text) {
   const lines = String(text || '').split('\n');
-  const isDetail = (l) => /g-?cash|maya|bdo|bpi|metrobank|unionbank|landbank|security ?bank|rcbc|china ?bank|eastwest|acct|account|name:|number:|\d[\d \-]{8,}\d/i.test(l);
+  // \bmaya\b: the Maya e-wallet, not "Amaya" (our branch name).
+  const isDetail = (l) => /g-?cash|\bmaya\b|bdo|bpi|metrobank|unionbank|landbank|security ?bank|rcbc|china ?bank|eastwest|acct|account|name:|number:|\d[\d \-]{8,}\d/i.test(l);
   const start = lines.findIndex((l) => /payment methods?/i.test(l));
   let from = -1;
   let to = -1;

@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-20
+
+- **Shop contact quick replies no longer turn into a Pay link.** The one-time 💳 auto-flag had matched our store phone numbers and "maya" inside "Amaya", so "STORE CP Numbers ##", "contact number" and "Appreciation" were sent as the Xendit Pay block. [supabase_quick_reply_unflag_contacts.sql](sql/supabase_quick_reply_unflag_contacts.sql) unflags them; [gmaConversations.js](docs/js/gmaConversations.js) `?v=qrunflag1` matches Maya only as a whole word.
+
 ## 2026-11-19
 
 - New **📣 New Arrivals auto-post**: when a Transfer Order with FISH / PLANTS is received at GMA or Amaya, a "NEW ARRIVALS" photo post (branded banner with the logo + name, item names in the caption, no prices) goes up automatically on that store's Page (GMA → GMA Page, Amaya → RS Pet Stop Page), once per transfer. [supabase_new_arrivals.sql](sql/supabase_new_arrivals.sql) (settings + queue tables, Posted_Transfer_Line statement trigger, 5-min backup cron, admin + public RPCs); new Edge Function [new-arrivals-post](supabase/functions/new-arrivals-post/index.ts); Receive kicks it right away ([transferOrders.js](docs/js/transferOrders.js) `?v=newarr1`). New **Marketing > New Arrivals** page ([new-arrivals.html](docs/new-arrivals.html), [newArrivals.js](docs/js/newArrivals.js)) builds/saves the banner, settings, caption preview, history with Retry / Skip; `nav.js` bumped to `?v=newarr1` on all pages.
