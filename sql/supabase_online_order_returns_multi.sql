@@ -29,11 +29,69 @@
 --
 -- Still NOT handled: SET lines and items that aren't stocked (e.g. a one-off custom build), order discount.
 --
--- Run AFTER supabase_online_order_returns.sql (re-run this one if that file is ever re-run - it would put back
--- the old list / receive / refund / cancel). Safe to re-run. Needs js/onlineOrders.js ?v=returnsmulti1.
--- Ends with ONE result.
+-- Who: Super User, Sales User, Store Manager and (per "can you let production manager access this feature in
+-- the portal") Production Manager open / cancel returns. Receive: Super User, Production Manager (any branch)
+-- or the branch's Store Manager. Record refund stays Super User only.
+--
+-- Run AFTER supabase_online_order_returns.sql and supabase_production_orders.sql (_production_is_manager) -
+-- re-run this one if supabase_online_order_returns.sql is ever re-run (it would put back the old list / receive /
+-- refund / cancel and the narrower _can_open_order_return). Safe to re-run. Needs js/onlineOrders.js
+-- ?v=returnspm1. Ends with ONE result.
 
 set lock_timeout = '10s';
+
+-- Super User, Sales User, Store Manager or Production Manager (supabase_online_order_returns.sql's + PM).
+create or replace function public._can_open_order_return(p_username text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public."StaffUsers" s
+                 where s."Username" = p_username and s."IsActive"
+                   and (coalesce(s."SuperUser", false) or coalesce(s."SalesUser", false) or coalesce(s."StoreManager", false)))
+      or public._production_is_manager(p_username);
+$$;
+
+revoke execute on function public._can_open_order_return(text) from public, anon, authenticated;
+
+-- Product search for the Exchange item. Its own function because staff_search_order_line_variants is Change
+-- Item's (Super User / Sales User only), which refused Store Managers and Production Managers here.
+drop function if exists public.staff_search_return_items(text, text, text);
+
+create or replace function public.staff_search_return_items(p_admin_username text, p_admin_password text, p_query text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_query text := nullif(trim(coalesce(p_query, '')), '');
+  v_result jsonb;
+begin
+  if not public.is_staff_authorized(p_admin_username, p_admin_password)
+     or not public._can_open_order_return(p_admin_username) then
+    raise exception 'Only a Super User, Sales User, Store Manager or Production Manager can open a return.';
+  end if;
+
+  select coalesce(jsonb_agg(to_jsonb(r) order by r.name, r.sku), '[]'::jsonb) into v_result
+  from (
+    select distinct on (c.variation_id)
+           c.variation_id, c.item_code, c.name, c.label, c.sku, c.price
+    from public._order_line_variant_candidates() c
+    where v_query is not null
+      and (c.item_code || ' ' || c.name || ' ' || c.description || ' ' || c.sku) ilike '%' || v_query || '%'
+    order by c.variation_id
+    limit 60
+  ) r;
+
+  return jsonb_build_object('options', v_result);
+end;
+$$;
+
+grant execute on function public.staff_search_return_items(text, text, text) to anon;
 
 -- ============================================================================
 -- 1. Group + serials
@@ -106,7 +164,7 @@ declare
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
      or not public._can_open_order_return(p_admin_username) then
-    raise exception 'Only a Super User, Sales User or Store Manager can open a return.';
+    raise exception 'Only a Super User, Sales User, Store Manager or Production Manager can open a return.';
   end if;
 
   return query
@@ -211,7 +269,7 @@ declare
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
      or not public._can_open_order_return(p_admin_username) then
-    raise exception 'Only a Super User, Sales User or Store Manager can open a return.';
+    raise exception 'Only a Super User, Sales User, Store Manager or Production Manager can open a return.';
   end if;
   if v_resolution not in ('Exchange', 'Refund') then
     raise exception 'Choose Exchange or Refund.';
@@ -516,8 +574,12 @@ declare
   v_serial_count int;
   v_moved int;
 begin
-  -- Super User or Store Manager, same as Defect Items.
-  select * into v_caller from public._defect_caller(p_admin_username, p_admin_password);
+  -- Super User or Store Manager (own branch), same as Defect Items - or a Production Manager, any branch.
+  if public.is_staff_authorized(p_admin_username, p_admin_password) and public._production_is_manager(p_admin_username) then
+    select true as is_super, null::text as warehouse_name into v_caller;
+  else
+    select * into v_caller from public._defect_caller(p_admin_username, p_admin_password);
+  end if;
 
   select * into v_return from public."OnlineOrderReturns" where "Id" = p_id for update;
   if not found then
@@ -678,7 +740,7 @@ declare
 begin
   if not public.is_staff_authorized(p_admin_username, p_admin_password)
      or not public._can_open_order_return(p_admin_username) then
-    raise exception 'Only a Super User, Sales User or Store Manager can cancel a return.';
+    raise exception 'Only a Super User, Sales User, Store Manager or Production Manager can cancel a return.';
   end if;
   if nullif(trim(coalesce(p_note, '')), '') is null then
     raise exception 'A reason is required.';
@@ -720,7 +782,7 @@ from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in ('staff_create_order_return_multi', 'staff_list_order_return_lines', 'staff_list_order_returns',
                     'staff_receive_order_return', 'admin_record_order_return_refund', 'staff_cancel_order_return',
-                    '_order_return_group_ids', '_order_return_line_serials')
+                    '_order_return_group_ids', '_order_return_line_serials', '_can_open_order_return', 'staff_search_return_items')
 union all
 select 'table', 'OnlineOrderReturnSerials', 'rows: ' || (select count(*) from public."OnlineOrderReturnSerials")
 union all

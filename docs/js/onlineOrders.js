@@ -6634,7 +6634,7 @@ let returnReceiveCtx = null;
 
 function canOpenOrderReturn(o) {
   const s = currentSession || {};
-  return !!(s.isSuperUser || s.isSalesUser || s.isStoreManager) && !isMakerFocus() && !!o && !o.received_at_shop
+  return !!(s.isSuperUser || s.isSalesUser || s.isStoreManager || s.isProductionManager) && !isMakerFocus() && !!o && !o.received_at_shop
     && RETURNABLE_STATUSES.includes((o.status || '').trim().toLowerCase());
 }
 
@@ -6672,8 +6672,8 @@ function orderReturnRowHtml(r) {
   const s = currentSession || {};
   const peso = (v) => (hidePrices() ? '' : money(v));
   const isReplacement = r.replacement_order_id === openCardOrderId;
-  const canReceive = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isStoreManager);
-  const canCancel = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isSalesUser || s.isStoreManager);
+  const canReceive = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isStoreManager || s.isProductionManager);
+  const canCancel = !isReplacement && r.status === 'Open' && (s.isSuperUser || s.isSalesUser || s.isStoreManager || s.isProductionManager);
   // Many lines -> one item (sql/supabase_online_order_returns_multi.sql): the refund sits on the group's first
   // row and is recorded once every row of the group is received.
   const groupReceived = r.group_all_received === undefined || r.group_all_received === null ? r.status === 'Received' : r.group_all_received;
@@ -6814,7 +6814,8 @@ async function loadReturnOptions() {
     return;
   }
   box.innerHTML = '<div class="muted">Loading...</div>';
-  const { data, error } = await supabaseClient.rpc('staff_search_order_line_variants', {
+  // Its own search (sql/supabase_online_order_returns_multi.sql) - Change Item's refuses Store / Production Managers.
+  const { data, error } = await supabaseClient.rpc('staff_search_return_items', {
     p_admin_username: currentSession.username,
     p_admin_password: currentSession.password,
     p_query: query
