@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-21
+
+- **Manager KPI, Manager Scorecard and Daily Checklist hidden from Store Managers** while still under construction. Now Super User only: removed from the Reports menu and from `STORE_MANAGER_ALLOWED_PAGES`, so typing the URL redirects too. [nav.js](docs/js/nav.js), [auth.js](docs/js/auth.js), `?v=mgrhide1` on every page.
+
 ## 2026-11-20
 
 - **Production Managers can use Return / Exchange.** They can open and cancel returns, and receive returned items at any branch. Record refund stays Super User only. The Exchange item search has its own `staff_search_return_items`, because Change Item's search was also refusing Store Managers. [supabase_online_order_returns_multi.sql](sql/supabase_online_order_returns_multi.sql) (re-run), [onlineOrders.js](docs/js/onlineOrders.js) `?v=returnspm1`.

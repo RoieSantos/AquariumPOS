@@ -612,7 +612,10 @@ function renderTopNavLinks(activeLabel) {
     // Manager's Report: sales vs target, money in/out, stock missing (sql/supabase_manager_report.sql).
     reports.push({ section: 'Overview', href: 'manager-report.html', label: "Manager's Report" });
   }
-  if (isSuperUser || isStoreManager) {
+  // Super User only for now - hidden from Store Managers while still under construction (2026-11-21).
+  // To give it back: (isSuperUser || isStoreManager) here + re-add the 3 pages to
+  // STORE_MANAGER_ALLOWED_PAGES in js/auth.js.
+  if (isSuperUser) {
     // Manager Scorecard: one branch's goals, no money figures; Store Managers see only their own branch
     // (sql/supabase_manager_scorecard.sql).
     reports.push({ section: 'Overview', href: 'manager-kpi.html', label: 'Manager KPI' });

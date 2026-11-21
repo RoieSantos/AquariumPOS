@@ -184,11 +184,10 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'online-orders.html', 'online-order-lines.html',
   'gma-conversations.html', 'gma-order-invoice.html', 'customers.html',
   // Own store's declarations only + attach bank deposit receipts (supabase_tender_deposit_receipts.sql).
-  'tender-declarations.html',
-  // Own branch's scorecard only - goals, stock on hand / sold / expected count, no money (supabase_manager_scorecard.sql).
-  'manager-scorecard.html',
-  // Manager KPI (own branch score, no bonus) + the daily Opening/Closing/Cleaning checklist (supabase_manager_kpi*.sql).
-  'manager-kpi.html', 'branch-checklist.html'
+  'tender-declarations.html'
+  // Hidden for now - still under construction (2026-11-21). Add back to re-enable for Store Managers:
+  // 'manager-scorecard.html' (own branch's scorecard, no money), 'manager-kpi.html' (own branch score,
+  // no bonus), 'branch-checklist.html' (daily Opening/Closing/Cleaning checklist).
 ];
 
 // Same exclusive-lockdown shape as Delivery Team/Online Order Staff above, for a "plain" account
