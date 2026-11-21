@@ -4,6 +4,8 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-21
 
+- **Meta data deletion request (RSPetStopMessenger, IDs file 2026-11-20.csv).** [supabase_meta_data_deletion_check.sql](sql/supabase_meta_data_deletion_check.sql) (read-only) finds which of Meta's IDs we hold; only one PSID matched (one chat, no orders). [supabase_meta_data_deletion_20261120.sql](sql/supabase_meta_data_deletion_20261120.sql) deletes its rows (run, verified 0 left).
+- **Meta Data Deletion Callback (deployed, SQL run).** New Edge Function [meta-data-deletion](supabase/functions/meta-data-deletion/index.ts) verifies Meta's `signed_request`, removes the user's chat images from Storage, calls `meta_delete_user_data` (chat deleted, orders kept with the FB ID blanked), and returns a confirmation code. The status page is [data-deletion-status.html](docs/data-deletion-status.html). Requests are logged in `MetaDataDeletionRequests` (hashed ID only). [supabase_meta_data_deletion_callback.sql](sql/supabase_meta_data_deletion_callback.sql).
 
 - **PO Xendit Payments went live.** Ran [supabase_purchase_order_xendit_payments.sql](sql/supabase_purchase_order_xendit_payments.sql) (now keeps the live `default null` on `staff_set_purchase_order_payment_method`'s `p_payment_method`, which create or replace can't drop) and deployed `xendit-vendor-payout`. Redeployed `xendit-owner-payout`, `xendit-payroll-payout` and `xendit-webhook` for the shared GoTyme v3 change.
 

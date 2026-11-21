@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Deletion Status - RS Pet Stop</title>
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/landing.css" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <meta name="theme-color" content="#060a14" />
+  <style>
+    .legal-wrap { max-width: 640px; margin: 0 auto; padding: 48px 20px 80px; line-height: 1.65; }
+    .legal-wrap h1 { font-size: 1.8rem; margin-bottom: 16px; }
+    .status-card { margin-top: 12px; padding: 18px 20px; border-radius: 12px; background: rgba(127, 127, 127, 0.08); }
+    .status-card p { margin: 4px 0; }
+    .status-code { font-family: monospace; font-size: 1.05rem; letter-spacing: 0.04em; }
+  </style>
+</head>
+<body>
+  <header class="land-topbar land-wrap">
+    <div class="land-brand">
+      <img src="icons/icon-192.png" alt="RS Pet Stop logo" hidden />
+      <span>RS Pet Stop</span>
+    </div>
+    <nav class="land-nav-actions">
+      <a class="land-staff-link" href="index.html">Home</a>
+      <a class="land-staff-link" href="privacy-policy.html#data-deletion">Privacy Policy</a>
+    </nav>
+  </header>
+
+  <div class="legal-wrap">
+    <h1>Data Deletion Status</h1>
+    <div class="status-card">
+      <p>Confirmation code: <span class="status-code" id="code">-</span></p>
+      <p id="status">Checking...</p>
+    </div>
+    <p style="margin-top:20px">
+      Chat data from your Messenger conversation with us is deleted. Order records from completed purchases
+      are kept for accounting and legal recordkeeping, but they are no longer linked to your Facebook account.
+      Questions? See our <a href="privacy-policy.html#data-deletion">Privacy Policy</a>.
+    </p>
+  </div>
+
+  <script>
+    (async function () {
+      const statusEl = document.getElementById('status');
+      const code = (new URLSearchParams(location.search).get('code') || '').trim();
+      document.getElementById('code').textContent = code || '-';
+      if (!/^[A-Za-z0-9-]{8,64}$/.test(code)) {
+        statusEl.textContent = 'No valid confirmation code in this link.';
+        return;
+      }
+      const fmt = (d) => (d ? new Date(d).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+      try {
+        const res = await fetch('https://hymcmesqgpliyyeghpgq.supabase.co/functions/v1/meta-data-deletion?code=' + encodeURIComponent(code));
+        const data = await res.json();
+        if (!data.found) {
+          statusEl.textContent = 'We could not find a request with this code.';
+        } else if (data.status === 'Completed') {
+          statusEl.textContent = 'Completed - your data was deleted on ' + fmt(data.completed_at) + '.';
+        } else if (data.status === 'Failed') {
+          statusEl.textContent = 'Received on ' + fmt(data.requested_at) + ' - we are completing it manually. Please check back later.';
+        } else {
+          statusEl.textContent = 'In progress - received on ' + fmt(data.requested_at) + '.';
+        }
+      } catch {
+        statusEl.textContent = 'Could not check the status right now. Please try again later.';
+      }
+    })();
+  </script>
+</body>
+</html>
