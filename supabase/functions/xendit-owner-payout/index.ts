@@ -10,6 +10,8 @@
 //     {"key":"bpi","label":"Roie BPI","channel_code":"PH_BPI","account_number":"1234567890","account_name":"Roie Santos"}]'
 // channel_code is Xendit's payout channel (Payroll Setup's Salary Payout list shows them, e.g. PH_GCASH, PH_BPI).
 // Optional XENDIT_OWNER_MAX_PER_SEND (pesos) caps one withdrawal.
+// Optional XENDIT_OWNER_RECEIPT_EMAIL: where Xendit emails each withdrawal's proof (falls back to the payroll
+// records CC, PortalSettings XENDIT_PAYOUT_RECEIPT_CC). No address = no proof email.
 //
 // Safety: the page makes one requestId per withdrawal; it is the XenditPayouts PayoutID and Xendit's
 // Idempotency-key, so a double click or a retry can't pay twice. Status comes back through xendit-webhook
@@ -58,6 +60,19 @@ function ownerAccounts(): { accounts: OwnerAccount[]; error?: string } {
   } catch {
     return { accounts: [], error: 'XENDIT_OWNER_ACCOUNTS is not valid JSON.' };
   }
+}
+
+function splitEmails(v: string | null | undefined): string[] {
+  return String(v ?? '').split(/[,;\s]+/).map((e) => e.trim()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+}
+
+// Where Xendit emails the withdrawal's proof: XENDIT_OWNER_RECEIPT_EMAIL secret (one address or several, comma
+// separated), else the records CC from Payroll Setup > Settings (PortalSettings XENDIT_PAYOUT_RECEIPT_CC).
+async function ownerReceiptEmails(supabase: any): Promise<string[]> {
+  const fromSecret = splitEmails(Deno.env.get('XENDIT_OWNER_RECEIPT_EMAIL'));
+  if (fromSecret.length) return fromSecret;
+  const { data } = await supabase.from('PortalSettings').select('SettingValue').eq('SettingKey', 'XENDIT_PAYOUT_RECEIPT_CC').maybeSingle();
+  return splitEmails(data?.SettingValue);
 }
 
 function maxPerSend(): number | null {
@@ -169,6 +184,19 @@ Deno.serve(async (req) => {
     // v2, or v3 for an e-wallet when XENDIT_PAYOUT_API = 'v3'; a re-send keeps the API of its first try.
     const api = await payoutApiFor(supabase, row.payout_id, !!row.is_new, row.channel_code, await readPayoutApiSetting(supabase));
     if (!api) return jsonResponse({ error: 'Could not tell how this withdrawal was first sent - try again in a minute.', retrySame: true }, 502);
+    // Proof email (Xendit can't resend it later). A new withdrawal saves where it went; a re-send of the same
+    // request uses that saved address so the Idempotency-key request body stays the same.
+    let receiptTo: string[] = [];
+    if (row.is_new) {
+      receiptTo = await ownerReceiptEmails(supabase).catch(() => []);
+      if (receiptTo.length) {
+        const saved = await supabase.from('XenditPayouts').update({ ReceiptEmailTo: receiptTo.join(', ') }).eq('PayoutID', row.payout_id);
+        if (saved.error) console.warn('xendit-owner-payout: could not save receipt email', saved.error.message);
+      }
+    } else {
+      const { data: prev } = await supabase.from('XenditPayouts').select('ReceiptEmailTo').eq('PayoutID', row.payout_id).maybeSingle();
+      receiptTo = splitEmails(prev?.ReceiptEmailTo);
+    }
     let result;
     try {
       result = await createPayout(key, row.payout_id, {
@@ -180,7 +208,8 @@ Deno.serve(async (req) => {
         account_number: row.account_number,
         account_holder_name: row.account_name,
         amount: Number(row.amount),
-        description
+        description,
+        receipt_email_to: receiptTo
       });
     } catch (err) {
       // No answer: stays 'Creating'. The page keeps the same requestId, so sending again re-uses the same key.

@@ -38,7 +38,8 @@ export const PH_PAYOUT_DESTINATIONS: { code: string; name: string; category: 'EW
   { code: 'PH_BPI', name: 'BPI', category: 'BANK', type: 'SWIFT', value: 'BPGOPHM1' },
   { code: 'PH_BDO', name: 'BDO Unibank', category: 'BANK', type: 'SWIFT', value: 'BNORPHMM' },
   { code: 'PH_BDO_NETWORK_BANK', name: 'BDO Network Bank', category: 'BANK', type: 'SWIFT', value: 'ONNRPHM1', v3Only: true },
-  { code: 'PH_MAYA_BANK', name: 'Maya Bank', category: 'BANK', type: 'SWIFT', value: 'PAPHPHM1', v3Only: true }
+  { code: 'PH_MAYA_BANK', name: 'Maya Bank', category: 'BANK', type: 'SWIFT', value: 'PAPHPHM1', v3Only: true },
+  { code: 'PH_GOTYME', name: 'GoTyme Bank', category: 'BANK', type: 'SWIFT', value: 'GOTYPHM2' } // confirmed 2026-11-20
 ];
 
 function destination(channelCode: string) {

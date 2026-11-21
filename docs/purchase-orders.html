@@ -230,6 +230,8 @@
                   <option value="">Not set</option>
                   <option value="Cash">Cash</option>
                   <option value="Online">Online</option>
+                  <!-- Fully paid through Xendit (Xendit Payments below) - sql/supabase_purchase_order_xendit_payments.sql -->
+                  <option value="Xendit">Xendit</option>
                 </select>
               </div>
 
@@ -244,6 +246,45 @@
             </div>
           </div>
         </details>
+
+        <!-- Xendit Payments (existing orders only) - pay the supplier through Xendit, full balance or a down
+             payment. Staff request, a super user approves & sends (same flow as Xendit cash advances).
+             js/purchaseOrders.js loadPoXendit, Edge Function xendit-vendor-payout,
+             sql/supabase_purchase_order_xendit_payments.sql. -->
+        <div id="poXenditPart" class="bc-doc-part hidden">
+          <div class="bc-doc-part-head">
+            Xendit Payments
+            <button class="bc-cmd" id="poXenditRequestBtn" type="button"><svg class="bc-ico"><use href="#ico-plus"/></svg>Request Payment</button>
+            <button class="bc-cmd" id="poXenditRefreshBtn" type="button" title="Ask Xendit for the latest status of payments being sent"><svg class="bc-ico"><use href="#ico-refresh"/></svg>Refresh Status</button>
+          </div>
+          <p class="bc-doc-hint" id="poXenditSummary"></p>
+
+          <div id="poXenditForm" class="bc-doc-addline hidden">
+            <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="poXenditKind" value="full" checked style="width:auto;" /> Full balance</label>
+            <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="poXenditKind" value="down" style="width:auto;" /> Down payment</label>
+            <input type="number" id="poXenditAmount" min="0" step="0.01" placeholder="Amount" style="width:120px;" title="Amount to pay the supplier" />
+            <input type="text" id="poXenditNote" placeholder="Note (optional)" maxlength="200" style="max-width:240px;" />
+            <button class="bc-btn bc-btn-primary" id="poXenditSubmitBtn" type="button">Submit for Approval</button>
+            <button class="bc-btn" id="poXenditCancelFormBtn" type="button">Cancel</button>
+          </div>
+          <div id="poXenditMessage" class="hidden" style="margin:6px 0;"></div>
+
+          <div class="doc-lines-wrap">
+            <table class="doc-lines">
+              <thead>
+                <tr>
+                  <th>Requested</th>
+                  <th style="text-align:right;">Amount</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Details</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="poXenditBody"></tbody>
+            </table>
+          </div>
+        </div>
 
         <!-- New order lines: BC puts the line actions in a strip above the grid rather than loose
              underneath it. Nothing here is saved until Create Purchase Order is pressed. -->
@@ -522,7 +563,7 @@
   <script src="js/bcColumnResize.js?v=1"></script>
   <script src="js/itemStockFactbox.js?v=skuname1"></script>
   <script src="js/poDistribution.js?v=podist1"></script>
-  <script src="js/purchaseOrders.js?v=poqtyinplace1"></script>
+  <script src="js/purchaseOrders.js?v=poxendit1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

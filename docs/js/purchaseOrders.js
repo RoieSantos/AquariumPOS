@@ -70,7 +70,7 @@ function poRowsHtml(rows) {
         <td class="num">${po.line_count ?? 0}</td>
         <td class="num">${Number(po.total_quantity || 0).toLocaleString()}</td>
         <td>${receivedBadgeHtml(po)}</td>
-        <td>${escapeHtml(po.payment_method || '')}</td>
+        <td>${escapeHtml(po.payment_method || '')}<div class="po-xendit-badge"></div></td>
         <td class="po-requested-by">${escapeHtml(po.created_by || '')}</td>
         <td class="po-received-by"></td>
         <td>
@@ -116,6 +116,34 @@ async function fillPoListPeople(tbody, rows) {
   });
 }
 
+// Xendit supplier payments per PO in the list's Payment column (staff_po_xendit_badges,
+// sql/supabase_purchase_order_xendit_payments.sql) - so a super user can spot what's awaiting approval.
+// Quietly does nothing if that SQL hasn't been run yet.
+async function fillPoListXenditBadges(tbody, rows) {
+  if (!rows.length) return;
+  const { data, error } = await supabaseClient.rpc('staff_po_xendit_badges', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_po_nos: rows.map((r) => r.po_no)
+  });
+  if (error) {
+    console.warn('staff_po_xendit_badges failed:', error.message);
+    return;
+  }
+  const byPo = new Map((data || []).map((b) => [b.po_no, b]));
+  tbody.querySelectorAll('tr[data-po-no]').forEach((tr) => {
+    const b = byPo.get(decodeURIComponent(tr.dataset.poNo));
+    const cell = tr.querySelector('.po-xendit-badge');
+    if (!b || !cell) return;
+    const parts = [];
+    if (b.awaiting > 0) parts.push('<span class="badge badge-warning">Xendit: awaiting approval</span>');
+    if (b.sending > 0) parts.push('<span class="badge badge-neutral">Xendit: sending</span>');
+    if (b.failed > 0) parts.push('<span class="badge badge-danger">Xendit: failed</span>');
+    if (Number(b.paid) > 0) parts.push(`<span class="badge badge-success">Xendit paid ${formatPeso(b.paid)}</span>`);
+    cell.innerHTML = parts.join(' ');
+  });
+}
+
 async function loadPurchaseOrders() {
   const tbody = document.getElementById('poTableBody');
   tbody.innerHTML = '<tr><td colspan="11" class="cell-msg">Loading...</td></tr>';
@@ -138,6 +166,7 @@ async function loadPurchaseOrders() {
     ? '<tr><td colspan="11" class="cell-msg">No Purchase Orders yet - create one from Stock On Hand, or with New.</td></tr>'
     : poRowsHtml(rows);
   fillPoListPeople(tbody, rows);
+  fillPoListXenditBadges(tbody, rows);
 
   // Click = select + Stock FactBox; the PO No. / double-click opens (js/itemStockFactbox.js).
   ItemStockFactbox.wireListRows(tbody, document.getElementById('poListStockFact'), 'purchase', openReceiveModal);
@@ -263,6 +292,7 @@ function applyPoCardMode(mode) {
   document.getElementById('poCardNewFooter').classList.toggle('hidden', isExisting);
   document.getElementById('poCardExistingFooter').classList.toggle('hidden', !isExisting);
   document.getElementById('poCardPrintLink').classList.toggle('hidden', !isExisting);
+  document.getElementById('poXenditPart').classList.toggle('hidden', !isExisting);
 }
 
 // Both classes are needed: the backdrop drops its centring padding, the panel becomes the
@@ -772,7 +802,12 @@ function scheduleNewPoStockRefresh() {
   }, 300);
 }
 
+// The open order's lines as last loaded - postPurchaseOrder estimates the bill from them to check the
+// Xendit payments before receiving anything.
+let currentReceiveLines = [];
+
 async function renderReceiveLines(lines) {
+  currentReceiveLines = lines || [];
   const body = document.getElementById('receiveLinesBody');
   loadPoCardStock((lines || []).map((l) => ({
     item_code: l.item_code,
@@ -935,6 +970,7 @@ async function openReceiveModal(poNo) {
   });
   document.getElementById('receiveNotes').textContent = header.notes || '-';
   document.getElementById('poPaymentMethod').value = header.payment_method || '';
+  loadPoXendit(poNo);
 
   // An item added to this order belongs to the same warehouse as the order itself unless someone
   // says otherwise - the toolbar was reset before the header arrived, so the default is applied
@@ -953,6 +989,284 @@ async function openReceiveModal(poNo) {
 
   setPoCardStatus(lineRows || []);
   await renderReceiveLines(lineRows || []);
+}
+
+// ---------------------------------------------------------------------------
+// Xendit Payments - pay the supplier through Xendit, the full balance or a down payment. Same flow as Xendit
+// cash advances: any staff requests (staff_request_po_xendit_payment, Telegram tells the super users), a super
+// user presses Approve & Send (Edge Function xendit-vendor-payout). Posting then pays the bill from what Xendit
+// paid first. sql/supabase_purchase_order_xendit_payments.sql
+
+let poXenditState = null;
+
+function formatPeso(value) {
+  return '₱' + (Number(value) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function poXenditLeftToRequest() {
+  if (!poXenditState) return 0;
+  return Math.max(0, Math.round((Number(poXenditState.ordered_total) - Number(poXenditState.requested_total)) * 100) / 100);
+}
+
+function setPoXenditMessage(text, kind) {
+  const el = document.getElementById('poXenditMessage');
+  el.textContent = text || '';
+  el.className = text ? (kind === 'error' ? 'error-text' : 'muted') : 'hidden';
+  el.style.margin = '6px 0';
+  el.style.color = kind === 'ok' ? 'var(--success)' : '';
+}
+
+const PO_XENDIT_BADGE = {
+  'Awaiting approval': 'badge-warning',
+  'Sending': 'badge-neutral',
+  'Paid': 'badge-success',
+  'Paid (test)': 'badge-neutral',
+  'Failed': 'badge-danger',
+  'Cancelled': 'badge-neutral'
+};
+
+function renderPoXendit() {
+  const st = poXenditState;
+  const summaryEl = document.getElementById('poXenditSummary');
+  const body = document.getElementById('poXenditBody');
+  const requestBtn = document.getElementById('poXenditRequestBtn');
+  if (!st) return;
+
+  const account = st.has_account
+    ? `Pays to ${escapeHtml(st.account_channel)} ${escapeHtml(st.account_masked)} (${escapeHtml(st.account_name)})`
+    : `<span class="error-text">No Xendit payout account for ${escapeHtml(st.vendor_name || st.vendor_code)} yet - a super user adds it on Vendors &gt; Manage.</span>`;
+  summaryEl.innerHTML = [
+    `Order total ${formatPeso(st.ordered_total)}`,
+    `requested ${formatPeso(st.requested_total)}`,
+    `<strong>paid via Xendit ${formatPeso(st.paid_total)}</strong>`,
+    account
+  ].join(' · ');
+  requestBtn.disabled = !st.has_account || poXenditLeftToRequest() <= 0;
+  requestBtn.title = !st.has_account ? 'Add the vendor\'s Xendit payout account on Vendors first'
+    : poXenditLeftToRequest() <= 0 ? 'The whole PO total is already requested' : 'Request a Xendit payment to the supplier';
+
+  const requests = st.requests || [];
+  if (!requests.length) {
+    body.innerHTML = '<tr><td colspan="6" class="muted">No Xendit payments yet.</td></tr>';
+    return;
+  }
+  const isSuper = !!currentSession?.isSuperUser;
+  body.innerHTML = requests.map((r) => {
+    const details = [];
+    if (r.paid_to) details.push(`To ${escapeHtml(r.paid_to)}`);
+    if (r.state === 'Paid' || r.state === 'Paid (test)') {
+      details.push(`paid ${escapeHtml(formatDate(r.paid_at))}${r.sent_by ? ` · approved by ${escapeHtml(r.sent_by)}` : ''}`);
+    } else if (r.state === 'Sending') {
+      details.push(`sent ${escapeHtml(formatDate(r.sent_at))}${r.sent_by ? ` by ${escapeHtml(r.sent_by)}` : ''}`);
+    } else if (r.state === 'Failed' && r.failure) {
+      details.push(`<span class="error-text">${escapeHtml(r.failure)}</span>`);
+    } else if (r.state === 'Cancelled') {
+      details.push(`cancelled by ${escapeHtml(r.cancelled_by || '')}`);
+    }
+    if (r.is_test) details.push('<span class="badge badge-neutral">TEST</span>');
+    if (r.note) details.push(`<span class="muted">${escapeHtml(r.note)}</span>`);
+
+    const actions = [];
+    const canSend = isSuper && r.state !== 'Cancelled'
+      && (['Awaiting approval', 'Failed', 'Paid (test)'].includes(r.state) || r.payout_status === 'Creating');
+    if (canSend) {
+      const label = r.payout_status === 'Creating' ? 'Send again' : r.state === 'Failed' ? 'Send again' : 'Approve & Send';
+      actions.push(`<button type="button" class="btn btn-success btn-sm" data-xendit-send="${r.request_id}">${label}</button>`);
+    }
+    const canCancel = r.state !== 'Cancelled' && !r.live_locked && (isSuper || r.requested_by_username === currentSession?.username);
+    if (canCancel) {
+      actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-xendit-cancel="${r.request_id}">Cancel</button>`);
+    }
+
+    return `
+      <tr>
+        <td>${escapeHtml(formatDate(r.requested_at))}<div class="muted" style="font-size:11.5px;">${escapeHtml(r.requested_by || '')}</div></td>
+        <td class="doc-num">${formatPeso(r.amount)}</td>
+        <td>${r.is_down_payment ? 'Down payment' : 'Full balance'}</td>
+        <td><span class="badge ${PO_XENDIT_BADGE[r.state] || 'badge-neutral'}">${escapeHtml(r.state)}</span></td>
+        <td class="doc-cell-text">${details.join(' · ')}</td>
+        <td style="white-space:nowrap;">${actions.join(' ')}</td>
+      </tr>`;
+  }).join('');
+}
+
+async function loadPoXendit(poNo) {
+  poXenditState = null;
+  document.getElementById('poXenditForm').classList.add('hidden');
+  setPoXenditMessage('');
+  document.getElementById('poXenditSummary').textContent = 'Loading...';
+  document.getElementById('poXenditBody').innerHTML = '';
+
+  const { data, error } = await supabaseClient.rpc('staff_get_po_xendit_payments', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_po_no: poNo
+  });
+  if (currentReceivePoNo !== poNo) return; // another PO was opened meanwhile
+  if (error) {
+    document.getElementById('poXenditSummary').textContent = error.message.includes('staff_get_po_xendit_payments')
+      ? 'Xendit payments aren\'t set up yet (run sql/supabase_purchase_order_xendit_payments.sql).'
+      : describeSupabaseError(error, 'Could not load the Xendit payments.');
+    document.getElementById('poXenditRequestBtn').disabled = true;
+    return;
+  }
+  poXenditState = data;
+  renderPoXendit();
+}
+
+async function callVendorPayoutFunction(payload) {
+  const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-vendor-payout`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+      'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ username: currentSession.username, password: currentSession.password, ...payload })
+  });
+  if (response.status === 404) throw new Error('The xendit-vendor-payout Edge Function isn\'t deployed yet.');
+  const data = await response.json().catch(() => null);
+  return { ok: response.ok, data: data || { error: `HTTP ${response.status}` } };
+}
+
+function openPoXenditForm() {
+  const left = poXenditLeftToRequest();
+  document.querySelector('input[name="poXenditKind"][value="full"]').checked = true;
+  const amount = document.getElementById('poXenditAmount');
+  amount.value = left.toFixed(2);
+  amount.disabled = true;
+  document.getElementById('poXenditNote').value = '';
+  setPoXenditMessage('');
+  document.getElementById('poXenditForm').classList.remove('hidden');
+}
+
+function onPoXenditKindChange() {
+  const down = document.querySelector('input[name="poXenditKind"]:checked')?.value === 'down';
+  const amount = document.getElementById('poXenditAmount');
+  amount.disabled = !down;
+  if (down) {
+    amount.value = '';
+    amount.focus();
+  } else {
+    amount.value = poXenditLeftToRequest().toFixed(2);
+  }
+}
+
+async function submitPoXenditRequest() {
+  const poNo = currentReceivePoNo;
+  const down = document.querySelector('input[name="poXenditKind"]:checked')?.value === 'down';
+  const left = poXenditLeftToRequest();
+  const amount = down ? Math.round(Number(document.getElementById('poXenditAmount').value) * 100) / 100 : left;
+  if (!amount || amount <= 0) {
+    setPoXenditMessage('Enter the down payment amount.', 'error');
+    return;
+  }
+  if (amount > left) {
+    setPoXenditMessage(`That is more than what is left to pay (${formatPeso(left)}).`, 'error');
+    return;
+  }
+  const btn = document.getElementById('poXenditSubmitBtn');
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('staff_request_po_xendit_payment', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_po_no: poNo,
+    p_amount: amount,
+    p_is_down_payment: down,
+    p_note: document.getElementById('poXenditNote').value.trim() || null
+  });
+  btn.disabled = false;
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) {
+    setPoXenditMessage(error ? describeSupabaseError(error, 'Could not request the payment.') : result?.message || 'Could not request the payment.', 'error');
+    return;
+  }
+  // The request may have set the Payment Method to Xendit.
+  const method = document.getElementById('poPaymentMethod');
+  if (!method.value) method.value = 'Xendit';
+  await loadPoXendit(poNo);
+  setPoXenditMessage(result.message, 'ok');
+  loadPurchaseOrders();
+}
+
+async function cancelPoXenditRequest(requestId) {
+  if (!window.confirm('Cancel this Xendit payment request?')) return;
+  const { data, error } = await supabaseClient.rpc('staff_cancel_po_xendit_payment', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_request_id: requestId
+  });
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result?.success) {
+    window.alert(error ? describeSupabaseError(error, 'Could not cancel it.') : result?.message || 'Could not cancel it.');
+    return;
+  }
+  await loadPoXendit(currentReceivePoNo);
+  loadPurchaseOrders();
+}
+
+async function sendPoXenditRequest(requestId, btn) {
+  const poNo = currentReceivePoNo;
+  const st = poXenditState;
+  const r = (st?.requests || []).find((x) => x.request_id === requestId);
+  if (!r) return;
+  btn.disabled = true;
+  setPoXenditMessage('Checking the Xendit balance...');
+  let balanceText = '';
+  try {
+    const { ok, data } = await callVendorPayoutFunction({ action: 'balance' });
+    if (ok && typeof data.balance === 'number') {
+      balanceText = `\nXendit balance${data.isTest ? ' (TEST mode)' : ''}: ${formatPeso(data.balance)}`;
+    } else if (!ok) {
+      throw new Error(data.error || 'Could not read the Xendit balance.');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    setPoXenditMessage(err.message, 'error');
+    return;
+  }
+  setPoXenditMessage('');
+  const confirmText = `Send ${formatPeso(r.amount)} to ${st.vendor_name || st.vendor_code}?\n\n`
+    + `${st.account_channel} ${st.account_masked} (${st.account_name})\n`
+    + `${r.is_down_payment ? 'Down payment' : 'Full balance'} for Purchase Order ${poNo}${r.note ? ` - ${r.note}` : ''}${balanceText}\n\n`
+    + 'Xendit sends the money right away. Continue?';
+  if (!window.confirm(confirmText)) {
+    btn.disabled = false;
+    return;
+  }
+
+  setPoXenditMessage('Sending through Xendit...');
+  try {
+    const { ok, data } = await callVendorPayoutFunction({ action: 'send', requestId });
+    await loadPoXendit(poNo);
+    if (!ok || data.error) {
+      setPoXenditMessage(data.error || 'Xendit didn\'t take the payment.', 'error');
+    } else {
+      setPoXenditMessage(data.note || `Sent to Xendit${data.isTest ? ' (TEST mode - no real money)' : ''}: ${data.status || 'accepted'}. It shows Paid once Xendit confirms.`, 'ok');
+    }
+  } catch (err) {
+    await loadPoXendit(poNo);
+    setPoXenditMessage(err.message || 'Could not reach Xendit - press Refresh Status before sending again.', 'error');
+  }
+  loadPurchaseOrders();
+}
+
+async function refreshPoXenditStatus() {
+  const poNo = currentReceivePoNo;
+  const btn = document.getElementById('poXenditRefreshBtn');
+  btn.disabled = true;
+  setPoXenditMessage('Asking Xendit...');
+  try {
+    const { ok, data } = await callVendorPayoutFunction({ action: 'refresh', poNo });
+    await loadPoXendit(poNo);
+    if (!ok || data.error) setPoXenditMessage(data.error || 'Could not refresh.', 'error');
+    else setPoXenditMessage(data.note || (data.checked ? `Checked ${data.checked} payment(s) still being sent.` : 'Nothing is being sent right now.'), data.note ? 'error' : 'ok');
+  } catch (err) {
+    setPoXenditMessage(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+  loadPurchaseOrders();
 }
 
 // Merge Purchase Orders - super users only. Lists this vendor's other open POs; the picked one's
@@ -1044,7 +1358,10 @@ async function postPurchaseOrder() {
   // Same rule staff_post_purchase_order enforces server-side (see
   // supabase_purchase_order_require_payment_method_to_post.sql) - checked here too so a missing
   // Payment Method is caught before the "This cannot be undone" confirm dialog, not after it.
-  if (!document.getElementById('poPaymentMethod').value) {
+  // A PO paid through Xendit doesn't need one (the server checks Xendit covered the bill).
+  const paymentMethod = document.getElementById('poPaymentMethod').value;
+  const xenditPaid = Number(poXenditState?.paid_total || 0);
+  if (!paymentMethod && xenditPaid <= 0) {
     errorEl.textContent = 'Set a Payment Method for this Purchase Order before posting.';
     errorEl.classList.remove('hidden');
     return;
@@ -1073,6 +1390,33 @@ async function postPurchaseOrder() {
     return;
   }
 
+  // Posting (not a partial receipt) pays the bill from Xendit first - catch what staff_post_purchase_order
+  // would refuse BEFORE anything is received. The bill estimate uses the same formula as the server
+  // (Unit Cost x Qty Received, after this receipt).
+  let xenditNote = '';
+  if (!isPartial && poXenditState) {
+    const unsettled = (poXenditState.requests || []).filter((r) => r.state !== 'Cancelled' && r.state !== 'Paid');
+    if (unsettled.length) {
+      errorEl.textContent = 'This Purchase Order has a Xendit payment that isn\'t paid yet (awaiting approval, sending or failed). Wait for it to show Paid, or cancel it, before posting.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const receivingNow = new Map(lines.map((l) => [l.entry_no, l.quantity]));
+    const billEstimate = currentReceiveLines.reduce((sum, l) => sum
+      + Math.round((Number(l.unit_cost) || 0) * ((Number(l.qty_received) || 0) + (receivingNow.get(Number(l.entry_no)) || 0)) * 100) / 100, 0);
+    if (xenditPaid + 0.005 < billEstimate && (paymentMethod === 'Xendit' || !paymentMethod)) {
+      errorEl.textContent = `Xendit has paid ${formatPeso(xenditPaid)} of the ${formatPeso(billEstimate)} being received. Request the remaining ${formatPeso(billEstimate - xenditPaid)} through Xendit, or set the Payment Method to Cash or Online for the rest.`;
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (xenditPaid > 0) {
+      xenditNote = `\n\n${formatPeso(Math.min(xenditPaid, billEstimate))} of the bill is paid from Xendit`
+        + (billEstimate > xenditPaid ? `, the remaining ${formatPeso(billEstimate - xenditPaid)} by ${paymentMethod}` : '')
+        + (xenditPaid > billEstimate + 0.005 ? `. Xendit paid ${formatPeso(xenditPaid - billEstimate)} more than what was received - it stays on the vendor as a credit` : '')
+        + '.';
+    }
+  }
+
   let confirmMessage;
   if (isPartial) {
     confirmMessage = `Purchase Order ${currentReceivePoNo} is only partially received.\n\nThis will only receipt the quantities entered (${lines.length} line${lines.length === 1 ? '' : 's'}) into inventory. The PO will NOT be posted - it stays open as Partially Received until everything has arrived.\n\nContinue?`;
@@ -1081,7 +1425,7 @@ async function postPurchaseOrder() {
   } else {
     confirmMessage = `Post Purchase Order ${currentReceivePoNo} to Posted Purchase Orders? Everything on it has already been received. This cannot be undone.`;
   }
-  if (!window.confirm(confirmMessage)) return;
+  if (!window.confirm(confirmMessage + xenditNote)) return;
 
   const btn = document.getElementById('postPoBtn');
   btn.disabled = true;
@@ -2497,6 +2841,26 @@ function addPoSuggestionsToLines() {
   });
 
   document.getElementById('postPoBtn').addEventListener('click', postPurchaseOrder);
+
+  // Xendit Payments part of the PO card.
+  document.getElementById('poXenditRequestBtn').addEventListener('click', openPoXenditForm);
+  document.getElementById('poXenditCancelFormBtn').addEventListener('click', () =>
+    document.getElementById('poXenditForm').classList.add('hidden')
+  );
+  document.getElementById('poXenditSubmitBtn').addEventListener('click', submitPoXenditRequest);
+  document.getElementById('poXenditRefreshBtn').addEventListener('click', refreshPoXenditStatus);
+  document.querySelectorAll('input[name="poXenditKind"]').forEach((radio) =>
+    radio.addEventListener('change', onPoXenditKindChange)
+  );
+  document.getElementById('poXenditBody').addEventListener('click', (e) => {
+    const send = e.target.closest('button[data-xendit-send]');
+    if (send) {
+      sendPoXenditRequest(send.dataset.xenditSend, send);
+      return;
+    }
+    const cancel = e.target.closest('button[data-xendit-cancel]');
+    if (cancel) cancelPoXenditRequest(cancel.dataset.xenditCancel);
+  });
 
   document.getElementById('mergePoBtn').addEventListener('click', openMergePoModal);
   document.getElementById('distributePoBtn').addEventListener('click', () => {

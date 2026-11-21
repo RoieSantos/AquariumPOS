@@ -12,7 +12,8 @@ with v3 (code, routing) as (
          ('PH_BPI', 'SWIFT BPGOPHM1'),
          ('PH_BDO', 'SWIFT BNORPHMM'),
          ('PH_BDO_NETWORK_BANK', 'SWIFT ONNRPHM1'),
-         ('PH_MAYA_BANK', 'SWIFT PAPHPHM1')
+         ('PH_MAYA_BANK', 'SWIFT PAPHPHM1'),
+         ('PH_GOTYME', 'SWIFT GOTYPHM2')
 ),
 in_use as (
   select 'employee account' as source, su."PayoutChannelCode" as code,

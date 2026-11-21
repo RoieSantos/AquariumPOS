@@ -454,6 +454,140 @@ function openManageVendorModal(vendorCode) {
 
   loadVendorBills(vendorCode);
   loadVendorPayments(vendorCode);
+  loadVendorPayoutAccount(vendorCode);
+}
+
+// ---------------------------------------------------------------------------
+// Xendit Payout Account - where Purchase Order payments to this vendor are sent
+// (sql/supabase_purchase_order_xendit_payments.sql). The channel list is the same one Payroll Setup uses
+// (Edge Function xendit-payroll-payout 'channels'); the built-in list shows meanwhile / if it fails.
+
+const VENDOR_PAYOUT_WALLETS = ['PH_GCASH', 'PH_PAYMAYA', 'PH_GRABPAY', 'PH_SHOPEEPAY'];
+const VENDOR_FALLBACK_CHANNELS = [
+  { code: 'PH_GCASH', name: 'GCash', category: 'EWALLET' },
+  { code: 'PH_PAYMAYA', name: 'Maya (PayMaya Wallet)', category: 'EWALLET' },
+  { code: 'PH_BDO', name: 'BDO Unibank', category: 'BANK' },
+  { code: 'PH_BPI', name: 'BPI', category: 'BANK' }
+];
+let vendorPayoutChannels = null;
+
+function escapeVendorHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderVendorPayoutChannels(channels, keepValue) {
+  const sel = document.getElementById('vendorPayoutChannel');
+  const group = (cat, label) => {
+    const list = channels.filter((c) => c.category === cat);
+    return list.length
+      ? `<optgroup label="${label}">${list.map((c) => `<option value="${escapeVendorHtml(c.code)}">${escapeVendorHtml(c.name || c.code)}</option>`).join('')}</optgroup>`
+      : '';
+  };
+  sel.innerHTML = '<option value="">(none)</option>' + group('EWALLET', 'E-wallets') + group('BANK', 'Banks');
+  if (keepValue && ![...sel.options].some((o) => o.value === keepValue)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${escapeVendorHtml(keepValue)}">${escapeVendorHtml(keepValue)}</option>`);
+  }
+  sel.value = keepValue || '';
+  updateVendorPayoutHints();
+}
+
+async function loadVendorPayoutChannels() {
+  if (vendorPayoutChannels) return;
+  vendorPayoutChannels = VENDOR_FALLBACK_CHANNELS;
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-payroll-payout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`, 'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY },
+      body: JSON.stringify({ action: 'channels', username: currentSession.username, password: currentSession.password })
+    });
+    const data = await response.json().catch(() => null);
+    if (response.ok && Array.isArray(data?.channels) && data.channels.length) vendorPayoutChannels = data.channels;
+  } catch (err) {
+    console.warn('Vendor payout channels: using the built-in list', err);
+  }
+}
+
+function updateVendorPayoutHints() {
+  const wallet = VENDOR_PAYOUT_WALLETS.includes(document.getElementById('vendorPayoutChannel').value);
+  document.getElementById('vendorPayoutNumberLabel').textContent = wallet ? 'Mobile Number' : 'Account Number';
+  document.getElementById('vendorPayoutNumber').placeholder = wallet ? '09171234567' : 'Bank account number';
+}
+
+async function loadVendorPayoutAccount(vendorCode) {
+  const statusEl = document.getElementById('vendorPayoutStatus');
+  const errorEl = document.getElementById('vendorPayoutError');
+  errorEl.classList.add('hidden');
+  statusEl.textContent = 'Loading...';
+  document.getElementById('vendorPayoutNumber').value = '';
+  document.getElementById('vendorPayoutName').value = '';
+
+  const [, { data, error }] = await Promise.all([
+    loadVendorPayoutChannels(),
+    supabaseClient.rpc('admin_get_vendor_payout_account', {
+      p_admin_username: currentSession.username,
+      p_admin_password: currentSession.password,
+      p_vendor_code: vendorCode
+    })
+  ]);
+  if (manageVendorCode !== vendorCode) return; // another vendor was opened meanwhile
+
+  if (error) {
+    renderVendorPayoutChannels(vendorPayoutChannels, '');
+    statusEl.textContent = '';
+    errorEl.textContent = error.message.includes('admin_get_vendor_payout_account')
+      ? 'Run sql/supabase_purchase_order_xendit_payments.sql first.'
+      : error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const account = (data || [])[0] || {};
+  renderVendorPayoutChannels(vendorPayoutChannels, account.channel_code || '');
+  document.getElementById('vendorPayoutNumber').value = account.account_number || '';
+  document.getElementById('vendorPayoutName').value = account.account_name || '';
+  statusEl.textContent = account.channel_code
+    ? `Set${account.updated_by ? ` by ${account.updated_by}` : ''}${account.updated_at ? ` · ${new Date(account.updated_at).toLocaleDateString()}` : ''}`
+    : 'Not set - this supplier can\'t be paid through Xendit yet';
+}
+
+async function saveVendorPayoutAccount() {
+  const errorEl = document.getElementById('vendorPayoutError');
+  errorEl.classList.add('hidden');
+  const sel = document.getElementById('vendorPayoutChannel');
+  const code = sel.value;
+  const number = document.getElementById('vendorPayoutNumber').value.trim();
+  const name = document.getElementById('vendorPayoutName').value.trim();
+
+  if (code && (!number || !name)) {
+    errorEl.textContent = 'Enter the account number and the account name.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  const confirmText = code
+    ? `Purchase Order payments to this supplier will go to ${sel.selectedOptions[0]?.textContent || code} ••${number.replace(/\s|-/g, '').slice(-4)} (${name}).\n\nDouble-check the number - Xendit sends to exactly this account. Save?`
+    : 'Remove this supplier\'s Xendit payout account?';
+  if (!window.confirm(confirmText)) return;
+
+  const btn = document.getElementById('saveVendorPayoutBtn');
+  btn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_set_vendor_payout_account', {
+    p_admin_username: currentSession.username,
+    p_admin_password: currentSession.password,
+    p_vendor_code: manageVendorCode,
+    p_channel_code: code || null,
+    p_channel_name: code ? (sel.selectedOptions[0]?.textContent || code) : null,
+    p_account_number: code ? number : null,
+    p_account_name: code ? name : null
+  });
+  btn.disabled = false;
+
+  const result = Array.isArray(data) ? data[0] : data;
+  if (error || !result || !result.success) {
+    errorEl.textContent = error?.message || result?.message || 'Failed to save the payout account.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  await loadVendorPayoutAccount(manageVendorCode);
 }
 
 async function saveManageVendor() {
@@ -800,6 +934,8 @@ async function voidPayment(paymentNo) {
     document.getElementById('manageVendorModal').classList.add('hidden')
   );
   document.getElementById('saveManageVendorBtn').addEventListener('click', saveManageVendor);
+  document.getElementById('vendorPayoutChannel').addEventListener('change', updateVendorPayoutHints);
+  document.getElementById('saveVendorPayoutBtn').addEventListener('click', saveVendorPayoutAccount);
 
   document.getElementById('toggleAddBillBtn').addEventListener('click', () =>
     document.getElementById('addBillForm').classList.toggle('hidden')

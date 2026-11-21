@@ -192,6 +192,35 @@
 
       <div class="section-divider"></div>
 
+      <!-- Xendit Payout Account - where Purchase Order payments to this supplier are sent (Purchase Orders >
+           Xendit Payments). Saved on its own; every change sends a Telegram alert.
+           sql/supabase_purchase_order_xendit_payments.sql -->
+      <div class="toolbar">
+        <h3 style="margin:0; font-size:15px;">Xendit Payout Account</h3>
+        <span class="muted" id="vendorPayoutStatus" style="font-size:12.5px;"></span>
+      </div>
+      <p class="muted" style="margin:0 0 10px; font-size:12.5px;">Where Purchase Order payments to this supplier go when a super user approves them. Xendit emails its proof of payment to the vendor's Email above.</p>
+      <div class="form-grid">
+        <div class="form-row">
+          <label for="vendorPayoutChannel">Pay To</label>
+          <select id="vendorPayoutChannel"><option value="">(none)</option></select>
+        </div>
+        <div class="form-row">
+          <label for="vendorPayoutNumber" id="vendorPayoutNumberLabel">Account Number</label>
+          <input type="text" id="vendorPayoutNumber" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="vendorPayoutName">Account Name</label>
+          <input type="text" id="vendorPayoutName" autocomplete="off" placeholder="Exactly as on the account" />
+        </div>
+      </div>
+      <div id="vendorPayoutError" class="error-text hidden"></div>
+      <div style="margin-top:12px; text-align:right;">
+        <button class="btn btn-success" id="saveVendorPayoutBtn" type="button">Save Payout Account</button>
+      </div>
+
+      <div class="section-divider"></div>
+
       <div class="toolbar">
         <h3 style="margin:0; font-size:15px;">Bills</h3>
         <button class="btn btn-secondary btn-sm" id="toggleAddBillBtn" type="button">+ Add Bill</button>
@@ -316,7 +345,7 @@
   <script src="js/auth.js?v=mgrhide1"></script>
   <script src="js/nav.js?v=mgrhide1"></script>
   <script src="js/pagination.js"></script>
-  <script src="js/vendorSetup.js"></script>
+  <script src="js/vendorSetup.js?v=vendorpayout1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

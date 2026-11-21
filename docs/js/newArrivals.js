@@ -235,7 +235,10 @@ async function saveBanner() {
     document.getElementById('naBanner').src = url;
     document.getElementById('naBannerStatus').textContent = 'Saved. This banner is used for every New Arrivals post.';
   } catch (err) {
-    showError(err.message || 'Could not save the banner.');
+    const msg = err.message || 'Could not save the banner.';
+    showError(msg);
+    // The page-level error box sits below the panels - show it next to the button too.
+    document.getElementById('naBannerStatus').textContent = `Not saved: ${msg}`;
     btn.disabled = false;
   } finally {
     btn.textContent = 'Save banner';
