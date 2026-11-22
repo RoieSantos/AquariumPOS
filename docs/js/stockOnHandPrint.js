@@ -12,7 +12,11 @@
 // for anything handwritten while calling/visiting the vendor.
 let currentSession = null;
 
-function renderRows(rows, enteredQuantities) {
+//
+// When nothing was typed into any Quantity box, the printout is a plain stock list instead (e.g.
+// printing a branch's count after a physical inventory): the column becomes "On Hand" and shows
+// the ledger balance. "Hide items with no stock" on the report is carried through as ?hideZero=1.
+function renderRows(rows, enteredQuantities, showOnHand) {
   const tbody = document.getElementById('printTableBody');
   if (!rows || rows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No stock records match these filters.</td></tr>';
@@ -22,7 +26,7 @@ function renderRows(rows, enteredQuantities) {
   tbody.innerHTML = rows
     .map((r) => {
       const key = `${r.item_code}|${r.warehouse_id}`;
-      const qty = enteredQuantities[key] || '';
+      const qty = showOnHand ? Number(r.remain_quantity || 0).toLocaleString() : (enteredQuantities[key] || '');
       return `
       <tr>
         <td>${r.item_code || ''}</td>
@@ -81,5 +85,12 @@ function renderRows(rows, enteredQuantities) {
     enteredQuantities = {};
   }
 
-  renderRows(data || [], enteredQuantities);
+  let rows = data || [];
+  if (params.get('hideZero') === '1') rows = rows.filter((r) => Number(r.remain_quantity) !== 0);
+  rows.sort((a, b) => String(a.item_name || '').localeCompare(String(b.item_name || '')));
+
+  const showOnHand = !rows.some((r) => enteredQuantities[`${r.item_code}|${r.warehouse_id}`]);
+  if (showOnHand) document.getElementById('qtyHeader').textContent = 'On Hand';
+
+  renderRows(rows, enteredQuantities, showOnHand);
 })();

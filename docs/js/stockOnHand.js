@@ -224,6 +224,8 @@ async function loadStock() {
       params.set('vendorName', vendorSelect.selectedOptions[0]?.textContent || '');
     }
     if (search) params.set('search', search);
+    // Carry "Hide items with no stock" through too - without it the printout listed every item.
+    if (document.getElementById('hideZeroInput').checked) params.set('hideZero', '1');
 
     // Hand the entered Quantity values off to the print page via localStorage (persists across
     // navigations, unlike an in-memory JS variable) - always overwritten fresh here so a later
