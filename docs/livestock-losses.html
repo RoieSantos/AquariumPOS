@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Livestock Losses - RS Pet Stop Portal</title>
+  <link rel="stylesheet" href="css/styles.css?v=navgroups1" />
+  <script src="js/theme.js?v=auto1"></script>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1d4f91" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RS Pet Stop" />
+  <style>
+    .ll-page { max-width: 1440px; margin: 0 auto; }
+    .ll-sub { color: var(--text-muted); margin: -4px 0 14px; }
+    .ll-muted { font-size: 12px; color: var(--text-muted); }
+    .ll-panel { border: 1px solid var(--panel-border); border-radius: 14px; background: var(--panel-bg); box-shadow: var(--shadow); }
+
+    /* Tabs */
+    .ll-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--panel-border); margin-bottom: 18px; overflow-x: auto; }
+    .ll-tab { background: none; border: none; border-bottom: 3px solid transparent; padding: 10px 18px; font-size: 15px; font-weight: 600; color: var(--text-muted); cursor: pointer; white-space: nowrap; }
+    .ll-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+    /* Report tab: lines on the left, a sticky "where / when / post" panel on the right */
+    .ll-report-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; align-items: start; }
+    .ll-side { position: sticky; top: 16px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+    .ll-side h2 { margin: 0; font-size: 17px; }
+    .ll-side .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+    .ll-side select, .ll-side input[type=date], .ll-side textarea { width: 100%; box-sizing: border-box; min-height: 42px; }
+    .ll-location-chip { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; background: rgba(29, 79, 145, 0.1); color: var(--primary); font-weight: 700; }
+    .ll-total { display: flex; align-items: baseline; gap: 10px; padding: 14px; border-radius: 12px; background: rgba(192, 57, 43, 0.08); }
+    .ll-total-num { font-size: 34px; font-weight: 800; color: var(--danger); line-height: 1; }
+    .ll-total-label { font-size: 13px; color: var(--text-main); }
+    .ll-side .btn-primary { width: 100%; min-height: 48px; font-size: 16px; }
+    .ll-side details summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--primary); }
+    .ll-side details[open] summary { margin-bottom: 10px; }
+    .photo-preview { max-width: 100%; max-height: 180px; border-radius: 8px; margin-top: 8px; display: block; }
+
+    /* Item search */
+    .ll-search-wrap { position: relative; }
+    /* Beats styles.css's input[type="text"] padding, which otherwise puts the text under the icon. */
+    .ll-search-wrap input.ll-search { width: 100%; box-sizing: border-box; font-size: 16px; min-height: 50px; padding: 12px 14px 12px 46px; border-radius: 12px; }
+    .ll-search-icon { position: absolute; left: 15px; top: 25px; transform: translateY(-50%); line-height: 1; font-size: 17px; color: var(--text-muted); pointer-events: none; z-index: 1; }
+    .item-hits { position: absolute; left: 0; right: 0; z-index: 20; border: 1px solid var(--panel-border); border-radius: 12px; margin-top: 4px; max-height: 360px; overflow-y: auto; background: var(--panel-bg); box-shadow: var(--shadow); }
+    .item-hit { display: flex; justify-content: space-between; gap: 10px; padding: 11px 14px; cursor: pointer; border-bottom: 1px solid var(--panel-border); color: var(--text-main); }
+    .item-hit:last-child { border-bottom: none; }
+    .item-hit:hover, .item-hit:focus { background: rgba(80, 140, 220, 0.14); outline: none; }
+    .item-hit-name { font-weight: 600; }
+    .item-hit-stock { font-size: 12px; color: var(--text-muted); white-space: nowrap; align-self: center; }
+    .ll-hint { margin: 8px 2px 0; }
+
+    /* Lines: one compact row per fish / plant on a wide screen */
+    .ll-lines { margin-top: 14px; }
+    .ll-lines-head, .ll-line { display: grid; grid-template-columns: minmax(180px, 1.3fr) 140px minmax(170px, 1fr) minmax(150px, 1fr) 36px; gap: 12px; align-items: center; }
+    .ll-lines-head { padding: 0 16px 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .ll-line { padding: 12px 16px; margin-bottom: 8px; }
+    .ll-line-name { font-weight: 700; }
+    .ll-line select, .ll-line input[type=text] { width: 100%; box-sizing: border-box; min-height: 40px; }
+    .ll-line .ll-variant { margin-top: 6px; }
+    .ll-line-remove { background: none; border: none; color: var(--text-muted); font-size: 24px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 8px; }
+    .ll-line-remove:hover { color: var(--danger); background: rgba(192, 57, 43, 0.08); }
+    .ll-stepper { display: inline-flex; align-items: center; border: 1px solid var(--input-border); border-radius: 10px; overflow: hidden; }
+    .ll-stepper button { width: 40px; height: 40px; border: none; background: rgba(29, 79, 145, 0.08); color: var(--primary); font-size: 20px; font-weight: 700; cursor: pointer; }
+    .ll-stepper button:hover { background: rgba(29, 79, 145, 0.16); }
+    .ll-stepper input[type=number] { width: 54px; height: 40px; border: none; border-radius: 0; padding: 0; text-align: center; font-size: 17px; font-weight: 700; background: transparent; color: var(--text-main); -moz-appearance: textfield; }
+    .ll-stepper input::-webkit-outer-spin-button, .ll-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .ll-stock { font-size: 12px; margin-top: 3px; }
+    .ll-stock-ok { color: var(--text-muted); }
+    .ll-stock-warn { color: #b9770e; }
+    .ll-empty { text-align: center; padding: 36px 12px; border: 2px dashed var(--panel-border); border-radius: 14px; color: var(--text-muted); background: var(--panel-bg); }
+    .ll-empty-icon { font-size: 34px; display: block; margin-bottom: 6px; }
+    .ll-msg { padding: 10px 12px; border-radius: 10px; }
+    .ll-msg-ok { background: rgba(30, 154, 89, 0.12); color: var(--success); }
+    .ll-msg-err { background: rgba(192, 57, 43, 0.1); color: var(--danger); }
+
+    /* History */
+    .ll-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+    .ll-toolbar input[type=text] { flex: 1 1 260px; max-width: 420px; min-height: 42px; }
+    .ll-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ll-chip { border: 1px solid var(--panel-border); background: var(--panel-bg); color: var(--text-main); border-radius: 999px; padding: 8px 15px; font-size: 13px; cursor: pointer; }
+    .ll-chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .ll-report-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; }
+    .ll-report { padding: 14px 16px; display: flex; flex-direction: column; }
+    .ll-report.reversed { opacity: 0.65; }
+    .ll-report-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+    .ll-report-no { font-weight: 700; font-size: 15px; }
+    .ll-report-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .ll-report-body { display: flex; gap: 12px; margin-top: 10px; flex: 1; }
+    .ll-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid var(--panel-border); flex: none; }
+    .ll-report-items { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; }
+    .ll-report-items li { padding: 5px 0; border-bottom: 1px dashed var(--panel-border); }
+    .ll-report-items li:last-child { border-bottom: none; }
+    .ll-qty { display: inline-block; min-width: 30px; font-weight: 800; color: var(--danger); }
+    .ll-report-foot { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+    .ll-pager { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 14px; }
+
+    /* Summary */
+    .ll-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 4px 0 16px; }
+    .ll-stat { padding: 14px 16px; }
+    .ll-stat-label { font-size: 12px; color: var(--text-muted); }
+    .ll-stat-value { font-size: 24px; font-weight: 800; margin-top: 2px; }
+    .ll-stat-sub { font-size: 12px; color: var(--text-muted); }
+    .ll-custom-dates { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .ll-bar { height: 6px; border-radius: 3px; background: var(--danger); opacity: 0.75; margin-top: 4px; }
+    .num { text-align: right; white-space: nowrap; }
+    .ll-pct-high { color: var(--danger); font-weight: 700; }
+
+    @media (max-width: 1100px) {
+      .ll-report-layout { grid-template-columns: 1fr; }
+      .ll-side { position: static; }
+      .ll-lines-head { display: none; }
+      .ll-line { grid-template-columns: auto 1fr 36px; grid-template-areas: "name name remove" "qty cause cause" "note note note"; }
+      .ll-line > .ll-c-name { grid-area: name; }
+      .ll-line > .ll-c-qty { grid-area: qty; }
+      .ll-line > .ll-c-cause { grid-area: cause; }
+      .ll-line > .ll-c-note { grid-area: note; }
+      .ll-line > .ll-line-remove { grid-area: remove; justify-self: end; align-self: start; }
+    }
+    @media (max-width: 560px) {
+      .ll-report-grid { grid-template-columns: 1fr; }
+      .ll-line { grid-template-areas: "name name remove" "qty qty qty" "cause cause cause" "note note note"; }
+      .ll-report-body { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div id="topnav"></div>
+
+  <div class="page ll-page">
+    <h1>Livestock Losses</h1>
+    <p class="ll-sub">Record fish and plants that died. Stock is taken out as soon as you post, and you can undo it from History.</p>
+
+    <div class="ll-tabs" id="tabs">
+      <button class="ll-tab active" data-tab="report" type="button">Report losses</button>
+      <button class="ll-tab" data-tab="history" type="button">History</button>
+      <button class="ll-tab hidden" data-tab="summary" id="summaryTabBtn" type="button">Summary</button>
+    </div>
+
+    <!-- ============================== REPORT ============================== -->
+    <section id="tab-report">
+      <div class="ll-report-layout">
+        <div>
+          <div class="ll-search-wrap">
+            <span class="ll-search-icon" aria-hidden="true">&#128269;</span>
+            <input type="text" id="itemSearchInput" class="ll-search" placeholder="Type a fish or plant name to add it..." autocomplete="off" />
+            <div id="itemHits" class="item-hits hidden"></div>
+          </div>
+          <p class="ll-muted ll-hint">Tip: pick the same fish again to add one more.</p>
+
+          <div class="ll-lines">
+            <div class="ll-lines-head hidden" id="linesHead">
+              <div>Fish / plant</div><div>How many died</div><div>What happened</div><div>Note</div><div></div>
+            </div>
+            <div id="linesList"></div>
+          </div>
+        </div>
+
+        <aside class="ll-panel ll-side">
+          <h2>Post losses</h2>
+          <div class="field">
+            <label>Location</label>
+            <div id="locationChip" class="ll-location-chip hidden"></div>
+            <select id="locationSelect" class="hidden"></select>
+          </div>
+          <div class="field">
+            <label for="lossDateInput">Date found</label>
+            <input type="date" id="lossDateInput" />
+          </div>
+
+          <div class="ll-total">
+            <span class="ll-total-num" id="totalDead">0</span>
+            <span class="ll-total-label" id="submitTotal">No items added yet</span>
+          </div>
+
+          <details>
+            <summary>+ Add a note or photo (optional)</summary>
+            <div class="field" style="margin-bottom:10px;">
+              <label for="noteInput">Note</label>
+              <textarea id="noteInput" rows="2" placeholder="e.g. Tank 4 heater failed overnight"></textarea>
+            </div>
+            <div class="field">
+              <label for="photoInput">Photo</label>
+              <input type="file" id="photoInput" accept="image/*" capture="environment" />
+              <img id="photoPreview" class="photo-preview hidden" alt="Photo preview" />
+            </div>
+          </details>
+
+          <div id="formMsg" class="ll-msg hidden"></div>
+          <button class="btn btn-primary" id="submitBtn" type="button" disabled>Post losses</button>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============================== HISTORY ============================== -->
+    <section id="tab-history" class="hidden">
+      <div class="ll-toolbar">
+        <input type="text" id="searchInput" placeholder="Search report no., fish or plant..." />
+        <div class="ll-chips" id="statusChips">
+          <button class="ll-chip active" data-status="" type="button">All</button>
+          <button class="ll-chip" data-status="Posted" type="button">Posted</button>
+          <button class="ll-chip" data-status="Reversed" type="button">Reversed</button>
+        </div>
+      </div>
+      <div id="listMsg" class="ll-msg ll-msg-err hidden"></div>
+      <div id="reportsList"></div>
+      <div class="ll-pager">
+        <button class="btn btn-secondary btn-sm" id="prevPageBtn" type="button">&lsaquo; Newer</button>
+        <span class="ll-muted" id="pageInfo"></span>
+        <button class="btn btn-secondary btn-sm" id="nextPageBtn" type="button">Older &rsaquo;</button>
+      </div>
+    </section>
+
+    <!-- ============================== SUMMARY ============================== -->
+    <section id="tab-summary" class="hidden">
+      <div class="ll-toolbar">
+        <div class="ll-chips" id="periodChips">
+          <button class="ll-chip" data-period="7" type="button">Last 7 days</button>
+          <button class="ll-chip active" data-period="30" type="button">Last 30 days</button>
+          <button class="ll-chip" data-period="month" type="button">This month</button>
+          <button class="ll-chip" data-period="90" type="button">Last 90 days</button>
+          <button class="ll-chip" data-period="custom" type="button">Custom</button>
+        </div>
+        <div class="ll-custom-dates hidden" id="customDates">
+          <input type="date" id="sumFromInput" /> <span class="ll-muted">to</span> <input type="date" id="sumToInput" />
+        </div>
+        <select id="sumLocationSelect" class="hidden"></select>
+      </div>
+      <div class="ll-toolbar">
+        <span class="ll-muted">Group by</span>
+        <div class="ll-chips" id="groupChips">
+          <button class="ll-chip active" data-group="item" type="button">Fish / plant</button>
+          <button class="ll-chip" data-group="cause" type="button">Cause</button>
+          <button class="ll-chip" data-group="category" type="button">Category</button>
+          <button class="ll-chip" data-group="vendor" type="button">Supplier</button>
+          <button class="ll-chip" data-group="warehouse" data-super-only="1" type="button">Location</button>
+        </div>
+      </div>
+
+      <div class="ll-stats" id="summaryStats"></div>
+      <div id="sumMsg" class="ll-msg ll-msg-err hidden"></div>
+      <div class="ll-panel table-wrap">
+        <table>
+          <thead id="summaryHead"></thead>
+          <tbody id="summaryBody"></tbody>
+        </table>
+      </div>
+      <p class="ll-muted">Received = livestock that came in during the same period (purchases, plus transfers in when looking at one location). Loss % is a rough guide: something that died this week may have arrived earlier. Reversed reports are not counted.</p>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabaseClient.js"></script>
+  <script src="js/auth.js?v=livestock4"></script>
+  <script src="js/nav.js?v=livestock4"></script>
+  <script src="js/livestockLosses.js?v=livestock5"></script>
+  <script src="js/pwa.js"></script>
+</body>
+</html>

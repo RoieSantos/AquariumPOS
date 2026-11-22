@@ -179,7 +179,7 @@ const STORE_MANAGER_ALLOWED_PAGES = [
   'serial-tracker.html', 'inventory-summary.html',
   'stock-on-hand.html', 'stock-on-hand-print.html', 'shelf-map.html',
   'transfer-orders.html', 'transfer-order-print.html', 'transfer-order-print-production.html',
-  'physical-inventory-journal.html', 'serial-inventory-journal.html', 'defect-items.html', 'repair-returns.html',
+  'physical-inventory-journal.html', 'serial-inventory-journal.html', 'defect-items.html', 'livestock-losses.html', 'repair-returns.html',
   'stand-calculator.html', 'aquarium-calculator.html', 'repair-calculator.html', 'sticker-calculator.html', 'glass-cut-list.html',
   'online-orders.html', 'online-order-lines.html',
   'gma-conversations.html', 'gma-order-invoice.html', 'customers.html',
@@ -247,6 +247,17 @@ function canOpenProductionPage(session, page) {
 // payment-status.html: Xendit's public channel status - no business data.
 const ALL_STAFF_PAGES = ['aquarium-calculator.html', 'payout-receipt.html', 'payment-status.html'];
 
+// Per "can we make this available to staff.. except makers" / "dont include delivery team / and
+// makers" - pages every staff account can open (whatever lockdown would otherwise confine it: Online
+// Order Staff, plain accounts) EXCEPT Delivery Team and Tank / Stand Makers / Dispatchers with no
+// other access, and (per "dont allow users without branch") any non-Super User with no branch set. The RPCs re-check the same rule
+// (_livestock_caller in sql/supabase_livestock_losses.sql).
+const STAFF_EXCEPT_MAKERS_PAGES = ['livestock-losses.html'];
+function canOpenStaffExceptMakersPage(session, page) {
+  return !!session && STAFF_EXCEPT_MAKERS_PAGES.includes(page) && !isOrderMakerOnly(session) &&
+    (session.isSuperUser || (!session.isDeliveryTeam && !!String(session.warehouseName || '').trim()));
+}
+
 function isOrderMakerOnly(session) {
   return !!session?.isOrderMaker && hasNoPortalPermission({ ...session, isOrderMaker: false });
 }
@@ -258,6 +269,7 @@ const NO_PERMISSION_ALLOWED_PAGES = ['my-payslips.html', 'my-payslip-print.html'
 function canOpenPortalPage(session, page) {
   if (!session) return false;
   if (ALL_STAFF_PAGES.includes(page)) return true;
+  if (canOpenStaffExceptMakersPage(session, page)) return true;
   if (canOpenProductionPage(session, page)) return true;
   if (session.isDeliveryTeam) return DELIVERY_TEAM_ALLOWED_PAGES.includes(page);
   if (isOrderMakerOnly(session)) return ORDER_MAKER_ALLOWED_PAGES.includes(page);
@@ -297,7 +309,8 @@ async function requireAuth() {
   // Same "enforced on every page load, not just at login" reasoning as the password-change gate
   // above - catches an admin flipping the flag on mid-session, and can't be bypassed by
   // bookmarking/typing a different URL directly.
-  const productionPageOk = canOpenProductionPage(refreshed, currentPageFileName()) || ALL_STAFF_PAGES.includes(currentPageFileName());
+  const productionPageOk = canOpenProductionPage(refreshed, currentPageFileName()) || ALL_STAFF_PAGES.includes(currentPageFileName()) ||
+    canOpenStaffExceptMakersPage(refreshed, currentPageFileName());
 
   if (!productionPageOk && refreshed.isDeliveryTeam && !DELIVERY_TEAM_ALLOWED_PAGES.includes(currentPageFileName())) {
     window.location.href = 'delivery.html';

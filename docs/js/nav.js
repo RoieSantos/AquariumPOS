@@ -28,6 +28,14 @@ function repairLink(session, activeLabel) {
 
 // Pages every staff login can open (ALL_STAFF_PAGES in js/auth.js) - added to the compact navs below,
 // since the full nav further down already lists them under Calculators.
+// Livestock Losses is open to every staff account except Delivery Team and Tank / Stand Makers /
+// Dispatchers with no other access, and non-Super Users with no branch (canOpenStaffExceptMakersPage in js/auth.js) - shown in the compact navs below too.
+function livestockLink(session, activeLabel) {
+  if (!canOpenStaffExceptMakersPage(session, 'livestock-losses.html')) return '';
+  return `
+          <a class="topnav-link${activeLabel === 'Livestock Losses' ? ' active' : ''}" href="livestock-losses.html">Livestock Losses</a>`;
+}
+
 function allStaffLinks(activeLabel) {
   return `
           <a class="topnav-link${activeLabel === 'Aquarium Calculator' ? ' active' : ''}" href="aquarium-calculator.html">Aquarium Calculator</a>
@@ -389,7 +397,7 @@ function renderTopNavLinks(activeLabel) {
         <span class="topnav-brand">RS Pet Stop Portal</span>
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
           <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>
-          <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>${compactProductionLinks(session, activeLabel)}${allStaffLinks(activeLabel)}
+          <a class="topnav-link${activeLabel === 'Online Orders' ? ' active' : ''}" href="online-orders.html">Online Orders</a>${compactProductionLinks(session, activeLabel)}${livestockLink(session, activeLabel)}${allStaffLinks(activeLabel)}
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
@@ -427,7 +435,7 @@ function renderTopNavLinks(activeLabel) {
       <div class="topnav-inner">
         <span class="topnav-brand">RS Pet Stop Portal</span>
         <div class="topnav-links topnav-links-compact" id="topnavLinks">
-          <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>${allStaffLinks(activeLabel)}
+          <a class="topnav-link${activeLabel === 'Dashboard' ? ' active' : ''}" href="dashboard.html">Dashboard</a>${livestockLink(session, activeLabel)}${allStaffLinks(activeLabel)}
           <a class="topnav-link${activeLabel === 'My Payslips' ? ' active' : ''}" href="my-payslips.html">My Payslips</a>
           <button id="logoutBtn" class="topnav-logout" type="button">Logout</button>
         </div>
@@ -531,6 +539,11 @@ function renderTopNavLinks(activeLabel) {
     inventory.push({ section: 'Counts & Returns', href: 'physical-inventory-journal.html', label: 'Physical Inventory Journal' });
     inventory.push({ section: 'Counts & Returns', href: 'serial-inventory-journal.html', label: 'Serial Inventory Journal' });
     inventory.push({ section: 'Counts & Returns', href: 'defect-items.html', label: 'Defect Items' });
+  }
+  // Livestock Losses (supabase_livestock_losses.sql): every staff account except maker-only accounts
+  // (those return early above), Delivery Team and no-branch accounts. The RPCs re-check.
+  if (canOpenStaffExceptMakersPage(session, 'livestock-losses.html')) {
+    inventory.push({ section: 'Counts & Returns', href: 'livestock-losses.html', label: 'Livestock Losses' });
   }
   // Store sends a damaged item to our makers and gets it back (supabase_repair_returns.sql).
   if (isSuperUser || isStoreManager || isProductionManager) {
@@ -803,6 +816,7 @@ const TELL_ME_KEYWORDS = {
   'posted-purchase-orders.html': 'po received history receipt',
   'physical-inventory-journal.html': 'count stocktake adjust phys',
   'defect-items.html': 'damaged broken return',
+  'livestock-losses.html': 'dead fish plant mortality died loss',
   'repair-returns.html': 'repair fix broken leak send back aquarium',
   'item-ledger-entries.html': 'ile movements history stock',
   'warehouse-setup.html': 'location branch store',
