@@ -215,6 +215,22 @@ export async function getPayout(key: string, payoutId: string): Promise<XenditRe
   return { ok: response.ok, status: response.status, body: await response.json().catch(() => null) };
 }
 
+// Cancel a payout that Xendit hasn't handed to the bank yet (ACCEPTED; v3 also PENDING_COMPLIANCE_ASSESSMENT /
+// ROUTING). Xendit refuses (403 INELIGIBLE_TRANSACTION_STATUS / CANCELLATION_NOT_ALLOWED) once it's past that point.
+// v3: https://docs.xendit.co/apidocs/cancel-payout. Used by xendit-payout-cancel.
+export async function cancelPayout(key: string, payoutId: string): Promise<XenditResult> {
+  if (String(payoutId).startsWith('po-')) {
+    const response = await fetch(`${API}/v3/payouts/${encodeURIComponent(payoutId)}/cancel`, {
+      method: 'POST',
+      headers: { ...auth(key), 'api-version': V3_API_VERSION }
+    });
+    const body = await response.json().catch(() => null);
+    return { ok: response.ok, status: response.status, body: response.ok ? normalizeV3(body) : body };
+  }
+  const response = await fetch(`${API}/v2/payouts/${encodeURIComponent(payoutId)}/cancel`, { method: 'POST', headers: auth(key) });
+  return { ok: response.ok, status: response.status, body: await response.json().catch(() => null) };
+}
+
 // For a v2 create call that never answered: did Xendit make it? (reference_id is ours.) v3 has no lookup by
 // reference - a v3 row with no Xendit ID is settled by sending it again with the same Idempotency-key.
 export async function findPayoutByReference(key: string, referenceId: string): Promise<XenditResult> {

@@ -1077,6 +1077,10 @@ function renderPoXendit() {
     if (canCancel) {
       actions.push(`<button type="button" class="btn btn-secondary btn-sm" data-xendit-cancel="${r.request_id}">Cancel</button>`);
     }
+    // Stuck at Xendit (not yet with the bank): a super user can ask Xendit to cancel it (Edge Function xendit-payout-cancel).
+    if (isSuper && r.state === 'Sending' && r.xendit_payout_id) {
+      actions.push(`<button type="button" class="btn btn-danger btn-sm" data-xendit-stop="${r.request_id}">Stop payout</button>`);
+    }
 
     return `
       <tr>
@@ -1202,6 +1206,37 @@ async function cancelPoXenditRequest(requestId) {
     return;
   }
   await loadPoXendit(currentReceivePoNo);
+  loadPurchaseOrders();
+}
+
+// Ask Xendit to cancel a payout that is still in progress (super users). Xendit refuses once the bank has it.
+async function stopPoXenditPayout(requestId, btn) {
+  const poNo = currentReceivePoNo;
+  const r = (poXenditState?.requests || []).find((x) => x.request_id === requestId);
+  if (!r) return;
+  if (!window.confirm(`Ask Xendit to cancel this ${formatPeso(r.amount)} payout?\n\n`
+    + 'If Xendit hasn\'t handed it to the bank yet, the money goes back to the Xendit balance and this request is cancelled. '
+    + 'If it\'s too late, Xendit refuses and nothing changes.')) return;
+  btn.disabled = true;
+  setPoXenditMessage('Asking Xendit to cancel...');
+  try {
+    const response = await fetch(`${window.APP_CONFIG.SUPABASE_URL}/functions/v1/xendit-payout-cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${window.APP_CONFIG.SUPABASE_ANON_KEY}`,
+        'apikey': window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ username: currentSession.username, password: currentSession.password, requestId })
+    });
+    if (response.status === 404) throw new Error('The xendit-payout-cancel Edge Function isn\'t deployed yet.');
+    const data = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    await loadPoXendit(poNo);
+    setPoXenditMessage(data.error || data.message, data.error ? 'error' : 'ok');
+  } catch (err) {
+    await loadPoXendit(poNo);
+    setPoXenditMessage(err.message || 'Could not reach Xendit.', 'error');
+  }
   loadPurchaseOrders();
 }
 
@@ -2856,6 +2891,11 @@ function addPoSuggestionsToLines() {
     const send = e.target.closest('button[data-xendit-send]');
     if (send) {
       sendPoXenditRequest(send.dataset.xenditSend, send);
+      return;
+    }
+    const stop = e.target.closest('button[data-xendit-stop]');
+    if (stop) {
+      stopPoXenditPayout(stop.dataset.xenditStop, stop);
       return;
     }
     const cancel = e.target.closest('button[data-xendit-cancel]');
