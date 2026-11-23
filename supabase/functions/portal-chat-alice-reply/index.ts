@@ -20,9 +20,14 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.124.0';
 import { trackAiUsage } from '../_shared/ai-usage.ts';
 import { buildCurrentTimeLine, buildOnlinePaymentLine, buildSystemPrompt, runChatbotTurn } from '../_shared/chatbot-engine.ts';
+import { PO_SYSTEM_PROMPT, PO_TOOLS, makePoToolExecutor } from './po-tools.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const HISTORY_LIMIT = 20;
+// Only the most recent few photos are sent to Claude as images (each one costs tokens); older
+// ones become a "[photo]" note in the text.
+const MAX_IMAGES_IN_HISTORY = 3;
+const PHOTO_PLACEHOLDER = '📷 Photo';
 const STORE_TIMEZONE = 'Asia/Manila';
 const ALICE_USERNAME = 'alice';
 const ALICE_MENTION_RE = /@alice\b/i;
@@ -120,7 +125,7 @@ Deno.serve(async (req) => {
 
   const { data: historyRows, error: historyError } = await supabase
     .from('ChatMessages')
-    .select('SenderUsername, Body, CreatedAtUtc')
+    .select('SenderUsername, Body, CreatedAtUtc, AttachmentUrl')
     .eq('ConversationID', conversationId)
     .order('CreatedAtUtc', { ascending: false })
     .limit(HISTORY_LIMIT);
@@ -128,7 +133,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: historyError.message }, 500);
   }
 
-  const orderedHistory = (historyRows ?? []).slice().reverse() as Array<{ SenderUsername: string; Body: string; CreatedAtUtc: string }>;
+  const orderedHistory = (historyRows ?? []).slice().reverse() as Array<{ SenderUsername: string; Body: string; CreatedAtUtc: string; AttachmentUrl: string | null }>;
   const latestMessage = orderedHistory[orderedHistory.length - 1];
 
   // Server-side re-check, independent of what the widget decided client-side: a group only ever
@@ -147,16 +152,42 @@ Deno.serve(async (req) => {
   const displayNameByUsername = new Map((staffRows ?? []).map((s: { Username: string; DisplayName: string | null }) => [s.Username, s.DisplayName || s.Username]));
 
   const isGroup = Boolean(conversation.IsGroup);
-  const messages: Anthropic.MessageParam[] = orderedHistory.map((row) => {
+  // Photos (supabase_portal_chat_alice_purchase_orders.sql): the newest MAX_IMAGES_IN_HISTORY staff
+  // photos go to Claude as real images (e.g. a supplier price list to build a PO from).
+  const imageRowIndexes = new Set(
+    orderedHistory
+      .map((row, i) => (row.AttachmentUrl && row.SenderUsername !== ALICE_USERNAME ? i : -1))
+      .filter((i) => i >= 0)
+      .slice(-MAX_IMAGES_IN_HISTORY)
+  );
+  const messages: Anthropic.MessageParam[] = orderedHistory.map((row, i) => {
     const isAlice = row.SenderUsername === ALICE_USERNAME;
     const senderLabel = displayNameByUsername.get(row.SenderUsername) || row.SenderUsername;
-    return {
-      role: isAlice ? 'assistant' : 'user',
-      // In a group with multiple humans, prefix who said it so Alice can tell speakers apart - a
-      // 1:1 DM only ever has one other speaker, so the prefix would just be noise there.
-      content: !isAlice && isGroup ? `${senderLabel}: ${row.Body}` : row.Body
-    };
+    const caption = row.AttachmentUrl && row.Body === PHOTO_PLACEHOLDER ? '' : row.Body;
+    const photoNote = row.AttachmentUrl ? (imageRowIndexes.has(i) ? '[sent a photo]' : '[sent a photo - too old to show again]') : '';
+    const text = [photoNote, caption].filter(Boolean).join(' ') || row.Body;
+    // In a group with multiple humans, prefix who said it so Alice can tell speakers apart - a
+    // 1:1 DM only ever has one other speaker, so the prefix would just be noise there.
+    const labelled = !isAlice && isGroup ? `${senderLabel}: ${text}` : text;
+    if (!isAlice && imageRowIndexes.has(i)) {
+      return {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'url', url: row.AttachmentUrl! } },
+          { type: 'text', text: labelled }
+        ]
+      } as Anthropic.MessageParam;
+    }
+    return { role: isAlice ? 'assistant' : 'user', content: labelled };
   });
+
+  // Real Purchase Order tools (po-tools.ts) - only for super users and staff with Purchase Order
+  // access, checked server-side against the person who sent this message.
+  const { data: canUsePo } = await supabase.rpc('staff_can_use_alice_po', {
+    p_admin_username: adminUsername,
+    p_admin_password: adminPassword
+  });
+  const poEnabled = canUsePo === true;
 
   const [{ data: storeInfo }, { data: companyInfo }, { data: aiSettings }, { data: followUpSettings }] = await Promise.all([
     supabase.from('ChatbotStoreInfo').select('*').eq('Id', 1).maybeSingle(),
@@ -207,8 +238,9 @@ Deno.serve(async (req) => {
     { type: 'text' as const, text: await buildOnlinePaymentLine(supabase, true) },
     {
       type: 'text' as const,
-      text: `INTERNAL PORTAL TEAM CHAT: you are talking with RS Pet Stop's own staff inside their internal Portal Chat, not a customer.${isGroup ? ' Multiple staff members may be in this conversation - each user message is prefixed with "Name: " so you know who is asking.' : ''} Keep answers short and direct like a quick chat reply, not a full customer-facing script. This is for internal reference/testing only, so no order, escalation, or CRM save you take here is real - it is simulated.`
+      text: `INTERNAL PORTAL TEAM CHAT: you are talking with RS Pet Stop's own staff inside their internal Portal Chat, not a customer.${isGroup ? ' Multiple staff members may be in this conversation - each user message is prefixed with "Name: " so you know who is asking.' : ''} Keep answers short and direct like a quick chat reply, not a full customer-facing script. This is for internal reference/testing only, so no order, escalation, or CRM save you take here is real - it is simulated.${poEnabled ? ' The ONE exception is the po_* Purchase Order tools - those are real (see PURCHASE ORDERS below).' : ' You cannot create Purchase Orders for this staff member - if asked, say only super users and staff with Purchase Order access can have Alice build a PO.'}`
     },
+    ...(poEnabled ? [{ type: 'text' as const, text: PO_SYSTEM_PROMPT }] : []),
     {
       type: 'text' as const,
       text: 'MAKER NAMES (internal Portal Chat only): here, get_order_status production rows include maker_name (and maker_username) for each part - you MAY tell staff who the tank maker / stand maker / dispatcher is on an order (e.g. "Tank: Juan - done ✅, Stand: Pedro - still building"). This overrides the "never name the staff member" rule for this chat only. If maker_name is empty the part is not assigned yet.'
@@ -241,7 +273,15 @@ Deno.serve(async (req) => {
       followUpSettings,
       aiSettings,
       systemBlocks,
-      simulate: true
+      simulate: true,
+      ...(poEnabled
+        ? {
+            extraTools: PO_TOOLS,
+            extraToolExecutor: makePoToolExecutor(supabase, { username: adminUsername, password: adminPassword }, `portal-chat:${conversationId}`),
+            maxToolIterations: 15,
+            maxTokens: 4096
+          }
+        : {})
     });
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'The bot failed to respond.' }, 500);

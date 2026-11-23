@@ -1053,7 +1053,7 @@ function mountChatWidget(session) {
   if (!chatWidgetScriptPromise) {
     chatWidgetScriptPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'js/chat.js';
+      script.src = 'js/chat.js?v=chatphoto1';
       script.onload = resolve;
       script.onerror = reject;
       document.head.appendChild(script);

@@ -44,6 +44,12 @@ let chatMentionMatches = []; // currently filtered subset shown in the dropdown
 let chatMentionStartIndex = -1; // index of the triggering '@' in the input's current value
 let chatMentionHighlightIndex = 0;
 
+// Photo attachments (sql/supabase_portal_chat_alice_purchase_orders.sql) - e.g. a supplier price list
+// sent to Alice to build a Purchase Order. One photo per message; compressed in the browser first.
+const CHAT_PHOTO_PLACEHOLDER = '📷 Photo'; // Body of a photo sent with no caption (Body is NOT NULL)
+let chatPendingPhoto = null; // { blob, previewUrl } while a photo is attached but not sent yet
+let chatSending = false;
+
 function chatOtherDisplayName(username) {
   if (!username) return 'Someone';
   const entry = chatDirectoryByUsername.get(username);
@@ -78,7 +84,8 @@ const CHAT_ICONS = {
   send: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4l17.4-7.5a1 1 0 0 0 0-1.8L3.4 3.6a1 1 0 0 0-1.4 1.2L4.2 11 13 12l-8.8 1-2.2 6.2a1 1 0 0 0 1.4 1.2z"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
   group: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg>',
-  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>'
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>',
+  photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>'
 };
 
 function chatInitials(name) {
@@ -361,8 +368,14 @@ function chatBuildWidgetShell() {
         </div>
         <div id="chatThreadMessages" class="chat-widget-body chat-thread-messages" aria-live="polite"></div>
         <div id="chatThreadReceipt" class="chat-thread-receipt"></div>
+        <div id="chatPhotoPreview" class="chat-photo-preview hidden">
+          <img id="chatPhotoPreviewImg" alt="Photo to send" />
+          <button id="chatPhotoRemoveBtn" class="chat-photo-remove" type="button" title="Remove photo" aria-label="Remove photo">${CHAT_ICONS.close}</button>
+        </div>
         <form id="chatThreadForm" class="chat-thread-input-row chat-composer">
           <div id="chatMentionDropdown" class="chat-mention-dropdown hidden"></div>
+          <button id="chatAttachBtn" class="chat-attach-btn" type="button" title="Attach a photo (or paste one)" aria-label="Attach a photo">${CHAT_ICONS.photo}</button>
+          <input id="chatPhotoInput" type="file" accept="image/*" class="hidden" />
           <textarea id="chatThreadInput" rows="1" placeholder="Message... (@ to mention)" maxlength="4000" autocomplete="off"></textarea>
           <button id="chatSendBtn" type="submit" class="chat-send-btn" title="Send (Enter)" aria-label="Send" disabled>${CHAT_ICONS.send}</button>
         </form>
@@ -424,6 +437,22 @@ function chatBuildWidgetShell() {
   document.getElementById('chatThreadInput').addEventListener('keydown', chatHandleThreadInputKeydown);
   document.getElementById('chatThreadInput').addEventListener('blur', () => setTimeout(chatHideMentionDropdown, 150));
   document.getElementById('chatCreateGroupBtn').addEventListener('click', chatCreateGroup);
+  document.getElementById('chatAttachBtn').addEventListener('click', () => document.getElementById('chatPhotoInput').click());
+  document.getElementById('chatPhotoInput').addEventListener('change', (evt) => {
+    const file = evt.target.files && evt.target.files[0];
+    evt.target.value = '';
+    if (file) chatAttachPhoto(file);
+  });
+  document.getElementById('chatPhotoRemoveBtn').addEventListener('click', () => chatClearPendingPhoto());
+  document.getElementById('chatThreadInput').addEventListener('paste', (evt) => {
+    const item = Array.from(evt.clipboardData?.items || []).find((i) => i.type.startsWith('image/'));
+    const file = item?.getAsFile();
+    if (file) {
+      evt.preventDefault();
+      chatAttachPhoto(file);
+    }
+  });
+  chatInjectPhotoStyles();
   document.querySelectorAll('.chat-new-tab').forEach((btn) => {
     btn.addEventListener('click', () => chatSetNewMode(btn.dataset.mode));
   });
@@ -593,7 +622,83 @@ function chatAutosizeComposer() {
   const fullHeight = input.scrollHeight + 2;
   input.style.height = `${Math.min(fullHeight, 120)}px`;
   input.style.overflowY = fullHeight > 120 ? 'auto' : 'hidden';
-  document.getElementById('chatSendBtn').disabled = input.value.trim() === '';
+  document.getElementById('chatSendBtn').disabled = chatSending || (input.value.trim() === '' && !chatPendingPhoto);
+}
+
+// ---------------------------------------------------------------------------
+// Photo attachments
+
+function chatInjectPhotoStyles() {
+  if (document.getElementById('chatPhotoStyles')) return;
+  const style = document.createElement('style');
+  style.id = 'chatPhotoStyles';
+  style.textContent = `
+    .chat-attach-btn { width: 40px; height: 40px; border-radius: 50%; border: none; flex-shrink: 0; display: grid; place-items: center; cursor: pointer; background: transparent; color: var(--chat-accent, var(--text-muted)); }
+    .chat-attach-btn:hover { background: var(--chat-surface-2); }
+    .chat-attach-btn svg { width: 20px; height: 20px; }
+    .chat-photo-preview { position: relative; align-self: flex-start; margin: 8px 12px 0 60px; flex-shrink: 0; }
+    .chat-photo-preview img { display: block; max-width: 140px; max-height: 110px; border-radius: 12px; border: 1px solid var(--panel-border); object-fit: cover; }
+    .chat-photo-remove { position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%; border: none; display: grid; place-items: center; cursor: pointer; background: var(--text-main); color: var(--chat-surface-2, #fff); }
+    .chat-photo-remove svg { width: 12px; height: 12px; }
+    .chat-msg-photo { display: block; margin-bottom: 4px; }
+    .chat-msg-photo img { display: block; max-width: 220px; max-height: 260px; border-radius: 14px; object-fit: cover; border: 1px solid var(--panel-border); }
+    .chat-msg-mine .chat-msg-photo { margin-left: auto; }
+  `;
+  document.head.appendChild(style);
+}
+
+function chatCompressPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      // 2000px keeps small print on a price list readable for Alice.
+      const scale = Math.min(1, 2000 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not process the photo.'))), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a readable image.')); };
+    img.src = url;
+  });
+}
+
+async function chatAttachPhoto(file) {
+  try {
+    const blob = await chatCompressPhoto(file);
+    chatClearPendingPhoto();
+    chatPendingPhoto = { blob, previewUrl: URL.createObjectURL(blob) };
+    document.getElementById('chatPhotoPreviewImg').src = chatPendingPhoto.previewUrl;
+    document.getElementById('chatPhotoPreview').classList.remove('hidden');
+    chatAutosizeComposer();
+    document.getElementById('chatThreadInput').focus();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function chatClearPendingPhoto() {
+  if (chatPendingPhoto?.previewUrl) URL.revokeObjectURL(chatPendingPhoto.previewUrl);
+  chatPendingPhoto = null;
+  const preview = document.getElementById('chatPhotoPreview');
+  if (preview) preview.classList.add('hidden');
+  if (document.getElementById('chatThreadInput')) chatAutosizeComposer();
+}
+
+async function chatUploadPhoto(blob) {
+  const { data, error } = await supabaseClient.rpc('staff_create_portal_chat_photo_upload', {
+    p_admin_username: chatSession.username,
+    p_admin_password: chatSession.password,
+    p_file_name: 'photo.jpg'
+  });
+  if (error || !data || !data[0]) throw new Error('Could not prepare the photo upload: ' + (error ? error.message : 'unknown error'));
+  const { storage_path, upload_token, public_url } = data[0];
+  const { error: uploadError } = await supabaseClient.storage.from('portal-chat-photos').uploadToSignedUrl(storage_path, upload_token, blob, { contentType: 'image/jpeg' });
+  if (uploadError) throw new Error('Photo upload failed: ' + uploadError.message);
+  return { path: storage_path, url: public_url };
 }
 
 function chatShowListView() {
@@ -878,7 +983,7 @@ async function chatOpenThread(conversationId) {
   const [{ data, error }, { data: memberRows }] = await Promise.all([
     supabaseClient
       .from('ChatMessages')
-      .select('MessageID, SenderUsername, Body, CreatedAtUtc')
+      .select('MessageID, SenderUsername, Body, CreatedAtUtc, AttachmentUrl')
       .eq('ConversationID', conversationId)
       .order('CreatedAtUtc', { ascending: true }),
     supabaseClient
@@ -925,7 +1030,7 @@ async function chatOpenThread(conversationId) {
   }
   let lastMineAt = null;
   (data || []).forEach((m) => {
-    chatAppendMessageBubble({ senderUsername: m.SenderUsername, body: m.Body, createdAtUtc: m.CreatedAtUtc }, isGroup);
+    chatAppendMessageBubble({ senderUsername: m.SenderUsername, body: m.Body, createdAtUtc: m.CreatedAtUtc, attachmentUrl: m.AttachmentUrl || null }, isGroup);
     if (m.SenderUsername === chatSession.username) lastMineAt = m.CreatedAtUtc;
   });
   if (lastMineAt) chatLastMineAt.set(conversationId, lastMineAt);
@@ -974,9 +1079,15 @@ function chatAppendMessageBubble(message, isGroup) {
   const senderLabel = isGroup && !mine && !continuesPrev
     ? `<div class="chat-msg-sender">${chatEscapeHtml(chatOtherDisplayName(message.senderUsername))}</div>`
     : '';
+  const photoUrl = message.attachmentUrl && /^https:\/\//.test(message.attachmentUrl) ? message.attachmentUrl : null;
+  const photoHtml = photoUrl
+    ? `<a class="chat-msg-photo" href="${chatEscapeHtml(photoUrl)}" target="_blank" rel="noopener noreferrer"><img src="${chatEscapeHtml(photoUrl)}" alt="Photo" loading="lazy" /></a>`
+    : '';
+  const showText = !(photoUrl && message.body === CHAT_PHOTO_PLACEHOLDER) && String(message.body || '').trim() !== '';
   bubble.innerHTML = `
     ${senderLabel}
-    <div class="chat-msg-bubble" title="${chatEscapeHtml(new Date(createdAt).toLocaleString())}">${chatLinkify(message.body)}</div>
+    ${photoHtml}
+    ${showText ? `<div class="chat-msg-bubble" title="${chatEscapeHtml(new Date(createdAt).toLocaleString())}">${chatLinkify(message.body)}</div>` : ''}
     <div class="chat-msg-time">${chatFormatClock(createdAt)}</div>
   `;
   insert(bubble);
@@ -1127,9 +1238,12 @@ function chatInsertMention(username) {
 async function chatHandleSendMessage(evt) {
   evt.preventDefault();
   const input = document.getElementById('chatThreadInput');
-  const body = input.value.trim();
-  if (!body || !chatOpenConversationId) return;
+  const typed = input.value.trim();
+  const photo = chatPendingPhoto;
+  if ((!typed && !photo) || !chatOpenConversationId || chatSending) return;
+  const body = typed || CHAT_PHOTO_PLACEHOLDER;
 
+  chatSending = true;
   input.value = '';
   chatAutosizeComposer();
   chatHideMentionDropdown();
@@ -1137,20 +1251,30 @@ async function chatHandleSendMessage(evt) {
   const isGroup = Boolean(chatConversationIsGroup.get(conversationId));
   const nowIso = new Date().toISOString();
 
-  const { error } = await supabaseClient.from('ChatMessages').insert({
-    ConversationID: conversationId,
-    SenderUsername: chatSession.username,
-    Body: body
-  });
+  let attachment = null;
+  let error = null;
+  try {
+    if (photo) attachment = await chatUploadPhoto(photo.blob);
+    ({ error } = await supabaseClient.from('ChatMessages').insert({
+      ConversationID: conversationId,
+      SenderUsername: chatSession.username,
+      Body: body,
+      ...(attachment ? { AttachmentUrl: attachment.url, AttachmentPath: attachment.path } : {})
+    }));
+  } catch (err) {
+    error = err;
+  }
+  chatSending = false;
 
   if (error) {
     alert('Failed to send: ' + error.message);
-    input.value = body;
+    input.value = typed;
     chatAutosizeComposer();
     return;
   }
+  if (photo) chatClearPendingPhoto();
 
-  const message = { senderUsername: chatSession.username, body, createdAtUtc: nowIso };
+  const message = { senderUsername: chatSession.username, body, createdAtUtc: nowIso, attachmentUrl: attachment ? attachment.url : null };
   chatAppendMessageBubble(message, isGroup);
   chatLastMineAt.set(conversationId, nowIso);
   chatRenderReceiptStatus(conversationId);

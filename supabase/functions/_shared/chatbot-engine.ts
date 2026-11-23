@@ -4163,6 +4163,16 @@ export interface RunChatbotTurnParams {
   // Facebook comment auto-reply (facebook-messenger-webhook/comments.ts), which has no real PSID
   // yet when it runs, so it only gets the read-only lookup/quote tools.
   allowedToolNames?: string[];
+  // Channel-only tools that are NOT part of the shared TOOLS list - e.g. Portal Chat's real
+  // Purchase Order tools (portal-chat-alice-reply/po-tools.ts). They're added only by the caller
+  // that passes them, so Messenger / the website widget can never see or call them, and they run
+  // through extraToolExecutor (not executeTool), so `simulate` doesn't apply to them.
+  extraTools?: Anthropic.Tool[];
+  extraToolExecutor?: (name: string, input: Record<string, unknown>) => Promise<string>;
+  // Per-caller overrides (default MAX_TOOL_ITERATIONS / MAX_TOKENS) - Portal Chat's PO builder
+  // needs more tool rounds and a longer reply to match a 15-line list.
+  maxToolIterations?: number;
+  maxTokens?: number;
 }
 
 // Read-only tools only (catalog lookups + price quotes) - no order/escalation/follow-up side effects.
@@ -4205,14 +4215,16 @@ async function logToolCall(supabase: SupabaseClient, psid: string, name: string,
 // loading/saving and any Facebook-specific side effects (sending the final reply, updating
 // ChatbotConversations) stay in each caller, since those differ between the two.
 export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<string> {
-  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, aiSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion, allowedToolNames } = params;
+  const { supabase, anthropic, model, psid, pageId, messages, followUpSettings, aiSettings, systemBlocks, simulate = false, pageAccessToken, graphVersion, allowedToolNames, extraTools, extraToolExecutor, maxToolIterations = MAX_TOOL_ITERATIONS, maxTokens = MAX_TOKENS } = params;
   let finalText = "Sorry, I'm having trouble responding right now - a team member will follow up with you shortly.";
-  const tools = allowedToolNames ? TOOLS.filter((t) => allowedToolNames.includes(t.name)) : TOOLS;
+  const baseTools = allowedToolNames ? TOOLS.filter((t) => allowedToolNames.includes(t.name)) : TOOLS;
+  const extraToolNames = new Set((extraTools ?? []).map((t) => t.name));
+  const tools = extraTools?.length ? [...baseTools.filter((t) => !extraToolNames.has(t.name)), ...extraTools] : baseTools;
 
-  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+  for (let i = 0; i < maxToolIterations; i++) {
     const response = await anthropic.messages.create({
       model,
-      max_tokens: MAX_TOKENS,
+      max_tokens: maxTokens,
       system: systemBlocks as never,
       thinking: { type: 'adaptive' },
       output_config: { effort: 'low' },
@@ -4242,19 +4254,29 @@ export async function runChatbotTurn(params: RunChatbotTurnParams): Promise<stri
         toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: 'That tool is not available here.' });
         continue;
       }
-      const result = await executeTool({
-        supabase,
-        psid,
-        pageId,
-        name: tool.name,
-        input: tool.input as Record<string, unknown>,
-        followUpSettings,
-        aiSettings,
-        simulate,
-        pageAccessToken,
-        graphVersion
-      });
-      await logToolCall(supabase, psid, tool.name, tool.input, result, simulate);
+      const isExtra = extraToolNames.has(tool.name) && !!extraToolExecutor;
+      let result: string;
+      if (isExtra) {
+        try {
+          result = await extraToolExecutor!(tool.name, tool.input as Record<string, unknown>);
+        } catch (err) {
+          result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      } else {
+        result = await executeTool({
+          supabase,
+          psid,
+          pageId,
+          name: tool.name,
+          input: tool.input as Record<string, unknown>,
+          followUpSettings,
+          aiSettings,
+          simulate,
+          pageAccessToken,
+          graphVersion
+        });
+      }
+      await logToolCall(supabase, psid, tool.name, tool.input, result, isExtra ? false : simulate);
       toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: result });
     }
     messages.push({ role: 'user', content: toolResults });

@@ -2,6 +2,11 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-23
+
+- **Alice builds Purchase Orders from Portal Chat.** Send her a list or a photo (e.g. a supplier price list). She finds the vendor, the deliver-to location and each item (variant / unit of measure), costs each line at the item's last cost (Items.Cost), shows a draft, and creates a real open PO only after a "yes". Duplicates are blocked for 15 minutes. Super users and staff with Purchase Order access only (`staff_can_use_alice_po`). The tools live only in Portal Chat ([po-tools.ts](supabase/functions/portal-chat-alice-reply/po-tools.ts), [index.ts](supabase/functions/portal-chat-alice-reply/index.ts)), never in Messenger or the website. `runChatbotTurn` gained `extraTools` / `extraToolExecutor` and per-caller tool-round / token limits ([chatbot-engine.ts](supabase/functions/_shared/chatbot-engine.ts)).
+- **Portal Chat photos.** Attach button and paste-to-attach in [chat.js](docs/js/chat.js). Photos go to the public `portal-chat-photos` bucket (random paths) and are stored on `ChatMessages.AttachmentUrl` / `AttachmentPath` ([supabase_portal_chat_alice_purchase_orders.sql](sql/supabase_portal_chat_alice_purchase_orders.sql), ran on live). chat.js is now loaded as `?v=chatphoto1` ([nav.js](docs/js/nav.js)).
+
 ## 2026-11-22
 
 - **Stop a stuck Xendit supplier payout.** New Edge Function [xendit-payout-cancel](supabase/functions/xendit-payout-cancel/index.ts) (super users) asks Xendit to cancel a PO payout still in progress (`cancelPayout` in [xendit-payouts.ts](supabase/functions/_shared/xendit-payouts.ts)); only after Xendit answers CANCELLED is the payout and its request cancelled, so the PO can post. "Stop payout" button on the PO's Xendit Payments ([purchaseOrders.js](docs/js/purchaseOrders.js) `?v=poxendit3`). For PO-0101's ₱12,900 payout stuck at ACCEPTED.
