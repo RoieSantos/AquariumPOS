@@ -2,6 +2,7 @@
 //   action 'info'    - the owner accounts (masked), the available balance and the recent withdrawals
 //   action 'send'    - send { requestId, accountKey, amount, note } to one owner account
 //   action 'refresh' - re-read owner withdrawals still waiting on Xendit
+//   action 'cancel'  - { payoutId }: ask Xendit to cancel a withdrawal still in progress (only works before the bank has it)
 //
 // Where the money can go: ONLY the accounts in the XENDIT_OWNER_ACCOUNTS secret - never an account typed in the
 // portal, so a stolen super user login can't send the balance to someone else. Set it with:
@@ -23,7 +24,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { payoutKeyFor, readKeyFor } from '../_shared/xendit-keys.ts';
 import {
-  createPayout, findPayoutByReference, getPayout, payoutApiFor, readPayoutApiSetting, recordArgs, storedPayoutApi, xenditMessage
+  cancelPayout, createPayout, findPayoutByReference, getPayout, payoutApiFor, readPayoutApiSetting, recordArgs, storedPayoutApi, xenditMessage
 } from '../_shared/xendit-payouts.ts';
 
 const CORS_HEADERS = {
@@ -259,6 +260,47 @@ Deno.serve(async (req) => {
       }
     }
     return jsonResponse({ isTest, checked: rows.length, updated });
+  }
+
+  // ---------------------------------------------------------------- cancel
+  // Xendit decides: our row changes only to what Xendit answers. A cancelled payout's money goes back to the balance.
+  if (action === 'cancel') {
+    const payoutId = String(body?.payoutId ?? '');
+    if (!UUID_RE.test(payoutId)) return jsonResponse({ error: 'Pick a withdrawal.' }, 400);
+    const { data: row, error: rowError } = await supabase.from('XenditPayouts')
+      .select('PayoutID, XenditPayoutID, Status, IsTest, Amount')
+      .eq('PayoutID', payoutId).eq('Kind', 'Owner').maybeSingle();
+    if (rowError) return jsonResponse({ error: rowError.message }, 500);
+    if (!row) return jsonResponse({ error: 'Withdrawal not found.' }, 404);
+    if (!['ACCEPTED', 'REQUESTED'].includes(row.Status)) {
+      return jsonResponse({ error: `This withdrawal is ${row.Status} - nothing to stop. Press Refresh Status.` }, 400);
+    }
+    if (!row.XenditPayoutID) return jsonResponse({ error: 'No Xendit ID yet - press Refresh Status first.' }, 400);
+    const key = payoutKeyFor(row.IsTest);
+    if (!key) return jsonResponse({ error: `No valid ${row.IsTest ? 'test' : 'live'} Xendit payout key.` }, 500);
+
+    let result;
+    try {
+      result = await cancelPayout(key, row.XenditPayoutID);
+    } catch (err) {
+      console.error('xendit-owner-payout: cancel, no answer', row.XenditPayoutID, err);
+      return jsonResponse({ error: "Xendit didn't answer - press Refresh Status, then try again." }, 502);
+    }
+    console.log('xendit-owner-payout cancel', row.XenditPayoutID, result.status, JSON.stringify(result.body));
+    const cancelled = result.ok && String(result.body?.status ?? '').toUpperCase() === 'CANCELLED';
+    if (cancelled) {
+      await supabase.rpc('_payroll_payout_record', { p_payout_id: row.PayoutID, p_reference_id: null, p_error: null, ...recordArgs(result.body) });
+      return jsonResponse({ done: true, message: `Xendit cancelled the ${peso(Number(row.Amount))} withdrawal - the money goes back to the Xendit balance.` });
+    }
+    const now = await getPayout(key, row.XenditPayoutID).catch(() => null);
+    if (now?.ok && now.body?.id) {
+      await supabase.rpc('_payroll_payout_record', { p_payout_id: row.PayoutID, p_reference_id: null, p_error: null, ...recordArgs(now.body) });
+    }
+    const nowStatus = now?.ok ? String(now.body?.status ?? '') : '';
+    return jsonResponse({
+      error: `Xendit didn't cancel it (${xenditMessage(result)}).${nowStatus ? ` Xendit now shows it as ${nowStatus}.` : ''}`
+        + (nowStatus === 'SUCCEEDED' ? ' The money reached the account.' : " It's probably already with the bank.")
+    }, 400);
   }
 
   return jsonResponse({ error: 'Unknown action.' }, 400);

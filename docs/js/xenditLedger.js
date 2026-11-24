@@ -565,7 +565,8 @@ function renderOwnerDialog() {
           <td>${esc(new Date(r.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</td>
           <td>${esc(r.label || '')} <span class="muted">${esc(r.channel_name || '')} ••••${esc(r.account_last4 || '')}</span></td>
           <td class="num">${amount(r.amount)}</td>
-          <td>${ownerStatusHtml(r)}</td>
+          <td>${ownerStatusHtml(r)}${['ACCEPTED', 'REQUESTED'].includes(r.status)
+            ? ` <button class="bc-btn" type="button" style="padding:2px 8px; margin-left:6px;" data-owner-stop="${esc(r.payout_id)}"${ownerBusy ? ' disabled' : ''}>Stop</button>` : ''}</td>
           <td>${esc(r.sent_by || '')}</td>
           <td class="cell-text">${esc(r.note || '')}</td>
         </tr>`).join('')
@@ -668,6 +669,34 @@ async function refreshOwnerStatus() {
   }
 }
 
+// Ask Xendit to cancel a withdrawal still in progress (xendit-owner-payout 'cancel'). Refused once the bank has it.
+async function stopOwnerWithdrawal(payoutId) {
+  if (ownerBusy) return;
+  const r = (ownerInfo?.recent || []).find((x) => x.payout_id === payoutId);
+  if (!r) return;
+  if (!window.confirm(`Ask Xendit to cancel this ${peso(r.amount)} withdrawal?
+
+`
+    + "If Xendit hasn't handed it to the bank yet, the money goes back to the Xendit balance. "
+    + "If it's too late, Xendit refuses and nothing changes.")) return;
+  ownerBusy = true;
+  renderOwnerDialog();
+  setOwnerMessage('Asking Xendit to cancel...');
+  let msg = '';
+  let kind = 'ok';
+  try {
+    const { data } = await callOwnerFunction({ action: 'cancel', payoutId });
+    msg = data.error || data.message || 'Done.';
+    kind = data.error ? 'error' : 'ok';
+  } catch (err) {
+    msg = err.message || 'Could not reach Xendit.';
+    kind = 'error';
+  }
+  ownerBusy = false;
+  try { await loadOwnerInfo(); } catch { renderOwnerDialog(); }
+  setOwnerMessage(msg, kind);
+}
+
 // ---------------------------------------------------------------- init
 
 (async function init() {
@@ -753,6 +782,10 @@ async function refreshOwnerStatus() {
   document.querySelectorAll('[data-close-owner]').forEach((btn) => btn.addEventListener('click', closeOwnerDialog));
   document.getElementById('ownerSendBtn').addEventListener('click', sendOwnerWithdrawal);
   document.getElementById('ownerRefreshBtn').addEventListener('click', refreshOwnerStatus);
+  document.getElementById('ownerRecentBody').addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-owner-stop]');
+    if (btn) stopOwnerWithdrawal(btn.dataset.ownerStop);
+  });
   document.getElementById('ownerAllBtn').addEventListener('click', () => {
     if (ownerInfo?.balance == null) return;
     const cap = ownerInfo.maxPerSend ? Math.min(ownerInfo.balance, ownerInfo.maxPerSend) : ownerInfo.balance;
