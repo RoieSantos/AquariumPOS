@@ -260,6 +260,10 @@
         </div>
         <div class="bc-dialog-body">
           <p class="bc-lede">Sends money from the Xendit balance to the owner's own GCash / bank account. Only the accounts saved in the server settings can be picked. Money sent can't be pulled back, and Xendit's payout fee applies.</p>
+          <div class="bc-hint" style="border:1px solid var(--border, #2c3a55); border-radius:6px; padding:8px 10px; margin:0 0 10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <span style="flex:1; min-width:220px;"><strong>Going to the registered bank account? Withdraw there for free.</strong> Xendit Dashboard &rarr; Balance &rarr; Withdraw has no fee. Sending from here is a paid payout (1%, min ₱15, + ₱11, + 12% VAT).</span>
+            <a class="bc-btn" id="ownerFreeBtn" href="https://dashboard.xendit.co/balance" target="_blank" rel="noopener">Withdraw free (Xendit)</a>
+          </div>
           <p class="error-text hidden" id="ownerTestNote"></p>
           <div class="bc-field">
             <label>Available Balance</label>
@@ -275,6 +279,7 @@
               <input type="number" id="ownerAmount" min="1" step="0.01" inputmode="decimal" style="width:160px;" />
               <button class="bc-link" type="button" id="ownerAllBtn">Use full balance</button>
             </div>
+            <div class="bc-hint" id="ownerFeeLine" style="margin-top:4px;"></div>
           </div>
           <div class="bc-field">
             <label for="ownerNote">Note</label>
@@ -320,7 +325,7 @@
   <script src="js/pagination.js"></script>
   <script src="js/bcFilterPane.js?v=1"></script>
   <script src="js/bcColumnResize.js?v=1"></script>
-  <script src="js/xenditLedger.js?v=ownerstop1"></script>
+  <script src="js/xenditLedger.js?v=ownerfee1"></script>
   <script src="js/pwa.js"></script>
 </body>
 </html>

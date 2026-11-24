@@ -4,6 +4,7 @@ Dated log of code changes made to this project (see CLAUDE.md's "Changelog" inst
 
 ## 2026-11-24
 
+- **Withdraw to Owner shows the Xendit fee and a free route.** A "Withdraw free (Xendit)" button opens Xendit Dashboard > Balance (Withdraw to the registered bank is free, per Xendit support). The Amount shows the fee as you type (1%, min ₱15, + ₱11 processing, + 12% VAT), the confirm repeats it, "Use full balance" leaves room for the fee, and amount + fee over the balance is blocked. [xenditLedger.js](docs/js/xenditLedger.js) / [xendit-ledger.html](docs/xendit-ledger.html) `?v=ownerfee1`. Owner withdrawals are now capped at ₱50,000 (`XENDIT_OWNER_MAX_PER_SEND` secret).
 - **Stop a Withdraw to Owner payout.** New Stop button on an "On its way" row in Withdraw to Owner > Recent Withdrawals; new `cancel` action in [xendit-owner-payout](supabase/functions/xendit-owner-payout/index.ts) asks Xendit to cancel it (money back to the balance), and the row changes only to what Xendit answers. Same pattern as the PO Stop payout. [xenditLedger.js](docs/js/xenditLedger.js) `?v=ownerstop1`. For the ₱52,000 BDO withdrawal sent tonight (over the ₱50k InstaPay limit).
 - **A-023 maintaining count 1 -> 20 at Amaya and GMA.** The 1 capped store Transfer Order requests for A-023 MESH-BAG (SMALL) at 1. One-off data fix [supabase_a023_maintaining_20.sql](sql/supabase_a023_maintaining_20.sql), ran on live.
 

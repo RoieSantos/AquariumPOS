@@ -511,6 +511,29 @@ async function callOwnerFunction(payload) {
   return { ok: response.ok, data: data || { error: `HTTP ${response.status}` } };
 }
 
+// Xendit's payout pricing (support reply, Nov 2026): 1% of the amount (min ₱15) + ₱11 processing fee, + 12% VAT on both.
+// The fee comes out of the Xendit balance on top of the amount. A Dashboard Withdraw to the registered bank is free.
+function ownerPayoutFee(value) {
+  if (!(value > 0)) return 0;
+  return Math.round((Math.max(value * 0.01, 15) + 11) * 1.12 * 100) / 100;
+}
+
+// Largest amount whose amount + fee fits in the balance.
+function ownerMaxSendable(balance) {
+  const big = Math.floor(((balance - 11 * 1.12) / 1.0112) * 100) / 100; // 1% part (amount >= ₱1,500)
+  if (big >= 1500) return big;
+  return Math.max(0, Math.floor((balance - (15 + 11) * 1.12) * 100) / 100); // ₱15 minimum
+}
+
+function renderOwnerFeeLine() {
+  const el = document.getElementById('ownerFeeLine');
+  if (!el) return;
+  const value = Math.round(Number(document.getElementById('ownerAmount').value) * 100) / 100;
+  if (!(value > 0)) { el.textContent = ''; return; }
+  const fee = ownerPayoutFee(value);
+  el.textContent = `Xendit fee about ${peso(fee)} (${(fee / value * 100).toFixed(2)}%), total out of the balance ${peso(value + fee)}. A Dashboard Withdraw to the registered bank is free.`;
+}
+
 function setOwnerMessage(text, kind) {
   const el = document.getElementById('ownerMessage');
   el.classList.toggle('hidden', !text);
@@ -616,8 +639,14 @@ async function sendOwnerWithdrawal() {
   if (!account) { setOwnerMessage('Pick the account to send to.', 'error'); return; }
   if (!(value > 0)) { setOwnerMessage('Enter the amount to send.', 'error'); return; }
   if (ownerInfo.balance != null && value > ownerInfo.balance) { setOwnerMessage(`That's more than the available balance (${peso(ownerInfo.balance)}).`, 'error'); return; }
+  const fee = ownerPayoutFee(value);
+  if (ownerInfo.balance != null && value + fee > ownerInfo.balance) {
+    setOwnerMessage(`Amount + Xendit fee (${peso(value + fee)}) is more than the balance - at most ${peso(ownerMaxSendable(ownerInfo.balance))}.`, 'error');
+    return;
+  }
 
   const confirmText = `${ownerPendingRetry ? 'Send the SAME withdrawal again' : 'Send'} ${peso(value)} to ${account.label} (${account.channel} ••••${account.accountLast4}, ${account.accountName})?`
+    + `\n\nXendit fee: about ${peso(fee)} (1%, min ₱15, + ₱11, + VAT). A Dashboard Withdraw to the registered bank is free.`
     + (ownerInfo.isTest ? '\n\nTEST mode - no real money.' : '\n\nThis is REAL money and can\'t be pulled back.');
   if (!window.confirm(confirmText)) return;
 
@@ -636,6 +665,7 @@ async function sendOwnerWithdrawal() {
     if (ok && !data.error) {
       document.getElementById('ownerAmount').value = '';
       document.getElementById('ownerNote').value = '';
+      renderOwnerFeeLine();
       setOwnerMessage(data.note || `Sent ${peso(data.amount || value)} - ${data.status === 'SUCCEEDED' ? 'paid' : 'Xendit is processing it'}.`, 'ok');
     } else {
       setOwnerMessage(data.error || data.note || 'Not sent.', 'error');
@@ -788,9 +818,12 @@ async function stopOwnerWithdrawal(payoutId) {
   });
   document.getElementById('ownerAllBtn').addEventListener('click', () => {
     if (ownerInfo?.balance == null) return;
-    const cap = ownerInfo.maxPerSend ? Math.min(ownerInfo.balance, ownerInfo.maxPerSend) : ownerInfo.balance;
+    const sendable = ownerMaxSendable(ownerInfo.balance); // leaves room for the fee
+    const cap = ownerInfo.maxPerSend ? Math.min(sendable, ownerInfo.maxPerSend) : sendable;
     document.getElementById('ownerAmount').value = Math.floor(cap * 100) / 100;
+    renderOwnerFeeLine();
   });
+  document.getElementById('ownerAmount').addEventListener('input', renderOwnerFeeLine);
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {
