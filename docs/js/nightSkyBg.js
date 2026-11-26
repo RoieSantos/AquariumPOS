@@ -53,7 +53,8 @@
   let nextMeteor = rand(5, 12);
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Always 1x: the sky is soft and blurred, so 1.5x looked the same and cost 2.25x the memory.
+    dpr = 1;
     W = window.innerWidth;
     H = window.innerHeight;
     canvas.width = Math.round(W * dpr);
@@ -416,9 +417,21 @@
     resize();
     build(); // clouds and stars are laid out for the viewport size
     draw(0);
+    freeScratch();
     drawnTheme = palette().key;
     drawnW = W;
     drawnH = H;
+  }
+
+  // The cloud layers and comet tail are full-screen scratch canvases only needed while drawing the
+  // still - free them once it's on the visible canvas (a resize / theme flip rebuilds them).
+  function freeScratch() {
+    cloudLayers.forEach((l) => { if (l.img) { l.img.width = 0; l.img.height = 0; } });
+    cloudLayers = [];
+    cloudTheme = '';
+    if (tailImg) { tailImg.width = 0; tailImg.height = 0; }
+    tailImg = null;
+    tailTheme = '';
   }
 
   const whenIdle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(fn, 300));

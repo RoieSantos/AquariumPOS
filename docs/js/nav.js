@@ -1193,7 +1193,7 @@ function mountChatWidget(session) {
   const SKIP = ['dashboard.html', 'gma-conversations.html', 'aquarium-calculator.html', 'stand-calculator.html', 'sticker-calculator.html', 'invoice.html', 'gma-order-invoice.html', 'delivery-receipt.html'];
   if (SKIP.includes(page) || page.includes('print')) return;
   const script = document.createElement('script');
-  script.src = 'js/nightSkyBg.js?v=still1';
+  script.src = 'js/nightSkyBg.js?v=still2';
   script.defer = true;
   (document.head || document.documentElement).appendChild(script);
 })();

@@ -2,6 +2,10 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-26
+
+- **Sky background uses ~90% less memory.** It is now drawn at 1x pixel density, and the 3 full-screen scratch canvases (2 cloud layers and the comet tail) are freed once the still is drawn. That's about 75 MB down to about 8 MB per page at 1080p, with no visible change. [nightSkyBg.js](docs/js/nightSkyBg.js) `?v=still2` (loaded from [nav.js](docs/js/nav.js)).
+
 ## 2026-11-24
 
 - **Withdraw to Owner shows the Xendit fee and a free route.** A "Withdraw free (Xendit)" button opens Xendit Dashboard > Balance (Withdraw to the registered bank is free, per Xendit support). The Amount shows the fee as you type (1%, min ₱15, + ₱11 processing, + 12% VAT), the confirm repeats it, "Use full balance" leaves room for the fee, and amount + fee over the balance is blocked. [xenditLedger.js](docs/js/xenditLedger.js) / [xendit-ledger.html](docs/xendit-ledger.html) `?v=ownerfee1`. Owner withdrawals are now capped at ₱50,000 (`XENDIT_OWNER_MAX_PER_SEND` secret).
