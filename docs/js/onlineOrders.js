@@ -7093,9 +7093,15 @@ function canEditOnlineOrderLineText(o) {
 }
 
 // Quantity also locks at To Ship - stock and serials are taken from then on (the server re-checks).
+// Per "let my sales manager change the quantity.. but with change log": a Sales Manager / Super User can
+// still change it AT To Ship (not a SET / serial item, not below what was released - the server checks,
+// sql/supabase_online_order_line_qty_to_ship_sales_manager.sql). Every change lands in Edit History.
 const LINE_QTY_LOCKED_STATUSES = ['to ship', 'packing', 'packed', 'in-transit', 'pending transfer'];
 function canEditOnlineOrderLineQty(o) {
-  return canEditOnlineOrderLineText(o) && !LINE_QTY_LOCKED_STATUSES.includes((o.status || '').trim().toLowerCase());
+  if (!canEditOnlineOrderLineText(o)) return false;
+  const status = (o.status || '').trim().toLowerCase();
+  if (status === 'to ship') return !!(currentSession?.isSuperUser || (currentSession?.staffRoles || []).includes('SalesManager'));
+  return !LINE_QTY_LOCKED_STATUSES.includes(status);
 }
 
 function lineEditsFor(lineId) {
@@ -7312,7 +7318,7 @@ function openLineEditDialog(lineId, readOnly) {
   const qtyEl = document.getElementById('lineEditQty');
   qtyEl.value = lineQtyText(l.quantity);
   qtyEl.disabled = !canEditOnlineOrderLineQty(o);
-  qtyEl.title = qtyEl.disabled ? 'The quantity can only be changed before To Ship' : '';
+  qtyEl.title = qtyEl.disabled ? 'The quantity can only be changed before To Ship (a Sales Manager can also change it at To Ship)' : '';
   document.getElementById('lineEditDescription').value = l.description || '';
   document.getElementById('lineEditPrice').value = linePriceText(l.price);
   document.getElementById('lineEditPriceField').classList.toggle('hidden', hidePrices());

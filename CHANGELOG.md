@@ -2,6 +2,9 @@
 
 Dated log of code changes made to this project (see CLAUDE.md's "Changelog" instruction). Newest entries at the top.
 
+## 2026-11-27
+
+- **Online Orders: Sales Manager can change line Quantity at To Ship.** Before, Quantity locked at To Ship for everyone; now a Sales Manager / Super User can still change it there (portal orders, not a SET or serial item, not below what was already released). Packing and later stay locked. Each change is logged in Edit History as before ([supabase_online_order_line_qty_to_ship_sales_manager.sql](sql/supabase_online_order_line_qty_to_ship_sales_manager.sql), [onlineOrders.js](docs/js/onlineOrders.js) `?v=qtysm1`).
 ## 2026-11-26
 
 - **Sky background uses ~90% less memory.** It is now drawn at 1x pixel density, and the 3 full-screen scratch canvases (2 cloud layers and the comet tail) are freed once the still is drawn. That's about 75 MB down to about 8 MB per page at 1080p, with no visible change. [nightSkyBg.js](docs/js/nightSkyBg.js) `?v=still2` (loaded from [nav.js](docs/js/nav.js)).
